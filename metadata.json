@@ -1,0 +1,6 @@
+{
+  "name": "Chrome PWA Hub",
+  "description": "Hub compacto de alta densidade para organizar mais de 100 PWAs do Chrome com anotações e rastreamento diário de acesso (verde para acessado hoje, vermelho para pendente).",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
