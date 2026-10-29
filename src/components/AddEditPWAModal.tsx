@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Globe, Star } from 'lucide-react';
+import { X, Globe, Star, RotateCw } from 'lucide-react';
 import { PWAItem } from '../types/pwa';
 import { PWAIcon } from './PWAIcon';
 import { getCleanDomain, resolveFaviconAtInsertion } from '../utils/pwaLogic';
@@ -33,7 +33,9 @@ export const AddEditPWAModal: React.FC<AddEditPWAModalProps> = ({
       setUrl(editingItem.url);
       setCategory(editingItem.category);
       setNotes(editingItem.notes || '');
-      setCustomIcon(editingItem.icon || '');
+      // If icon is auto-resolved Google favicon, don't lock customIcon so changing URL dynamically updates icon
+      const isAutoFavicon = editingItem.icon?.includes('google.com/s2/favicons');
+      setCustomIcon(isAutoFavicon ? '' : (editingItem.icon || ''));
       setPinned(Boolean(editingItem.pinned));
       setError('');
     } else {
@@ -124,16 +126,29 @@ export const AddEditPWAModal: React.FC<AddEditPWAModalProps> = ({
           )}
 
           {/* Icon Preview */}
-          <div className="flex items-center gap-3 p-3 rounded-lg bg-neutral-950/60 border border-neutral-800/80">
-            <PWAIcon icon={customIcon || (url ? resolveFaviconAtInsertion(url) : '')} name={name || 'P'} size="lg" />
-            <div className="min-w-0">
-              <span className="text-xs font-semibold text-neutral-200 block truncate">
-                {name || 'Nome da PWA'}
-              </span>
-              <span className="text-[11px] text-neutral-400 block truncate">
-                {url ? getCleanDomain(url) : 'https://seu-app.com'}
-              </span>
+          <div className="flex items-center justify-between p-3 rounded-lg bg-neutral-950/60 border border-neutral-800/80 gap-3">
+            <div className="flex items-center gap-3 min-w-0">
+              <PWAIcon icon={customIcon || (url ? resolveFaviconAtInsertion(url) : '')} name={name || 'P'} size="lg" />
+              <div className="min-w-0">
+                <span className="text-xs font-semibold text-neutral-200 block truncate">
+                  {name || 'Nome da PWA'}
+                </span>
+                <span className="text-[11px] text-neutral-400 block truncate">
+                  {url ? getCleanDomain(url) : 'https://seu-app.com'}
+                </span>
+              </div>
             </div>
+            {url && (
+              <button
+                type="button"
+                onClick={() => setCustomIcon('')}
+                title="Recarregar ícone padrão a partir da URL"
+                className="shrink-0 px-2.5 py-1 text-[11px] font-medium text-emerald-400 hover:text-emerald-300 bg-emerald-950/60 hover:bg-emerald-900/80 border border-emerald-800/80 rounded-md transition-colors cursor-pointer flex items-center gap-1"
+              >
+                <RotateCw className="w-3 h-3" />
+                <span>Atualizar Ícone</span>
+              </button>
+            )}
           </div>
 
           {/* URL Input */}

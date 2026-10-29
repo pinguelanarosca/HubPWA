@@ -1,5 +1,5 @@
 import React, { useRef } from 'react';
-import { Plus, Download, Upload, CheckCircle2, RotateCcw, Layers, FolderOpen, ChevronDown, Link, Github } from 'lucide-react';
+import { Plus, Download, Upload, CheckCircle2, RotateCcw, RotateCw, Layers, FolderOpen, ChevronDown, Link, Github } from 'lucide-react';
 import { PWAStats } from '../types/pwa';
 
 interface TopBarProps {
@@ -12,6 +12,7 @@ interface TopBarProps {
   onMarkAllToday: () => void;
   onResetToday: () => void;
   onLoad100Sample: () => void;
+  onRefreshAllIcons?: () => void;
 }
 
 export const TopBar: React.FC<TopBarProps> = ({
@@ -24,6 +25,7 @@ export const TopBar: React.FC<TopBarProps> = ({
   onMarkAllToday,
   onResetToday,
   onLoad100Sample,
+  onRefreshAllIcons,
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -119,6 +121,16 @@ export const TopBar: React.FC<TopBarProps> = ({
                 <RotateCcw className="w-3.5 h-3.5 text-rose-400" />
                 <span>Resetar status de hoje</span>
               </button>
+              {onRefreshAllIcons && (
+                <button
+                  type="button"
+                  onClick={onRefreshAllIcons}
+                  className="w-full text-left px-3 py-1.5 text-xs text-neutral-200 hover:bg-neutral-800 hover:text-emerald-400 flex items-center gap-2 cursor-pointer"
+                >
+                  <RotateCw className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>Recarregar todos os ícones</span>
+                </button>
+              )}
               <div className="border-t border-neutral-800 my-1" />
               <button
                 type="button"

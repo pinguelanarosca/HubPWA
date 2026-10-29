@@ -259,10 +259,11 @@ export default function App() {
 
   // Save new or edited PWA
   const handleSavePWA = useCallback((data: Partial<PWAItem> & { name: string; url: string; category: string; notes: string }) => {
+    const finalIcon = data.icon || resolveFaviconAtInsertion(data.url);
     if (data.id) {
       // Edit
       setItems((prev) =>
-        prev.map((it) => (it.id === data.id ? { ...it, ...data } : it))
+        prev.map((it) => (it.id === data.id ? { ...it, ...data, icon: finalIcon } : it))
       );
     } else {
       // Add
@@ -272,7 +273,7 @@ export default function App() {
         url: data.url,
         category: data.category,
         notes: data.notes,
-        icon: data.icon || resolveFaviconAtInsertion(data.url),
+        icon: finalIcon,
         pinned: Boolean(data.pinned),
         lastAccessedDate: null,
         accessCount: 0,
@@ -280,6 +281,16 @@ export default function App() {
       };
       setItems((prev) => [newItem, ...prev]);
     }
+  }, []);
+
+  // Batch refresh icons for all PWAs based on their URLs
+  const handleRefreshAllIcons = useCallback(() => {
+    setItems((prev) =>
+      prev.map((it) => ({
+        ...it,
+        icon: resolveFaviconAtInsertion(it.url),
+      }))
+    );
   }, []);
 
   // Batch mark all today as accessed
@@ -356,6 +367,7 @@ export default function App() {
         onMarkAllToday={handleMarkAllToday}
         onResetToday={handleResetToday}
         onLoad100Sample={handleLoad100Sample}
+        onRefreshAllIcons={handleRefreshAllIcons}
       />
 
       {/* Main Container */}

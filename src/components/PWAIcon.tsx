@@ -17,8 +17,6 @@ export const PWAIcon: React.FC<PWAIconProps> = ({
   size = 'sm',
   className = '',
 }) => {
-  const [hasError, setHasError] = useState(false);
-
   const sizeClasses = {
     xs: 'w-4 h-4 text-[10px]',
     sm: 'w-5 h-5 text-xs',
@@ -26,8 +24,13 @@ export const PWAIcon: React.FC<PWAIconProps> = ({
     lg: 'w-9 h-9 text-base',
   }[size];
 
-  // Use the pre-computed icon stored at insertion time (no external recalculation or overhead)
+  // Use the pre-computed icon stored at insertion time
   const iconUrl = customIcon || icon;
+
+  // Reset error state whenever the icon URL changes so new icons render properly
+  React.useEffect(() => {
+    setHasError(false);
+  }, [iconUrl]);
   const initial = (name.trim().charAt(0) || 'P').toUpperCase();
 
   // Consistent color for fallback initial badge based on name string
