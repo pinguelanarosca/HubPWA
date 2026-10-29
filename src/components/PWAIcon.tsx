@@ -1,17 +1,17 @@
 import React, { useState } from 'react';
 import { Globe } from 'lucide-react';
-import { getFaviconUrl } from '../utils/pwaLogic';
 
 interface PWAIconProps {
-  url: string;
+  icon?: string;
   name: string;
+  url?: string;
   customIcon?: string;
   size?: 'xs' | 'sm' | 'md' | 'lg';
   className?: string;
 }
 
 export const PWAIcon: React.FC<PWAIconProps> = ({
-  url,
+  icon,
   name,
   customIcon,
   size = 'sm',
@@ -26,10 +26,11 @@ export const PWAIcon: React.FC<PWAIconProps> = ({
     lg: 'w-9 h-9 text-base',
   }[size];
 
-  const iconUrl = getFaviconUrl(url, customIcon);
+  // Use the pre-computed icon stored at insertion time (no external recalculation or overhead)
+  const iconUrl = customIcon || icon;
   const initial = (name.trim().charAt(0) || 'P').toUpperCase();
 
-  // Color generator for fallback initial badge based on name
+  // Consistent color for fallback initial badge based on name string
   const getInitialBg = (str: string) => {
     const hues = [
       'bg-blue-900/60 text-blue-300 border-blue-700/50',
@@ -46,6 +47,7 @@ export const PWAIcon: React.FC<PWAIconProps> = ({
     return hues[Math.abs(hash) % hues.length];
   };
 
+  // If no icon was stored or if the image fails, render lightweight SVG initial badge with ZERO network calls
   if (!iconUrl || hasError) {
     return (
       <div

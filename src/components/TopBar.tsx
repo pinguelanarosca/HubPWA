@@ -1,5 +1,5 @@
 import React, { useRef } from 'react';
-import { Plus, Download, Upload, CheckCircle2, RotateCcw, Layers, FolderOpen, ChevronDown, Link } from 'lucide-react';
+import { Plus, Download, Upload, CheckCircle2, RotateCcw, Layers, FolderOpen, ChevronDown, Link, Github } from 'lucide-react';
 import { PWAStats } from '../types/pwa';
 
 interface TopBarProps {
@@ -8,6 +8,7 @@ interface TopBarProps {
   onSelectDesktopFiles: (files: FileList) => void;
   onOpenManualAddModal: () => void;
   onOpenBackupModal: () => void;
+  onOpenUpdateModal: () => void;
   onMarkAllToday: () => void;
   onResetToday: () => void;
   onLoad100Sample: () => void;
@@ -19,6 +20,7 @@ export const TopBar: React.FC<TopBarProps> = ({
   onSelectDesktopFiles,
   onOpenManualAddModal,
   onOpenBackupModal,
+  onOpenUpdateModal,
   onMarkAllToday,
   onResetToday,
   onLoad100Sample,
@@ -92,19 +94,6 @@ export const TopBar: React.FC<TopBarProps> = ({
 
         {/* Zone 3: Actions */}
         <div className="flex items-center gap-2 shrink-0">
-          {/* Quick 100+ PWAs button if less than 60 */}
-          {stats.total < 60 && (
-            <button
-              type="button"
-              onClick={onLoad100Sample}
-              title="Carregar acervo de 104 PWAs para testar organização em massa"
-              className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-neutral-300 hover:text-white bg-neutral-900 hover:bg-neutral-800 border border-neutral-700/80 rounded-md transition-colors whitespace-nowrap cursor-pointer"
-            >
-              <Layers className="w-3.5 h-3.5 text-amber-400" />
-              <span>Carregar 100+ PWAs</span>
-            </button>
-          )}
-
           {/* Quick Mark All / Reset Today dropdown/buttons */}
           <div className="relative group/actions">
             <button
@@ -150,6 +139,18 @@ export const TopBar: React.FC<TopBarProps> = ({
             className="p-1.5 text-neutral-400 hover:text-white hover:bg-neutral-800 rounded-md transition-colors cursor-pointer hidden sm:block"
           >
             <Download className="w-4 h-4" />
+          </button>
+
+          {/* GitHub Updater Button */}
+          <button
+            type="button"
+            onClick={onOpenUpdateModal}
+            title="Verificar e atualizar do GitHub (pinguelanarosca/HubPWA)"
+            aria-label="Atualizações do GitHub"
+            className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-neutral-300 hover:text-white bg-neutral-900 hover:bg-neutral-800 border border-neutral-800 rounded-md transition-colors whitespace-nowrap cursor-pointer shrink-0"
+          >
+            <Github className="w-3.5 h-3.5 text-neutral-300" />
+            <span className="hidden md:inline">Atualizar</span>
           </button>
 
           {/* Primary CTA: "Nova PWA" opens Ubuntu file explorer directly for .desktop files */}

@@ -84,7 +84,7 @@ export const BackupModal: React.FC<BackupModalProps> = ({
         {/* Header */}
         <div className="px-5 py-3.5 border-b border-neutral-800 flex items-center justify-between">
           <h2 id="backup-modal-title" className="text-sm font-semibold text-white">
-            Backup, Importação e Amostras
+            Backup e Restauração de Dados
           </h2>
           <button
             type="button"

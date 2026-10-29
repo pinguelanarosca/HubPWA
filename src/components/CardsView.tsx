@@ -50,7 +50,7 @@ export const CardsView: React.FC<CardsViewProps> = ({
               {/* Card top row */}
               <div className="flex items-start justify-between gap-2 mb-2">
                 <div className="flex items-center gap-2.5 min-w-0">
-                  <PWAIcon url={item.url} name={item.name} customIcon={item.icon} size="md" />
+                  <PWAIcon icon={item.icon} name={item.name} size="md" />
                   <div className="min-w-0">
                     <div className="flex items-center gap-1.5">
                       <h3 className="font-semibold text-xs text-neutral-100 group-hover:text-white truncate">

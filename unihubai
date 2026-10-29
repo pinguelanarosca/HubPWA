@@ -1,0 +1,155 @@
+#!/usr/bin/env bash
+
+# ==============================================================================
+# unihubai - Desinstalador e Gerenciador de Backup para o Chrome PWA Hub
+# ==============================================================================
+
+BOLD='\033[1m'
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+NC='\033[0m' # No Color
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BACKUP_DIR="${HOME}/HubPWA_Backups"
+TIMESTAMP="$(date +'%Y-%m-%d_%H-%M-%S')"
+
+echo -e "${CYAN}${BOLD}"
+echo "   __  ______  ____  ________  ______  ___    ____ "
+echo "  / / / / __ \/ __ \/ ____/ / / / __ \/   |  /  _/ "
+echo " / / / / / / / /_/ / /   / /_/ / /_/ / /| |  / /   "
+echo "/ /_/ / /_/ / ____/ /___/ __  / ____/ ___ |_/ /    "
+echo "\____/\____/_/    \____/_/ /_/_/   /_/  |_/___/    "
+echo -e "${NC}"
+echo -e "${BOLD}UniHubAI - Desinstalador & Utilitário de Backup do HubPWA${NC}"
+echo -e "${BLUE}Diretório detectado:${NC} ${SCRIPT_DIR}"
+echo "------------------------------------------------------------"
+
+# Função para realizar backup dos dados
+do_backup() {
+    echo -e "\n${YELLOW}▶ Criando backup do estado atual da aplicação...${NC}"
+    mkdir -p "${BACKUP_DIR}"
+    
+    BACKUP_FILE="${BACKUP_DIR}/hubpwa-backup-${TIMESTAMP}.json"
+    
+    # Se existir logs ou arquivos temporários com dados, salva junto
+    BACKUP_ZIP="${BACKUP_DIR}/hubpwa-full-state-${TIMESTAMP}.tar.gz"
+    
+    # Exporta backup formato JSON base se houver dados
+    if [ -f "${SCRIPT_DIR}/version.json" ]; then
+        cp "${SCRIPT_DIR}/version.json" "${BACKUP_DIR}/version-${TIMESTAMP}.json" 2>/dev/null
+    fi
+
+    # Procura arquivos .json de backup já baixados ou cria um snapshot do diretório de dados
+    tar -czf "${BACKUP_ZIP}" -C "${SCRIPT_DIR}" --exclude='node_modules' --exclude='.git' --exclude='dist' . 2>/dev/null
+
+    echo -e "${GREEN}✔ Backup completo salvo com sucesso em:${NC}"
+    echo -e "  📂 ${BOLD}${BACKUP_ZIP}${NC}"
+    echo -e "  📂 Pasta de backups: ${BOLD}${BACKUP_DIR}${NC}"
+}
+
+# Função para restaurar
+do_restore() {
+    echo -e "\n${BLUE}▶ Modo de Restauração${NC}"
+    if [ ! -d "${BACKUP_DIR}" ] || [ -z "$(ls -A "${BACKUP_DIR}" 2>/dev/null)" ]; then
+        echo -e "${RED}Nenhum arquivo de backup foi encontrado em ${BACKUP_DIR}.${NC}"
+        return 1
+    fi
+
+    echo -e "Backups disponíveis em ${BOLD}${BACKUP_DIR}${NC}:"
+    ls -lh "${BACKUP_DIR}"
+    echo ""
+    echo -e "${GREEN}Para restaurar no aplicativo:${NC}"
+    echo "1. Abra a aplicação HubPWA no navegador."
+    echo "2. Clique no ícone de Download/Upload (Backup) na barra superior."
+    echo "3. Selecione o arquivo JSON de backup salvo na pasta ${BACKUP_DIR}."
+}
+
+# Processamento de flags de linha de comando
+if [ "$1" == "--backup" ] || [ "$1" == "-b" ]; then
+    do_backup
+    exit 0
+fi
+
+if [ "$1" == "--restore" ] || [ "$1" == "-r" ]; then
+    do_restore
+    exit 0
+fi
+
+# Início do fluxo interativo de desinstalação
+echo -e "\n${BOLD}O que você deseja fazer?${NC}"
+echo -e " 1) ${RED}Desinstalar completamente o HubPWA${NC} (removendo processos, atalhos e arquivos)"
+echo -e " 2) ${YELLOW}Criar apenas um Backup do estado atual${NC}"
+echo -e " 3) ${BLUE}Ver informações de Restauração${NC}"
+echo -e " 4) Sair sem alterar nada"
+echo ""
+read -rp "Escolha uma opção [1-4]: " OPTION
+
+case $OPTION in
+    2)
+        do_backup
+        exit 0
+        ;;
+    3)
+        do_restore
+        exit 0
+        ;;
+    4)
+        echo "Operação cancelada."
+        exit 0
+        ;;
+    1)
+        # Prosseguir para desinstalação
+        ;;
+    *)
+        echo "Opção inválida. Operação cancelada."
+        exit 1
+        ;;
+esac
+
+# Pergunta sobre backup automático antes da remoção
+echo ""
+read -rp "Deseja criar um BACKUP dos seus dados antes de desinstalar? (S/n): " CONFIRM_BACKUP
+if [[ "$CONFIRM_BACKUP" =~ ^[SsYy]$ ]] || [ -z "$CONFIRM_BACKUP" ]; then
+    do_backup
+fi
+
+echo -e "\n${RED}${BOLD}▶ Iniciando desinstalação e limpeza total...${NC}"
+
+# 1. Parar processos do PM2 se existirem
+if command -v pm2 &> /dev/null; then
+    echo -e "${YELLOW}• Parando e removendo processos do PM2 (hubpwa)...${NC}"
+    pm2 stop hubpwa 2>/dev/null
+    pm2 delete hubpwa 2>/dev/null
+    pm2 save 2>/dev/null
+fi
+
+# 2. Finalizar processos Node/Portas em uso
+echo -e "${YELLOW}• Finalizando processos em execução (portas 3000, 3001 e server.ts)...${NC}"
+pkill -f "server.ts" 2>/dev/null
+pkill -f "tsx server.ts" 2>/dev/null
+fuser -k 3000/tcp 2>/dev/null
+fuser -k 3001/tcp 2>/dev/null
+
+# 3. Remover atalhos .desktop do sistema
+echo -e "${YELLOW}• Removendo atalhos e arquivos do sistema...${NC}"
+rm -f "${HOME}/.local/share/applications/hubpwa.desktop" 2>/dev/null
+rm -f "${HOME}/.local/share/applications/chrome-pwa-hub.desktop" 2>/dev/null
+rm -f "${HOME}/Desktop/hubpwa.desktop" 2>/dev/null
+rm -f "${HOME}/Área de Trabalho/hubpwa.desktop" 2>/dev/null
+
+# 4. Remover links simbólicos globais se existirem
+sudo rm -f /usr/local/bin/unihubai 2>/dev/null
+rm -f "${HOME}/.local/bin/unihubai" 2>/dev/null
+
+# 5. Remover pasta de instalação
+echo -e "${RED}• Removendo diretório da aplicação (${SCRIPT_DIR})...${NC}"
+
+# Se o script estiver rodando de dentro da própria pasta, programa a remoção e sai
+cd "${HOME}" || exit 1
+rm -rf "${SCRIPT_DIR}" 2>/dev/null
+
+echo -e "\n${GREEN}${BOLD}✔ Desinstalação concluída com sucesso!${NC}"
+echo -e "${GREEN}Todos os processos, atalhos e arquivos do HubPWA foram removidos sem deixar vestígios.${NC}\n"

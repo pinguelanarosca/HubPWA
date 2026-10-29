@@ -55,19 +55,26 @@ export function toggleAccessedToday(item: PWAItem, todayStr: string = getTodaySt
 }
 
 /**
- * Resolves reliable icon URL for a PWA
+ * Resolves the favicon URL once at insertion time.
+ * This stores the static icon URL permanently in the PWA object to prevent system overload.
  */
-export function getFaviconUrl(url: string, customIcon?: string): string {
+export function resolveFaviconAtInsertion(url: string, customIcon?: string): string {
   if (customIcon && customIcon.trim().length > 0) {
     return customIcon.trim();
   }
   try {
     const parsed = new URL(url.startsWith('http') ? url : `https://${url}`);
-    return `https://www.google.com/s2/favicons?domain=${parsed.hostname}&sz=128`;
+    const domain = parsed.hostname.replace(/^www\./, '');
+    return `https://www.google.com/s2/favicons?domain=${domain}&sz=64`;
   } catch {
     return '';
   }
 }
+
+/**
+ * Backwards-compatible alias for resolveFaviconAtInsertion
+ */
+export const getFaviconUrl = resolveFaviconAtInsertion;
 
 /**
  * Extracts a clean domain label from a URL
@@ -222,7 +229,9 @@ export function importPWAsFromJson(rawJson: string): PWAItem[] {
         url: url.startsWith('http') ? url : `https://${url}`,
         category: String(r.category || 'Geral').trim(),
         notes: String(r.notes || r.anotacoes || r.description || '').trim(),
-        icon: typeof r.icon === 'string' && r.icon.trim() ? r.icon.trim() : undefined,
+        icon: typeof r.icon === 'string' && r.icon.trim()
+          ? r.icon.trim()
+          : resolveFaviconAtInsertion(url),
         lastAccessedDate: typeof r.lastAccessedDate === 'string' ? r.lastAccessedDate : null,
         accessCount: typeof r.accessCount === 'number' ? r.accessCount : 0,
         pinned: Boolean(r.pinned),

@@ -156,7 +156,7 @@ export const DesktopImportModal: React.FC<DesktopImportModalProps> = ({
 
                   {/* Icon */}
                   <div className="pt-0.5">
-                    <PWAIcon url={app.url} name={app.name} customIcon={app.icon} size="md" />
+                    <PWAIcon icon={app.icon} name={app.name} size="md" />
                   </div>
 
                   {/* Fields */}

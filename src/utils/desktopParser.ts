@@ -1,4 +1,5 @@
 import { PWAItem } from '../types/pwa';
+import { resolveFaviconAtInsertion } from './pwaLogic';
 
 export interface ParsedDesktopApp {
   id: string;
@@ -189,13 +190,20 @@ export function parseDesktopFile(content: string, fileName: string = ''): Parsed
     hasExactUrl = false;
   }
 
+  let resolvedIcon: string | undefined = undefined;
+  if (icon && (icon.startsWith('http') || icon.startsWith('/') || icon.startsWith('data:'))) {
+    resolvedIcon = icon;
+  } else if (detectedUrl) {
+    resolvedIcon = resolveFaviconAtInsertion(detectedUrl);
+  }
+
   return {
     id: `pwa_desktop_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
     name,
     url: detectedUrl,
     category,
     notes: comment ? `${comment} (Importado do Ubuntu)` : 'Importado do Ubuntu Desktop',
-    icon: icon.startsWith('/') ? icon : undefined,
+    icon: resolvedIcon,
     rawFileName: fileName,
     hasExactUrl,
     appId,

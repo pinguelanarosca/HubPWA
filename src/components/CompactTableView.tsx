@@ -91,7 +91,7 @@ export const CompactTableView: React.FC<CompactTableViewProps> = ({
                 {/* PWA Icon + Name + Link */}
                 <td className="py-1 px-3">
                   <div className="flex items-center gap-2 max-w-xs">
-                    <PWAIcon url={item.url} name={item.name} customIcon={item.icon} size="sm" />
+                    <PWAIcon icon={item.icon} name={item.name} size="sm" />
                     <div className="min-w-0 truncate">
                       <span className="font-medium text-neutral-200 group-hover:text-white truncate block">
                         {item.name}

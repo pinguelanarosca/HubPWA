@@ -13,6 +13,7 @@ import {
   toggleAccessedToday,
   calculateStats,
   filterAndSortPWAs,
+  resolveFaviconAtInsertion,
 } from './utils/pwaLogic';
 import { parseDesktopFile, ParsedDesktopApp } from './utils/desktopParser';
 import { TopBar } from './components/TopBar';
@@ -23,26 +24,27 @@ import { CardsView } from './components/CardsView';
 import { AddEditPWAModal } from './components/AddEditPWAModal';
 import { BackupModal } from './components/BackupModal';
 import { DesktopImportModal } from './components/DesktopImportModal';
-import { FolderUp } from 'lucide-react';
+import { GitHubUpdateModal } from './components/GitHubUpdateModal';
+import { FolderUp, FolderOpen, Plus } from 'lucide-react';
 
-const STORAGE_KEY = 'chrome_pwa_hub_items_v1';
+const STORAGE_KEY = 'chrome_pwa_hub_items_empty_v1';
 const DENSITY_STORAGE_KEY = 'chrome_pwa_hub_density';
 
 export default function App() {
-  // Initialize PWAs with 104 curated items so organizing 100+ PWAs works out of the box
+  // Empty by default: User adds their own PWAs (via Ubuntu .desktop file selection or manual entry)
   const [items, setItems] = useState<PWAItem[]>(() => {
     try {
       const stored = localStorage.getItem(STORAGE_KEY);
       if (stored) {
         const parsed = JSON.parse(stored);
-        if (Array.isArray(parsed) && parsed.length > 0) {
+        if (Array.isArray(parsed)) {
           return parsed;
         }
       }
     } catch {
       // Fallback
     }
-    return getExpanded100PWAs();
+    return []; // Empty by default!
   });
 
   const [density, setDensity] = useState<ViewDensity>(() => {
@@ -66,6 +68,7 @@ export default function App() {
   const [isAddEditOpen, setIsAddEditOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<PWAItem | null>(null);
   const [isBackupOpen, setIsBackupOpen] = useState(false);
+  const [isUpdateModalOpen, setIsUpdateModalOpen] = useState(false);
 
   // Ubuntu desktop file import state
   const [parsedDesktopApps, setParsedDesktopApps] = useState<ParsedDesktopApp[]>([]);
@@ -166,7 +169,11 @@ export default function App() {
   const handleConfirmDesktopImport = useCallback((newItems: PWAItem[]) => {
     setItems((prev) => {
       const existingIds = new Set(prev.map((i) => i.id));
-      const filtered = newItems.filter((i) => !existingIds.has(i.id));
+      const withResolvedIcons = newItems.map((item) => ({
+        ...item,
+        icon: item.icon || resolveFaviconAtInsertion(item.url),
+      }));
+      const filtered = withResolvedIcons.filter((i) => !existingIds.has(i.id));
       return [...filtered, ...prev];
     });
   }, []);
@@ -265,7 +272,7 @@ export default function App() {
         url: data.url,
         category: data.category,
         notes: data.notes,
-        icon: data.icon,
+        icon: data.icon || resolveFaviconAtInsertion(data.url),
         pinned: Boolean(data.pinned),
         lastAccessedDate: null,
         accessCount: 0,
@@ -345,6 +352,7 @@ export default function App() {
           setIsAddEditOpen(true);
         }}
         onOpenBackupModal={() => setIsBackupOpen(true)}
+        onOpenUpdateModal={() => setIsUpdateModalOpen(true)}
         onMarkAllToday={handleMarkAllToday}
         onResetToday={handleResetToday}
         onLoad100Sample={handleLoad100Sample}
@@ -352,114 +360,163 @@ export default function App() {
 
       {/* Main Container */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-3 sm:px-4 py-3 flex flex-col">
-        {/* Compact Daily Status Banner & Progress Bar */}
-        <div className="mb-3 px-3.5 py-2 rounded-lg bg-neutral-900/50 border border-neutral-800/80 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-          <div className="flex items-center gap-3">
-            {/* Indicator explanation */}
-            <div className="flex items-center gap-2 text-xs">
-              <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-emerald-950/60 text-emerald-300 border border-emerald-700/50">
-                <span className="w-2 h-2 rounded-full bg-emerald-400" />
-                <span>Verde: Acessado hoje ({stats.accessedTodayCount})</span>
-              </span>
-              <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-rose-950/60 text-rose-300 border border-rose-700/50">
-                <span className="w-2 h-2 rounded-full bg-rose-500" />
-                <span>Vermelho: Pendente hoje ({stats.pendingTodayCount})</span>
-              </span>
+        {items.length === 0 ? (
+          /* Empty state by default as requested: 0 PWAs initially */
+          <div className="flex-1 flex flex-col items-center justify-center py-20 px-4 text-center">
+            <div className="w-14 h-14 rounded-2xl bg-neutral-900 border border-neutral-800 flex items-center justify-center text-emerald-400 mb-4 shadow-inner">
+              <FolderOpen className="w-7 h-7" />
+            </div>
+            <h2 className="text-base font-bold text-white mb-1.5">
+              Nenhuma PWA adicionada ainda
+            </h2>
+            <p className="text-xs text-neutral-400 max-w-md mb-6 leading-relaxed">
+              O seu Hub está pronto e limpo. Adicione as PWAs que você já tem instaladas no seu Ubuntu selecionando os arquivos <code className="text-neutral-300 font-mono">.desktop</code> ou cadastre manualmente por URL.
+            </p>
+            <div className="flex flex-wrap items-center justify-center gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  const input = document.querySelector<HTMLInputElement>(
+                    'input[data-testid="ubuntu-desktop-file-input"]'
+                  );
+                  input?.click();
+                }}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold text-neutral-950 bg-emerald-400 hover:bg-emerald-300 transition-colors shadow-xs cursor-pointer"
+              >
+                <FolderOpen className="w-4 h-4" />
+                <span>Selecionar arquivos .desktop (Ubuntu)</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setEditingItem(null);
+                  setIsAddEditOpen(true);
+                }}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-medium text-neutral-300 hover:text-white bg-neutral-900 hover:bg-neutral-800 border border-neutral-800 transition-colors cursor-pointer"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>Cadastrar PWA manualmente</span>
+              </button>
+            </div>
+            <div className="mt-8 p-3.5 rounded-lg bg-neutral-900/40 border border-neutral-800/80 max-w-lg text-left text-xs text-neutral-400 space-y-1">
+              <span className="font-semibold text-neutral-300 block">Dica para Ubuntu:</span>
+              <p className="text-[11px] leading-relaxed">
+                As PWAs instaladas pelo Chrome no Ubuntu ficam localizadas na pasta oculta <code className="text-emerald-400 font-mono">~/.local/share/applications/</code>. No seletor de arquivos, pressione <kbd className="px-1 py-0.5 bg-neutral-800 text-neutral-200 rounded text-[10px]">Ctrl+H</kbd> para vê-la. Você também pode arrastar arquivos <code className="text-neutral-300 font-mono">.desktop</code> direto para a tela.
+              </p>
             </div>
           </div>
+        ) : (
+          <>
+            {/* Compact Daily Status Banner & Progress Bar */}
+            <div className="mb-3 px-3.5 py-2 rounded-lg bg-neutral-900/50 border border-neutral-800/80 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div className="flex items-center gap-3">
+                {/* Indicator explanation */}
+                <div className="flex items-center gap-2 text-xs">
+                  <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-emerald-950/60 text-emerald-300 border border-emerald-700/50">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400" />
+                    <span>Verde: Acessado hoje ({stats.accessedTodayCount})</span>
+                  </span>
+                  <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-rose-950/60 text-rose-300 border border-rose-700/50">
+                    <span className="w-2 h-2 rounded-full bg-rose-500" />
+                    <span>Vermelho: Pendente hoje ({stats.pendingTodayCount})</span>
+                  </span>
+                </div>
+              </div>
 
-          {/* Progress bar */}
-          <div className="flex items-center gap-2.5 sm:w-64">
-            <div className="flex-1 bg-neutral-800 rounded-full h-1.5 overflow-hidden">
-              <div
-                className="bg-emerald-400 h-full rounded-full transition-all duration-300"
-                style={{ width: `${stats.completionPercentage}%` }}
-              />
+              {/* Progress bar */}
+              <div className="flex items-center gap-2.5 sm:w-64">
+                <div className="flex-1 bg-neutral-800 rounded-full h-1.5 overflow-hidden">
+                  <div
+                    className="bg-emerald-400 h-full rounded-full transition-all duration-300"
+                    style={{ width: `${stats.completionPercentage}%` }}
+                  />
+                </div>
+                <span className="text-[11px] font-mono text-neutral-400 whitespace-nowrap">
+                  {stats.completionPercentage}% do dia
+                </span>
+              </div>
             </div>
-            <span className="text-[11px] font-mono text-neutral-400 whitespace-nowrap">
-              {stats.completionPercentage}% do dia
-            </span>
-          </div>
-        </div>
 
-        {/* Search, Filter, Density & Sort Controls */}
-        <ControlToolbar
-          search={search}
-          onSearchChange={setSearch}
-          selectedCategory={selectedCategory}
-          onCategoryChange={setSelectedCategory}
-          categories={categories}
-          statusFilter={statusFilter}
-          onStatusFilterChange={setStatusFilter}
-          density={density}
-          onDensityChange={handleDensityChange}
-          sortBy={sortBy}
-          onSortByChange={setSortBy}
-          totalCount={items.length}
-          pendingCount={stats.pendingTodayCount}
-          accessedCount={stats.accessedTodayCount}
-        />
-
-        {/* View Render */}
-        <div className="flex-1">
-          {density === 'compact-table' && (
-            <CompactTableView
-              items={displayedItems}
-              todayStr={todayStr}
-              onLaunch={handleLaunch}
-              onToggleStatus={handleToggleStatus}
-              onUpdateNote={handleUpdateNote}
-              onTogglePin={handleTogglePin}
-              onEdit={(item) => {
-                setEditingItem(item);
-                setIsAddEditOpen(true);
-              }}
-              onDelete={handleDelete}
+            {/* Search, Filter, Density & Sort Controls */}
+            <ControlToolbar
+              search={search}
+              onSearchChange={setSearch}
+              selectedCategory={selectedCategory}
+              onCategoryChange={setSelectedCategory}
+              categories={categories}
+              statusFilter={statusFilter}
+              onStatusFilterChange={setStatusFilter}
+              density={density}
+              onDensityChange={handleDensityChange}
+              sortBy={sortBy}
+              onSortByChange={setSortBy}
+              totalCount={items.length}
+              pendingCount={stats.pendingTodayCount}
+              accessedCount={stats.accessedTodayCount}
             />
-          )}
 
-          {density === 'dense-grid' && (
-            <DenseGridView
-              items={displayedItems}
-              todayStr={todayStr}
-              onLaunch={handleLaunch}
-              onToggleStatus={handleToggleStatus}
-              onUpdateNote={handleUpdateNote}
-              onTogglePin={handleTogglePin}
-              onEdit={(item) => {
-                setEditingItem(item);
-                setIsAddEditOpen(true);
-              }}
-              onDelete={handleDelete}
-            />
-          )}
+            {/* View Render */}
+            <div className="flex-1">
+              {density === 'compact-table' && (
+                <CompactTableView
+                  items={displayedItems}
+                  todayStr={todayStr}
+                  onLaunch={handleLaunch}
+                  onToggleStatus={handleToggleStatus}
+                  onUpdateNote={handleUpdateNote}
+                  onTogglePin={handleTogglePin}
+                  onEdit={(item) => {
+                    setEditingItem(item);
+                    setIsAddEditOpen(true);
+                  }}
+                  onDelete={handleDelete}
+                />
+              )}
 
-          {density === 'cards' && (
-            <CardsView
-              items={displayedItems}
-              todayStr={todayStr}
-              onLaunch={handleLaunch}
-              onToggleStatus={handleToggleStatus}
-              onUpdateNote={handleUpdateNote}
-              onTogglePin={handleTogglePin}
-              onEdit={(item) => {
-                setEditingItem(item);
-                setIsAddEditOpen(true);
-              }}
-              onDelete={handleDelete}
-            />
-          )}
-        </div>
+              {density === 'dense-grid' && (
+                <DenseGridView
+                  items={displayedItems}
+                  todayStr={todayStr}
+                  onLaunch={handleLaunch}
+                  onToggleStatus={handleToggleStatus}
+                  onUpdateNote={handleUpdateNote}
+                  onTogglePin={handleTogglePin}
+                  onEdit={(item) => {
+                    setEditingItem(item);
+                    setIsAddEditOpen(true);
+                  }}
+                  onDelete={handleDelete}
+                />
+              )}
 
-        {/* Compact Footer Status */}
-        <footer className="mt-6 pt-3 border-t border-neutral-900 flex flex-wrap items-center justify-between text-[11px] text-neutral-400 font-mono">
-          <span>
-            Exibindo {displayedItems.length} de {items.length} PWAs cadastradas
-          </span>
-          <span className="text-neutral-400">
-            Dica Ubuntu: Você pode selecionar ou arrastar arquivos <code className="text-neutral-300">.desktop</code> de <code className="text-neutral-300">~/.local/share/applications</code> direto para o Hub.
-          </span>
-        </footer>
+              {density === 'cards' && (
+                <CardsView
+                  items={displayedItems}
+                  todayStr={todayStr}
+                  onLaunch={handleLaunch}
+                  onToggleStatus={handleToggleStatus}
+                  onUpdateNote={handleUpdateNote}
+                  onTogglePin={handleTogglePin}
+                  onEdit={(item) => {
+                    setEditingItem(item);
+                    setIsAddEditOpen(true);
+                  }}
+                  onDelete={handleDelete}
+                />
+              )}
+            </div>
+
+            {/* Compact Footer Status */}
+            <footer className="mt-6 pt-3 border-t border-neutral-900 flex flex-wrap items-center justify-between text-[11px] text-neutral-400 font-mono">
+              <span>
+                Exibindo {displayedItems.length} de {items.length} PWAs cadastradas
+              </span>
+              <span className="text-neutral-400">
+                Dica Ubuntu: Você pode selecionar ou arrastar arquivos <code className="text-neutral-300 font-mono">.desktop</code> de <code className="text-neutral-300 font-mono">~/.local/share/applications</code> direto para o Hub.
+              </span>
+            </footer>
+          </>
+        )}
       </main>
 
       {/* Add / Edit Modal (Manual Entry) */}
@@ -494,6 +551,12 @@ export default function App() {
         onImport={handleImport}
         onResetDefault={handleResetDefault}
         onLoad100Sample={handleLoad100Sample}
+      />
+
+      {/* GitHub Update Modal */}
+      <GitHubUpdateModal
+        isOpen={isUpdateModalOpen}
+        onClose={() => setIsUpdateModalOpen(false)}
       />
     </div>
   );

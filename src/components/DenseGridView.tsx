@@ -55,7 +55,7 @@ export const DenseGridView: React.FC<DenseGridViewProps> = ({
             <div>
               <div className="flex items-start justify-between gap-1.5 mb-1.5">
                 <div className="flex items-center gap-2 min-w-0">
-                  <PWAIcon url={item.url} name={item.name} customIcon={item.icon} size="md" />
+                  <PWAIcon icon={item.icon} name={item.name} size="md" />
                   <div className="min-w-0">
                     <h3 className="font-semibold text-xs text-neutral-200 group-hover:text-white truncate">
                       {item.name}

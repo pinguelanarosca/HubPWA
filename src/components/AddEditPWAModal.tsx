@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { X, Globe, Star } from 'lucide-react';
 import { PWAItem } from '../types/pwa';
 import { PWAIcon } from './PWAIcon';
-import { getCleanDomain } from '../utils/pwaLogic';
+import { getCleanDomain, resolveFaviconAtInsertion } from '../utils/pwaLogic';
 
 interface AddEditPWAModalProps {
   isOpen: boolean;
@@ -87,7 +87,7 @@ export const AddEditPWAModal: React.FC<AddEditPWAModalProps> = ({
       url: finalUrl,
       category: category.trim() || 'Geral',
       notes: notes.trim(),
-      icon: customIcon.trim() || undefined,
+      icon: customIcon.trim() || resolveFaviconAtInsertion(finalUrl),
       pinned,
     });
     onClose();
@@ -125,7 +125,7 @@ export const AddEditPWAModal: React.FC<AddEditPWAModalProps> = ({
 
           {/* Icon Preview */}
           <div className="flex items-center gap-3 p-3 rounded-lg bg-neutral-950/60 border border-neutral-800/80">
-            <PWAIcon url={url || 'https://google.com'} name={name || 'P'} customIcon={customIcon} size="lg" />
+            <PWAIcon icon={customIcon || (url ? resolveFaviconAtInsertion(url) : '')} name={name || 'P'} size="lg" />
             <div className="min-w-0">
               <span className="text-xs font-semibold text-neutral-200 block truncate">
                 {name || 'Nome da PWA'}
