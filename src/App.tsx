@@ -182,7 +182,7 @@ export default function App() {
   const categories = useMemo(() => {
     const set = new Set<string>();
     items.forEach((item) => {
-      if (item.category) set.add(item.category);
+      if (item && item.category) set.add(item.category);
     });
     return Array.from(set).sort((a, b) => a.localeCompare(b, 'pt-BR'));
   }, [items]);

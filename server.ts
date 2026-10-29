@@ -140,10 +140,17 @@ app.post('/api/updater/apply', async (_req, res) => {
     const innerDir = path.resolve(tmpExtractDir, extractedEntries[0] || '');
 
     if (fs.existsSync(innerDir)) {
-      // Copy files to applet directory, preserving node_modules and .git
+      // 1. Copy files to applet directory, preserving node_modules and .git
       await execAsync(
         `rsync -av --exclude 'node_modules' --exclude '.git' --exclude '.env' "${innerDir}/" "${__dirname}/"`
       );
+
+      // 2. Run npm install to ensure any new dependencies are installed
+      try {
+        await execAsync('npm install --legacy-peer-deps', { cwd: __dirname });
+      } catch (npmErr) {
+        console.warn('Aviso durante npm install:', npmErr);
+      }
     }
 
     // Clean up temporary files
@@ -170,11 +177,29 @@ app.post('/api/updater/apply', async (_req, res) => {
       'utf-8'
     );
 
-    return res.json({
+    res.json({
       success: true,
       message: 'Aplicativo atualizado com sucesso diretamente do GitHub!',
       updatedCommit: remoteCommit,
     });
+
+    // Seamlessly launch new background server process on the same PORT and exit old process
+    setTimeout(() => {
+      const currentPort = process.env.PORT || '3000';
+      const restartCmd = `PORT=${currentPort} nohup npm run dev > app.log 2>&1 &`;
+      
+      exec(restartCmd, { cwd: __dirname }, (err) => {
+        if (err) {
+          console.error('Erro ao relançar processo do servidor:', err);
+        }
+      });
+
+      setTimeout(() => {
+        process.exit(0);
+      }, 600);
+    }, 800);
+
+    return;
   } catch (err) {
     console.error('Erro ao aplicar atualização do GitHub:', err);
     return res.status(500).json({

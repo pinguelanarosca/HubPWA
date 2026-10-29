@@ -92,7 +92,8 @@ export function getCleanDomain(url: string): string {
  * Computes dashboard statistics for daily progress
  */
 export function calculateStats(items: PWAItem[], todayStr: string = getTodayString()): PWAStats {
-  const total = items.length;
+  const safeItems = Array.isArray(items) ? items.filter((it) => it && typeof it === 'object' && typeof it.name === 'string') : [];
+  const total = safeItems.length;
   if (total === 0) {
     return {
       total: 0,
@@ -103,7 +104,7 @@ export function calculateStats(items: PWAItem[], todayStr: string = getTodayStri
   }
 
   let accessedCount = 0;
-  for (const item of items) {
+  for (const item of safeItems) {
     if (isAccessedToday(item.lastAccessedDate, todayStr)) {
       accessedCount++;
     }
@@ -133,6 +134,7 @@ export function filterAndSortPWAs(
     todayStr?: string;
   }
 ): PWAItem[] {
+  const safeItems = Array.isArray(items) ? items.filter((it) => it && typeof it === 'object' && typeof it.name === 'string') : [];
   const {
     search = '',
     category = 'all',
@@ -143,7 +145,7 @@ export function filterAndSortPWAs(
 
   const normalizedSearch = search.trim().toLowerCase();
 
-  return items
+  return safeItems
     .filter((item) => {
       // Category filter
       if (category !== 'all' && item.category.toLowerCase() !== category.toLowerCase()) {

@@ -103,11 +103,11 @@ export const GitHubUpdateModal: React.FC<GitHubUpdateModalProps> = ({
       if (!res.ok) {
         throw new Error(data.details || data.error || 'Falha ao aplicar atualização.');
       }
-      setSuccessMessage('Atualização baixada e instalada com sucesso! Recarregando...');
+      setSuccessMessage('Atualização concluída com sucesso! Reiniciando o servidor (aguarde 4s)...');
       onUpdateSuccess?.();
       setTimeout(() => {
         window.location.reload();
-      }, 1500);
+      }, 4500);
     } catch (err) {
       setError((err as Error).message);
     } finally {
