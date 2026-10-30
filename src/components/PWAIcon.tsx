@@ -17,6 +17,8 @@ export const PWAIcon: React.FC<PWAIconProps> = ({
   size = 'sm',
   className = '',
 }) => {
+  const [hasError, setHasError] = useState(false);
+
   const sizeClasses = {
     xs: 'w-4 h-4 text-[10px]',
     sm: 'w-5 h-5 text-xs',

@@ -5,6 +5,8 @@ import { fileURLToPath } from 'url';
 import { createServer as createViteServer } from 'vite';
 import { parseGitHubCommitResponse, isUpdateAvailable } from './src/utils/githubUpdater.js';
 
+import { spawn } from 'child_process';
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -183,20 +185,25 @@ app.post('/api/updater/apply', async (_req, res) => {
       updatedCommit: remoteCommit,
     });
 
-    // Seamlessly launch new background server process on the same PORT and exit old process
+    // Seamlessly spawn detached background server process on the same PORT and exit old process
     setTimeout(() => {
-      const currentPort = process.env.PORT || '3000';
-      const restartCmd = `PORT=${currentPort} nohup npm run dev > app.log 2>&1 &`;
+      const currentPort = String(process.env.PORT || '3000');
       
-      exec(restartCmd, { cwd: __dirname }, (err) => {
-        if (err) {
-          console.error('Erro ao relançar processo do servidor:', err);
-        }
-      });
+      try {
+        const child = spawn('npm', ['run', 'dev'], {
+          cwd: __dirname,
+          env: { ...process.env, PORT: currentPort },
+          detached: true,
+          stdio: 'ignore',
+        });
+        child.unref();
+      } catch (spawnErr) {
+        console.error('Erro ao relançar processo do servidor:', spawnErr);
+      }
 
       setTimeout(() => {
         process.exit(0);
-      }, 600);
+      }, 500);
     }, 800);
 
     return;
