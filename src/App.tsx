@@ -5,7 +5,6 @@
 
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { PWAItem, ViewDensity, StatusFilter, SortOption } from './types/pwa';
-import { INITIAL_PWAS, getExpanded100PWAs } from './data/defaultPWAs';
 import {
   getTodayString,
   isAccessedToday,
@@ -216,15 +215,43 @@ export default function App() {
     }
   }, [todayStr]);
 
-  // Launch PWA: opens link and automatically marks accessed today (GREEN indicator)
-  const handleLaunch = useCallback((item: PWAItem) => {
-    // Open in separate app window / tab
-    window.open(item.url, '_blank', 'noopener,noreferrer');
-
+  // Launch PWA: opens link as a true standalone PWA window and automatically marks accessed today (GREEN indicator)
+  const handleLaunch = useCallback(async (item: PWAItem) => {
     // Automatically mark as accessed today
     setItems((prev) =>
       prev.map((it) => (it.id === item.id ? markAsAccessed(it) : it))
     );
+
+    try {
+      // 1. Attempt native OS launch on Ubuntu (opens standalone Chrome App window or gtk-launch)
+      const res = await fetch('/api/launch-pwa', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          url: item.url,
+          rawFileName: item.rawFileName,
+          appId: item.appId,
+        }),
+      });
+
+      const data = await res.json();
+
+      if (!data.launchedNative) {
+        // 2. Fallback: Open in a standalone App Window without browser tabs or address bar
+        window.open(
+          item.url,
+          `pwa_${item.id.replace(/[^a-zA-Z0-9]/g, '_')}`,
+          'popup=yes,width=1280,height=800,menubar=no,toolbar=no,location=no,status=no,resizable=yes,scrollbars=yes'
+        );
+      }
+    } catch {
+      // Fallback for cloud preview
+      window.open(
+        item.url,
+        `pwa_${item.id.replace(/[^a-zA-Z0-9]/g, '_')}`,
+        'popup=yes,width=1280,height=800,menubar=no,toolbar=no,location=no,status=no,resizable=yes,scrollbars=yes'
+      );
+    }
   }, []);
 
   // Toggle status (green <-> red)
@@ -315,14 +342,14 @@ export default function App() {
     );
   }, []);
 
-  // Load sample of 104 PWAs
-  const handleLoad100Sample = useCallback(() => {
-    setItems(getExpanded100PWAs());
-  }, []);
-
-  // Restore default set (42 PWAs)
-  const handleResetDefault = useCallback(() => {
-    setItems(INITIAL_PWAS);
+  // Clear all items (0 PWAs default state)
+  const handleClearAll = useCallback(() => {
+    setItems([]);
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify([]));
+    } catch {
+      // ignore
+    }
   }, []);
 
   // Import JSON items
@@ -366,7 +393,6 @@ export default function App() {
         onOpenUpdateModal={() => setIsUpdateModalOpen(true)}
         onMarkAllToday={handleMarkAllToday}
         onResetToday={handleResetToday}
-        onLoad100Sample={handleLoad100Sample}
         onRefreshAllIcons={handleRefreshAllIcons}
       />
 
@@ -561,8 +587,7 @@ export default function App() {
         onClose={() => setIsBackupOpen(false)}
         items={items}
         onImport={handleImport}
-        onResetDefault={handleResetDefault}
-        onLoad100Sample={handleLoad100Sample}
+        onClearAll={handleClearAll}
       />
 
       {/* GitHub Update Modal */}

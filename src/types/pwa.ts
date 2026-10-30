@@ -9,6 +9,8 @@ export interface PWAItem {
   accessCount: number;
   pinned?: boolean;
   createdAt: string;
+  rawFileName?: string;
+  appId?: string;
 }
 
 export type ViewDensity = 'compact-table' | 'dense-grid' | 'cards';

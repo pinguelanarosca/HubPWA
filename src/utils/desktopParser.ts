@@ -221,6 +221,8 @@ export function convertParsedToPWAs(parsedList: ParsedDesktopApp[]): PWAItem[] {
     category: parsed.category,
     notes: parsed.notes,
     icon: parsed.icon,
+    rawFileName: parsed.rawFileName,
+    appId: parsed.appId,
     lastAccessedDate: null,
     accessCount: 0,
     pinned: false,

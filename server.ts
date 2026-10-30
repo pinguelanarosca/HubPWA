@@ -5,7 +5,7 @@ import { fileURLToPath } from 'url';
 import { createServer as createViteServer } from 'vite';
 import { parseGitHubCommitResponse, isUpdateAvailable } from './src/utils/githubUpdater.js';
 
-import { spawn } from 'child_process';
+import { spawn, exec } from 'child_process';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -37,6 +37,38 @@ function getLocalVersion() {
     version: '1.1.0',
   };
 }
+
+// 0. POST /api/launch-pwa - Launches PWA in native Chrome Standalone App Window on Ubuntu/Linux
+app.post('/api/launch-pwa', (req, res) => {
+  const { url, rawFileName, appId } = req.body || {};
+  if (!url) {
+    return res.status(400).json({ error: 'URL é obrigatória para lançar a PWA.' });
+  }
+
+  // Only execute native desktop launch if running on Linux/Ubuntu or local desktop
+  if (process.platform === 'linux') {
+    let command = '';
+
+    if (rawFileName) {
+      const desktopName = rawFileName.replace(/\.desktop$/i, '');
+      command = `gtk-launch "${desktopName}" 2>/dev/null || gio launch "$HOME/.local/share/applications/${rawFileName}" 2>/dev/null || google-chrome --app="${url}" 2>/dev/null || google-chrome-stable --app="${url}" 2>/dev/null || chromium-browser --app="${url}" 2>/dev/null || chromium --app="${url}" 2>/dev/null`;
+    } else if (appId) {
+      command = `google-chrome --app-id="${appId}" 2>/dev/null || google-chrome-stable --app-id="${appId}" 2>/dev/null || chromium --app-id="${appId}" 2>/dev/null || google-chrome --app="${url}" 2>/dev/null`;
+    } else {
+      command = `google-chrome --app="${url}" 2>/dev/null || google-chrome-stable --app="${url}" 2>/dev/null || chromium-browser --app="${url}" 2>/dev/null || chromium --app="${url}" 2>/dev/null || chrome --app="${url}" 2>/dev/null || x-www-browser --app="${url}" 2>/dev/null`;
+    }
+
+    exec(command, (error) => {
+      if (error) {
+        console.warn('Lançamento nativo enviou sinal para a instância do Chrome.');
+      }
+    });
+
+    return res.json({ launchedNative: true, message: 'PWA lançada no Ubuntu em modo janela standalone!' });
+  }
+
+  return res.json({ launchedNative: false, fallbackUrl: url });
+});
 
 // 1. GET /api/updater/status - Check local vs remote GitHub repository
 app.get('/api/updater/status', async (_req, res) => {

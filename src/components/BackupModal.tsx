@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, Download, Upload, Copy, Check, AlertCircle, RefreshCw } from 'lucide-react';
+import { X, Download, Upload, Copy, Check, AlertCircle, Trash2 } from 'lucide-react';
 import { PWAItem } from '../types/pwa';
 import { exportPWAsToJson, importPWAsFromJson } from '../utils/pwaLogic';
 
@@ -8,8 +8,7 @@ interface BackupModalProps {
   onClose: () => void;
   items: PWAItem[];
   onImport: (newItems: PWAItem[], mode: 'replace' | 'merge') => void;
-  onResetDefault: () => void;
-  onLoad100Sample: () => void;
+  onClearAll: () => void;
 }
 
 export const BackupModal: React.FC<BackupModalProps> = ({
@@ -17,8 +16,7 @@ export const BackupModal: React.FC<BackupModalProps> = ({
   onClose,
   items,
   onImport,
-  onResetDefault,
-  onLoad100Sample,
+  onClearAll,
 }) => {
   const [copied, setCopied] = useState(false);
   const [importText, setImportText] = useState('');
@@ -97,32 +95,26 @@ export const BackupModal: React.FC<BackupModalProps> = ({
 
         {/* Content */}
         <div className="p-5 space-y-5 overflow-y-auto">
-          {/* Quick Preset Buttons */}
+          {/* Zero PWAs Default Management */}
           <div className="p-3.5 rounded-lg bg-neutral-950/60 border border-neutral-800 space-y-2">
-            <h3 className="text-xs font-semibold text-neutral-200">Conjuntos Pré-definidos</h3>
+            <h3 className="text-xs font-semibold text-neutral-200">Estado da Aplicação (Padrão: 0 PWAs)</h3>
             <p className="text-[11px] text-neutral-400">
-              Para quem organiza mais de 100 PWAs, você pode alternar facilmente entre o acervo completo de 104 PWAs ou restaurar os itens padrões.
+              Esta aplicação opera 100% limpa por padrão. Você pode apagar todas as PWAs cadastradas a qualquer momento para retornar ao estado zerado.
             </p>
-            <div className="flex flex-wrap gap-2 pt-1">
+            <div className="pt-1">
               <button
                 type="button"
                 onClick={() => {
-                  onLoad100Sample();
-                  onClose();
+                  if (window.confirm('Tem certeza que deseja apagar todas as PWAs cadastradas e zerar a aplicação?')) {
+                    onClearAll();
+                    onClose();
+                  }
                 }}
-                className="px-3 py-1.5 rounded-md bg-emerald-950/80 hover:bg-emerald-900 border border-emerald-700/60 text-emerald-300 text-xs font-medium transition-colors cursor-pointer"
+                disabled={items.length === 0}
+                className="px-3 py-1.5 rounded-md bg-rose-950/80 hover:bg-rose-900 border border-rose-800/80 text-rose-300 disabled:opacity-40 disabled:pointer-events-none text-xs font-medium transition-colors cursor-pointer inline-flex items-center gap-1.5"
               >
-                Carregar 104 PWAs completas
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  onResetDefault();
-                  onClose();
-                }}
-                className="px-3 py-1.5 rounded-md bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-xs font-medium transition-colors cursor-pointer"
-              >
-                Restaurar Padrão (42 PWAs)
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Limpar todas as PWAs (Zerar Hub)</span>
               </button>
             </div>
           </div>

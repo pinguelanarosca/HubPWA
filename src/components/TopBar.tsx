@@ -11,7 +11,6 @@ interface TopBarProps {
   onOpenUpdateModal: () => void;
   onMarkAllToday: () => void;
   onResetToday: () => void;
-  onLoad100Sample: () => void;
   onRefreshAllIcons?: () => void;
 }
 
@@ -24,7 +23,6 @@ export const TopBar: React.FC<TopBarProps> = ({
   onOpenUpdateModal,
   onMarkAllToday,
   onResetToday,
-  onLoad100Sample,
   onRefreshAllIcons,
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);

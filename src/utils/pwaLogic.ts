@@ -46,9 +46,10 @@ export function toggleAccessedToday(item: PWAItem, todayStr: string = getTodaySt
       accessCount: Math.max(0, (item.accessCount || 1) - 1),
     };
   } else {
+    const timeSuffix = new Date().toISOString().slice(10);
     return {
       ...item,
-      lastAccessedDate: new Date().toISOString(),
+      lastAccessedDate: `${todayStr}${timeSuffix}`,
       accessCount: (item.accessCount || 0) + 1,
     };
   }
