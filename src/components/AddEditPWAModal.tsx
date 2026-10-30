@@ -24,6 +24,7 @@ export const AddEditPWAModal: React.FC<AddEditPWAModalProps> = ({
   const [category, setCategory] = useState('Produtividade');
   const [notes, setNotes] = useState('');
   const [customIcon, setCustomIcon] = useState('');
+  const [profileDirectory, setProfileDirectory] = useState('');
   const [pinned, setPinned] = useState(false);
   const [error, setError] = useState('');
 
@@ -36,6 +37,7 @@ export const AddEditPWAModal: React.FC<AddEditPWAModalProps> = ({
       // If icon is auto-resolved Google favicon, don't lock customIcon so changing URL dynamically updates icon
       const isAutoFavicon = editingItem.icon?.includes('google.com/s2/favicons');
       setCustomIcon(isAutoFavicon ? '' : (editingItem.icon || ''));
+      setProfileDirectory(editingItem.profileDirectory || '');
       setPinned(Boolean(editingItem.pinned));
       setError('');
     } else {
@@ -44,6 +46,7 @@ export const AddEditPWAModal: React.FC<AddEditPWAModalProps> = ({
       setCategory(existingCategories[0] || 'Produtividade');
       setNotes('');
       setCustomIcon('');
+      setProfileDirectory('');
       setPinned(false);
       setError('');
     }
@@ -90,6 +93,7 @@ export const AddEditPWAModal: React.FC<AddEditPWAModalProps> = ({
       category: category.trim() || 'Geral',
       notes: notes.trim(),
       icon: customIcon.trim() || resolveFaviconAtInsertion(finalUrl),
+      profileDirectory: profileDirectory.trim() || undefined,
       pinned,
     });
     onClose();
@@ -222,6 +226,21 @@ export const AddEditPWAModal: React.FC<AddEditPWAModalProps> = ({
               onChange={(e) => setNotes(e.target.value)}
               placeholder="Ex: Sprint diário às 10h; verificar backlog Q4; login na conta corporativa..."
               className="w-full bg-neutral-950 border border-neutral-800 text-neutral-200 text-xs rounded-lg px-3 py-2 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 resize-none"
+            />
+          </div>
+
+          {/* Chrome Profile Directory (Optional) */}
+          <div>
+            <label htmlFor="pwa-profile" className="block text-xs font-medium text-neutral-400 mb-1">
+              Perfil do Chrome (Opcional - extraído do atalho do Ubuntu, ex: Default, Profile 1, Profile 2)
+            </label>
+            <input
+              id="pwa-profile"
+              type="text"
+              value={profileDirectory}
+              onChange={(e) => setProfileDirectory(e.target.value)}
+              placeholder="Ex: Default, Profile 1, Profile 2"
+              className="w-full bg-neutral-950 border border-neutral-800 text-neutral-300 text-xs rounded-lg px-3 py-1.5 focus:outline-none focus:border-emerald-500 font-mono"
             />
           </div>
 

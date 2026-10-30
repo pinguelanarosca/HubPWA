@@ -11,6 +11,8 @@ export interface ParsedDesktopApp {
   rawFileName: string;
   hasExactUrl: boolean;
   appId?: string;
+  profileDirectory?: string;
+  execLine?: string;
 }
 
 // Known common web apps map for Chrome --app-id PWAs on Linux
@@ -157,11 +159,24 @@ export function parseDesktopFile(content: string, fileName: string = ''): Parsed
     }
   }
 
-  // 4. Extract --app-id=... from Chrome Exec
+  // 4. Extract --app-id=... and --profile-directory=... from Chrome Exec
+  let profileDirectory: string | undefined = undefined;
   if (execLine) {
     const appIdMatch = execLine.match(/--app-id=([a-zA-Z0-9_-]+)/i);
     if (appIdMatch) {
       appId = appIdMatch[1];
+    }
+    const profileMatch = execLine.match(/--profile-directory=(?:["']([^"']+)["']|([^\s"']+))/i);
+    if (profileMatch) {
+      profileDirectory = (profileMatch[1] || profileMatch[2] || '').trim();
+    }
+  }
+
+  // Fallback: check filename for Profile directory hint (e.g. chrome-f33...-Profile_1.desktop)
+  if (!profileDirectory && fileName) {
+    const fnProfileMatch = fileName.match(/Profile[_\s]?(\d+|Default)/i);
+    if (fnProfileMatch) {
+      profileDirectory = fnProfileMatch[0].replace('_', ' ');
     }
   }
 
@@ -207,6 +222,8 @@ export function parseDesktopFile(content: string, fileName: string = ''): Parsed
     rawFileName: fileName,
     hasExactUrl,
     appId,
+    profileDirectory,
+    execLine,
   };
 }
 
@@ -223,6 +240,8 @@ export function convertParsedToPWAs(parsedList: ParsedDesktopApp[]): PWAItem[] {
     icon: parsed.icon,
     rawFileName: parsed.rawFileName,
     appId: parsed.appId,
+    profileDirectory: parsed.profileDirectory,
+    execLine: parsed.execLine,
     lastAccessedDate: null,
     accessCount: 0,
     pinned: false,

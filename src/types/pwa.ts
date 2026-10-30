@@ -11,6 +11,8 @@ export interface PWAItem {
   createdAt: string;
   rawFileName?: string;
   appId?: string;
+  profileDirectory?: string;
+  execLine?: string;
 }
 
 export type ViewDensity = 'compact-table' | 'dense-grid' | 'cards';

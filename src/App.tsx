@@ -231,6 +231,8 @@ export default function App() {
           url: item.url,
           rawFileName: item.rawFileName,
           appId: item.appId,
+          profileDirectory: item.profileDirectory,
+          execLine: item.execLine,
         }),
       });
 

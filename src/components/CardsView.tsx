@@ -60,7 +60,14 @@ export const CardsView: React.FC<CardsViewProps> = ({
                         <Star className="w-3 h-3 text-amber-400 fill-amber-400 shrink-0" />
                       )}
                     </div>
-                    <p className="text-[11px] text-neutral-400 truncate">{domain}</p>
+                    <p className="text-[11px] text-neutral-400 truncate flex items-center gap-1.5">
+                      <span>{domain}</span>
+                      {item.profileDirectory && (
+                        <span className="px-1 py-0.5 rounded bg-neutral-950 border border-neutral-800 text-[9px] text-emerald-400 font-mono shrink-0">
+                          {item.profileDirectory}
+                        </span>
+                      )}
+                    </p>
                   </div>
                 </div>
 

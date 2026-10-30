@@ -60,7 +60,14 @@ export const DenseGridView: React.FC<DenseGridViewProps> = ({
                     <h3 className="font-semibold text-xs text-neutral-200 group-hover:text-white truncate">
                       {item.name}
                     </h3>
-                    <p className="text-[10px] text-neutral-400 truncate">{domain}</p>
+                    <p className="text-[10px] text-neutral-400 truncate flex items-center gap-1">
+                      <span className="truncate">{domain}</span>
+                      {item.profileDirectory && (
+                        <span className="px-1 py-0.2 rounded bg-neutral-950 border border-neutral-800 text-[8px] text-emerald-400 font-mono shrink-0">
+                          {item.profileDirectory}
+                        </span>
+                      )}
+                    </p>
                   </div>
                 </div>
 

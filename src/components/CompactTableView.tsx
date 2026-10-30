@@ -96,8 +96,13 @@ export const CompactTableView: React.FC<CompactTableViewProps> = ({
                       <span className="font-medium text-neutral-200 group-hover:text-white truncate block">
                         {item.name}
                       </span>
-                      <span className="text-[10px] text-neutral-400 truncate block">
-                        {domain}
+                      <span className="text-[10px] text-neutral-400 truncate flex items-center gap-1.5">
+                        <span>{domain}</span>
+                        {item.profileDirectory && (
+                          <span className="px-1 py-0.5 rounded bg-neutral-900 border border-neutral-800 text-[9px] text-emerald-400/90 font-mono shrink-0">
+                            {item.profileDirectory}
+                          </span>
+                        )}
                       </span>
                     </div>
                   </div>

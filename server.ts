@@ -38,33 +38,61 @@ function getLocalVersion() {
   };
 }
 
-// 0. POST /api/launch-pwa - Launches PWA in native Chrome Standalone App Window on Ubuntu/Linux
+// 0. POST /api/launch-pwa - Launches PWA in native Chrome Standalone App Window on Ubuntu/Linux preserving profile
 app.post('/api/launch-pwa', (req, res) => {
-  const { url, rawFileName, appId } = req.body || {};
-  if (!url) {
-    return res.status(400).json({ error: 'URL é obrigatória para lançar a PWA.' });
+  const { url, rawFileName, appId, profileDirectory, execLine } = req.body || {};
+  if (!url && !rawFileName && !execLine) {
+    return res.status(400).json({ error: 'URL ou atalho é obrigatório para lançar a PWA.' });
   }
 
   // Only execute native desktop launch if running on Linux/Ubuntu or local desktop
   if (process.platform === 'linux') {
-    let command = '';
+    const profileArg = profileDirectory ? `--profile-directory="${profileDirectory}"` : '';
+    const commandCandidates: string[] = [];
 
+    // 1. If we have the exact .desktop file, gtk-launch preserves the exact installed Chrome profile
     if (rawFileName) {
       const desktopName = rawFileName.replace(/\.desktop$/i, '');
-      command = `gtk-launch "${desktopName}" 2>/dev/null || gio launch "$HOME/.local/share/applications/${rawFileName}" 2>/dev/null || google-chrome --app="${url}" 2>/dev/null || google-chrome-stable --app="${url}" 2>/dev/null || chromium-browser --app="${url}" 2>/dev/null || chromium --app="${url}" 2>/dev/null`;
-    } else if (appId) {
-      command = `google-chrome --app-id="${appId}" 2>/dev/null || google-chrome-stable --app-id="${appId}" 2>/dev/null || chromium --app-id="${appId}" 2>/dev/null || google-chrome --app="${url}" 2>/dev/null`;
-    } else {
-      command = `google-chrome --app="${url}" 2>/dev/null || google-chrome-stable --app="${url}" 2>/dev/null || chromium-browser --app="${url}" 2>/dev/null || chromium --app="${url}" 2>/dev/null || chrome --app="${url}" 2>/dev/null || x-www-browser --app="${url}" 2>/dev/null`;
+      commandCandidates.push(`gtk-launch "${desktopName}" 2>/dev/null`);
+      commandCandidates.push(`gio launch "$HOME/.local/share/applications/${rawFileName}" 2>/dev/null`);
     }
 
-    exec(command, (error) => {
+    // 2. If direct execLine was saved from .desktop file
+    if (execLine) {
+      const sanitizedExec = execLine.replace(/%[uUfF]/g, '').trim();
+      if (sanitizedExec) {
+        commandCandidates.push(`${sanitizedExec} 2>/dev/null`);
+      }
+    }
+
+    // 3. App-ID with Profile
+    if (appId) {
+      commandCandidates.push(`google-chrome ${profileArg} --app-id="${appId}" 2>/dev/null`);
+      commandCandidates.push(`google-chrome-stable ${profileArg} --app-id="${appId}" 2>/dev/null`);
+      commandCandidates.push(`chromium ${profileArg} --app-id="${appId}" 2>/dev/null`);
+    }
+
+    // 4. URL App Mode with Profile
+    if (url) {
+      commandCandidates.push(`google-chrome ${profileArg} --app="${url}" 2>/dev/null`);
+      commandCandidates.push(`google-chrome-stable ${profileArg} --app="${url}" 2>/dev/null`);
+      commandCandidates.push(`chromium-browser ${profileArg} --app="${url}" 2>/dev/null`);
+      commandCandidates.push(`chromium ${profileArg} --app="${url}" 2>/dev/null`);
+      commandCandidates.push(`chrome ${profileArg} --app="${url}" 2>/dev/null`);
+    }
+
+    const fullCommand = commandCandidates.join(' || ');
+
+    exec(fullCommand, (error) => {
       if (error) {
-        console.warn('Lançamento nativo enviou sinal para a instância do Chrome.');
+        console.warn('Lançamento nativo enviou sinal para a instância do Chrome:', error.message);
       }
     });
 
-    return res.json({ launchedNative: true, message: 'PWA lançada no Ubuntu em modo janela standalone!' });
+    return res.json({
+      launchedNative: true,
+      message: `PWA lançada no perfil '${profileDirectory || 'padrão'}' em modo standalone!`,
+    });
   }
 
   return res.json({ launchedNative: false, fallbackUrl: url });
