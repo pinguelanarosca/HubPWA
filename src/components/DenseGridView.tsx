@@ -1,5 +1,5 @@
 import React from 'react';
-import { ExternalLink, Star, Trash2, Edit2 } from 'lucide-react';
+import { ExternalLink, Star, Trash2, Edit2, User } from 'lucide-react';
 import { PWAItem } from '../types/pwa';
 import { PWAIcon } from './PWAIcon';
 import { StatusIndicator } from './StatusIndicator';
@@ -63,8 +63,9 @@ export const DenseGridView: React.FC<DenseGridViewProps> = ({
                     <p className="text-[10px] text-neutral-400 truncate flex items-center gap-1">
                       <span className="truncate">{domain}</span>
                       {item.profileDirectory && (
-                        <span className="px-1 py-0.2 rounded bg-neutral-950 border border-neutral-800 text-[8px] text-emerald-400 font-mono shrink-0">
-                          {item.profileDirectory}
+                        <span className="inline-flex items-center gap-0.5 px-1 py-0.2 rounded bg-blue-950/80 border border-blue-800/80 text-blue-300 text-[8px] font-semibold font-mono shrink-0">
+                          <User className="w-2.5 h-2.5 text-blue-400" />
+                          <span>{item.profileDirectory}</span>
                         </span>
                       )}
                     </p>

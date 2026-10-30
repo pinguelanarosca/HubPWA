@@ -1,5 +1,5 @@
 import React from 'react';
-import { ExternalLink, Star, Trash2, Edit2 } from 'lucide-react';
+import { ExternalLink, Star, Trash2, Edit2, User } from 'lucide-react';
 import { PWAItem } from '../types/pwa';
 import { PWAIcon } from './PWAIcon';
 import { StatusIndicator } from './StatusIndicator';
@@ -97,10 +97,11 @@ export const CompactTableView: React.FC<CompactTableViewProps> = ({
                         {item.name}
                       </span>
                       <span className="text-[10px] text-neutral-400 truncate flex items-center gap-1.5">
-                        <span>{domain}</span>
+                        <span className="truncate">{domain}</span>
                         {item.profileDirectory && (
-                          <span className="px-1 py-0.5 rounded bg-neutral-900 border border-neutral-800 text-[9px] text-emerald-400/90 font-mono shrink-0">
-                            {item.profileDirectory}
+                          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-blue-950/80 border border-blue-800/80 text-blue-300 text-[9px] font-semibold font-mono shrink-0">
+                            <User className="w-2.5 h-2.5 text-blue-400" />
+                            <span>{item.profileDirectory}</span>
                           </span>
                         )}
                       </span>

@@ -5,7 +5,7 @@ import { fileURLToPath } from 'url';
 import { createServer as createViteServer } from 'vite';
 import { parseGitHubCommitResponse, isUpdateAvailable } from './src/utils/githubUpdater.js';
 
-import { spawn, exec } from 'child_process';
+import { spawn, exec, execSync } from 'child_process';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -16,6 +16,16 @@ const GITHUB_REPO = 'pinguelanarosca/HubPWA';
 const DEFAULT_BRANCH = 'main';
 
 app.use(express.json());
+
+// Helper to check if a command exists in system $PATH
+function hasCommand(cmd: string): boolean {
+  try {
+    execSync(`command -v ${cmd} 2>/dev/null`, { stdio: 'ignore' });
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 // Helper to read local version.json
 function getLocalVersion() {
@@ -45,19 +55,33 @@ app.post('/api/launch-pwa', (req, res) => {
     return res.status(400).json({ error: 'URL ou atalho é obrigatório para lançar a PWA.' });
   }
 
-  // Only execute native desktop launch if running on Linux/Ubuntu or local desktop
+  // Only execute native desktop launch if running on Linux/Ubuntu with a browser installed
   if (process.platform === 'linux') {
+    const hasGtkLaunch = hasCommand('gtk-launch');
+    const hasGio = hasCommand('gio');
+    const hasChrome =
+      hasCommand('google-chrome') ||
+      hasCommand('google-chrome-stable') ||
+      hasCommand('chromium') ||
+      hasCommand('chromium-browser') ||
+      hasCommand('chrome');
+
+    if (!hasGtkLaunch && !hasGio && !hasChrome) {
+      // In headless/container preview with no browser installed, return fallback gracefully
+      return res.json({ launchedNative: false, fallbackUrl: url });
+    }
+
     const profileArg = profileDirectory ? `--profile-directory="${profileDirectory}"` : '';
     const commandCandidates: string[] = [];
 
     // 1. If we have the exact .desktop file, gtk-launch preserves the exact installed Chrome profile
     if (rawFileName) {
       const desktopName = rawFileName.replace(/\.desktop$/i, '');
-      commandCandidates.push(`gtk-launch "${desktopName}" 2>/dev/null`);
-      commandCandidates.push(`gio launch "$HOME/.local/share/applications/${rawFileName}" 2>/dev/null`);
+      if (hasGtkLaunch) commandCandidates.push(`gtk-launch "${desktopName}" 2>/dev/null`);
+      if (hasGio) commandCandidates.push(`gio launch "$HOME/.local/share/applications/${rawFileName}" 2>/dev/null`);
     }
 
-    // 2. If direct execLine was saved from .desktop file
+    // 2. Direct execLine if saved
     if (execLine) {
       const sanitizedExec = execLine.replace(/%[uUfF]/g, '').trim();
       if (sanitizedExec) {
@@ -66,14 +90,14 @@ app.post('/api/launch-pwa', (req, res) => {
     }
 
     // 3. App-ID with Profile
-    if (appId) {
+    if (appId && hasChrome) {
       commandCandidates.push(`google-chrome ${profileArg} --app-id="${appId}" 2>/dev/null`);
       commandCandidates.push(`google-chrome-stable ${profileArg} --app-id="${appId}" 2>/dev/null`);
       commandCandidates.push(`chromium ${profileArg} --app-id="${appId}" 2>/dev/null`);
     }
 
     // 4. URL App Mode with Profile
-    if (url) {
+    if (url && hasChrome) {
       commandCandidates.push(`google-chrome ${profileArg} --app="${url}" 2>/dev/null`);
       commandCandidates.push(`google-chrome-stable ${profileArg} --app="${url}" 2>/dev/null`);
       commandCandidates.push(`chromium-browser ${profileArg} --app="${url}" 2>/dev/null`);
@@ -81,12 +105,15 @@ app.post('/api/launch-pwa', (req, res) => {
       commandCandidates.push(`chrome ${profileArg} --app="${url}" 2>/dev/null`);
     }
 
+    if (commandCandidates.length === 0) {
+      return res.json({ launchedNative: false, fallbackUrl: url });
+    }
+
     const fullCommand = commandCandidates.join(' || ');
 
-    exec(fullCommand, (error) => {
-      if (error) {
-        console.warn('Lançamento nativo enviou sinal para a instância do Chrome:', error.message);
-      }
+    // Execute silently without logging warnings to console
+    exec(fullCommand, () => {
+      // Chrome IPC process delegation handled silently
     });
 
     return res.json({

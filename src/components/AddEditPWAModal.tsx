@@ -231,9 +231,27 @@ export const AddEditPWAModal: React.FC<AddEditPWAModalProps> = ({
 
           {/* Chrome Profile Directory (Optional) */}
           <div>
-            <label htmlFor="pwa-profile" className="block text-xs font-medium text-neutral-400 mb-1">
-              Perfil do Chrome (Opcional - extraído do atalho do Ubuntu, ex: Default, Profile 1, Profile 2)
-            </label>
+            <div className="flex items-center justify-between mb-1">
+              <label htmlFor="pwa-profile" className="block text-xs font-medium text-neutral-300">
+                Perfil do Chrome (Opcional)
+              </label>
+              <div className="flex gap-1">
+                {['Default', 'Profile 1', 'Profile 2', 'Profile 3'].map((prof) => (
+                  <button
+                    key={prof}
+                    type="button"
+                    onClick={() => setProfileDirectory(prof)}
+                    className={`px-1.5 py-0.5 rounded text-[10px] font-mono transition-colors cursor-pointer ${
+                      profileDirectory === prof
+                        ? 'bg-blue-900 border border-blue-600 text-blue-200 font-semibold'
+                        : 'bg-neutral-800 hover:bg-neutral-700 text-neutral-400'
+                    }`}
+                  >
+                    {prof}
+                  </button>
+                ))}
+              </div>
+            </div>
             <input
               id="pwa-profile"
               type="text"

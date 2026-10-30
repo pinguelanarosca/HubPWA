@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, Check, CheckCircle2, AlertTriangle, Globe, FolderOpen } from 'lucide-react';
+import { X, Check, CheckCircle2, AlertTriangle, Globe, FolderOpen, User } from 'lucide-react';
 import { ParsedDesktopApp } from '../utils/desktopParser';
 import { PWAItem } from '../types/pwa';
 import { PWAIcon } from './PWAIcon';
@@ -69,6 +69,10 @@ export const DesktopImportModal: React.FC<DesktopImportModalProps> = ({
       category: app.category.trim() || 'Produtividade',
       notes: app.notes.trim() || 'Importado do Ubuntu Desktop',
       icon: app.icon,
+      rawFileName: app.rawFileName,
+      appId: app.appId,
+      profileDirectory: app.profileDirectory,
+      execLine: app.execLine,
       lastAccessedDate: null, // Initialized as RED (pending today)
       accessCount: 0,
       pinned: false,
@@ -209,16 +213,24 @@ export const DesktopImportModal: React.FC<DesktopImportModalProps> = ({
                       />
                     </div>
 
-                    {/* Desktop file reference */}
+                    {/* Desktop file reference & Chrome Profile badge */}
                     <div className="flex items-center justify-between text-[10px] text-neutral-400 font-mono">
-                      <span className="truncate">Arquivo: {app.rawFileName}</span>
+                      <div className="flex items-center gap-2 truncate min-w-0">
+                        <span className="truncate">Arquivo: {app.rawFileName}</span>
+                        {app.profileDirectory && (
+                          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-blue-950/80 border border-blue-800/80 text-blue-300 text-[10px] font-semibold shrink-0">
+                            <User className="w-2.5 h-2.5 text-blue-400" />
+                            <span>{app.profileDirectory}</span>
+                          </span>
+                        )}
+                      </div>
                       {app.hasExactUrl ? (
-                        <span className="text-emerald-400 flex items-center gap-1 shrink-0">
+                        <span className="text-emerald-400 flex items-center gap-1 shrink-0 ml-2">
                           <CheckCircle2 className="w-3 h-3" />
                           <span>URL confirmada</span>
                         </span>
                       ) : (
-                        <span className="text-amber-400 flex items-center gap-1 shrink-0">
+                        <span className="text-amber-400 flex items-center gap-1 shrink-0 ml-2">
                           <AlertTriangle className="w-3 h-3" />
                           <span>URL sugerida</span>
                         </span>
