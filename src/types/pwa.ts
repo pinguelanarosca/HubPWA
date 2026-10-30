@@ -13,6 +13,7 @@ export interface PWAItem {
   appId?: string;
   profileDirectory?: string;
   execLine?: string;
+  desktopPath?: string;
 }
 
 export type ViewDensity = 'compact-table' | 'dense-grid' | 'cards';

@@ -12,6 +12,7 @@ interface TopBarProps {
   onMarkAllToday: () => void;
   onResetToday: () => void;
   onRefreshAllIcons?: () => void;
+  onRescanLocalPWAs?: () => void;
 }
 
 export const TopBar: React.FC<TopBarProps> = ({
@@ -24,6 +25,7 @@ export const TopBar: React.FC<TopBarProps> = ({
   onMarkAllToday,
   onResetToday,
   onRefreshAllIcons,
+  onRescanLocalPWAs,
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -119,6 +121,16 @@ export const TopBar: React.FC<TopBarProps> = ({
                 <RotateCcw className="w-3.5 h-3.5 text-rose-400" />
                 <span>Resetar status de hoje</span>
               </button>
+              {onRescanLocalPWAs && (
+                <button
+                  type="button"
+                  onClick={onRescanLocalPWAs}
+                  className="w-full text-left px-3 py-1.5 text-xs text-neutral-200 hover:bg-neutral-800 hover:text-emerald-400 flex items-center gap-2 cursor-pointer"
+                >
+                  <RotateCw className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>Sincronizar PWAs locais</span>
+                </button>
+              )}
               {onRefreshAllIcons && (
                 <button
                   type="button"

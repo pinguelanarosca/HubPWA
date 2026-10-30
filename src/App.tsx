@@ -88,6 +88,59 @@ export default function App() {
     return () => clearInterval(interval);
   }, [todayStr]);
 
+  // Merge scanned local Ubuntu PWAs with stored user tracking state
+  const mergeScannedPWAs = useCallback((scannedItems: PWAItem[]) => {
+    setItems((prev) => {
+      const prevMap = new Map<string, PWAItem>();
+      prev.forEach((it) => {
+        const key = it.desktopPath || it.rawFileName || `${it.appId || it.url}::${it.profileDirectory || 'Default'}`;
+        prevMap.set(key, it);
+        prevMap.set(it.id, it);
+      });
+
+      const mergedList = scannedItems.map((scanned) => {
+        const key = scanned.desktopPath || scanned.rawFileName || `${scanned.appId || scanned.url}::${scanned.profileDirectory || 'Default'}`;
+        const existing = prevMap.get(key) || prevMap.get(scanned.id);
+
+        if (existing) {
+          return {
+            ...scanned,
+            notes: existing.notes || scanned.notes,
+            pinned: existing.pinned ?? scanned.pinned,
+            accessCount: existing.accessCount || scanned.accessCount,
+            lastAccessedDate: existing.lastAccessedDate ?? scanned.lastAccessedDate,
+          };
+        }
+        return scanned;
+      });
+
+      const scannedKeys = new Set(mergedList.map((m) => m.id));
+      const manualItems = prev.filter((p) => !scannedKeys.has(p.id));
+
+      return [...mergedList, ...manualItems];
+    });
+  }, []);
+
+  // Automatic discovery scan on launch & on demand
+  const handleRescanLocalPWAs = useCallback(async () => {
+    try {
+      const res = await fetch('/api/pwas/scan');
+      if (res.ok) {
+        const data = await res.json();
+        if (data.items && Array.isArray(data.items) && data.items.length > 0) {
+          mergeScannedPWAs(data.items);
+        }
+      }
+    } catch (err) {
+      console.warn('Scan de PWAs locais:', err);
+    }
+  }, [mergeScannedPWAs]);
+
+  // Trigger local discovery scan when app loads
+  useEffect(() => {
+    handleRescanLocalPWAs();
+  }, [handleRescanLocalPWAs]);
+
   // Persist items to localStorage
   useEffect(() => {
     try {
@@ -233,6 +286,7 @@ export default function App() {
           appId: item.appId,
           profileDirectory: item.profileDirectory,
           execLine: item.execLine,
+          desktopPath: item.desktopPath,
         }),
       });
 
@@ -396,6 +450,7 @@ export default function App() {
         onMarkAllToday={handleMarkAllToday}
         onResetToday={handleResetToday}
         onRefreshAllIcons={handleRefreshAllIcons}
+        onRescanLocalPWAs={handleRescanLocalPWAs}
       />
 
       {/* Main Container */}

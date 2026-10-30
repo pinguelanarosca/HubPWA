@@ -5,7 +5,9 @@ import { fileURLToPath } from 'url';
 import { createServer as createViteServer } from 'vite';
 import { parseGitHubCommitResponse, isUpdateAvailable } from './src/utils/githubUpdater.js';
 
+import os from 'os';
 import { spawn, exec, execSync } from 'child_process';
+import { parseDesktopFile, ParsedDesktopApp, convertParsedToPWAs } from './src/utils/desktopParser.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -26,6 +28,147 @@ function hasCommand(cmd: string): boolean {
     return false;
   }
 }
+
+// Helper to find local icon file on Ubuntu/Linux
+function findLocalIcon(iconNameOrPath: string): string | null {
+  if (!iconNameOrPath) return null;
+
+  // 1. Absolute path
+  if (path.isAbsolute(iconNameOrPath) && fs.existsSync(iconNameOrPath)) {
+    return iconNameOrPath;
+  }
+
+  const homeDir = process.env.HOME || os.homedir();
+  const searchDirs = [
+    path.join(homeDir, '.local/share/icons'),
+    path.join(homeDir, '.local/share/icons/hicolor'),
+    '/usr/share/icons/hicolor',
+    '/usr/share/pixmaps',
+    '/usr/share/icons',
+  ];
+
+  const extensions = ['.png', '.svg', '.xpm', ''];
+  const sizes = ['256x256', '128x128', '512x512', '64x64', '48x48', 'scalable'];
+
+  for (const baseDir of searchDirs) {
+    if (!fs.existsSync(baseDir)) continue;
+
+    for (const ext of extensions) {
+      const fileName = iconNameOrPath.endsWith(ext) ? iconNameOrPath : `${iconNameOrPath}${ext}`;
+
+      const directPath = path.join(baseDir, fileName);
+      if (fs.existsSync(directPath)) return directPath;
+
+      for (const sz of sizes) {
+        const szPath = path.join(baseDir, sz, 'apps', fileName);
+        if (fs.existsSync(szPath)) return szPath;
+      }
+    }
+  }
+
+  return null;
+}
+
+// Route to serve local Linux icon image files directly to browser
+app.get('/api/icon', (req, res) => {
+  const iconParam = String(req.query.path || req.query.name || '');
+  if (!iconParam) {
+    return res.status(404).end();
+  }
+
+  const resolved = findLocalIcon(iconParam);
+  if (resolved && fs.existsSync(resolved)) {
+    return res.sendFile(resolved);
+  }
+
+  return res.status(404).end();
+});
+
+// Helper to scan local .desktop files from Ubuntu
+function scanLocalPWAs(): ParsedDesktopApp[] {
+  if (process.platform !== 'linux') {
+    return [];
+  }
+
+  const homeDir = process.env.HOME || os.homedir();
+  const targetFolders = [
+    path.join(homeDir, '.local/share/applications'),
+    path.join(homeDir, 'Área de trabalho/001'),
+    path.join(homeDir, 'Desktop/001'),
+    path.join(homeDir, 'Área de trabalho'),
+    path.join(homeDir, 'Desktop'),
+  ];
+
+  const foundFiles: { filePath: string; fileName: string }[] = [];
+
+  for (const folder of targetFolders) {
+    if (!fs.existsSync(folder)) continue;
+    try {
+      const files = fs.readdirSync(folder);
+      for (const file of files) {
+        if (file.endsWith('.desktop')) {
+          foundFiles.push({
+            filePath: path.join(folder, file),
+            fileName: file,
+          });
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  const seenMap = new Map<string, ParsedDesktopApp>();
+
+  for (const item of foundFiles) {
+    try {
+      const content = fs.readFileSync(item.filePath, 'utf-8');
+      if (
+        !content.includes('chrome') &&
+        !content.includes('--app') &&
+        !content.includes('URL=') &&
+        !content.includes('Exec=')
+      ) {
+        continue;
+      }
+
+      const parsed = parseDesktopFile(content, item.fileName);
+      if (!parsed) continue;
+
+      parsed.desktopPath = item.filePath;
+
+      // Deduplication key: Preserve same PWA across DIFFERENT profiles!
+      const dedupeKey = `${(parsed.appId || parsed.url).toLowerCase()}::${(parsed.profileDirectory || 'Default').toLowerCase()}`;
+
+      if (!seenMap.has(dedupeKey)) {
+        seenMap.set(dedupeKey, parsed);
+      } else {
+        const existing = seenMap.get(dedupeKey)!;
+        if (!existing.appId && parsed.appId) {
+          seenMap.set(dedupeKey, parsed);
+        } else if (item.filePath.includes('.local/share/applications')) {
+          seenMap.set(dedupeKey, parsed);
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  return Array.from(seenMap.values());
+}
+
+// Endpoint to automatically discover local PWAs on Ubuntu
+app.get('/api/pwas/scan', (_req, res) => {
+  try {
+    const discoveredApps = scanLocalPWAs();
+    const pwaItems = convertParsedToPWAs(discoveredApps);
+    return res.json({ success: true, items: pwaItems, count: pwaItems.length });
+  } catch (err) {
+    console.error('Erro ao escanear PWAs locais:', err);
+    return res.status(500).json({ success: false, items: [], count: 0, error: (err as Error).message });
+  }
+});
 
 // Helper to read local version.json
 function getLocalVersion() {
@@ -50,8 +193,8 @@ function getLocalVersion() {
 
 // 0. POST /api/launch-pwa - Launches PWA in native Chrome Standalone App Window on Ubuntu/Linux preserving profile
 app.post('/api/launch-pwa', (req, res) => {
-  const { url, rawFileName, appId, profileDirectory, execLine } = req.body || {};
-  if (!url && !rawFileName && !execLine) {
+  const { url, rawFileName, appId, profileDirectory, execLine, desktopPath } = req.body || {};
+  if (!url && !rawFileName && !execLine && !desktopPath) {
     return res.status(400).json({ error: 'URL ou atalho é obrigatório para lançar a PWA.' });
   }
 
@@ -74,14 +217,20 @@ app.post('/api/launch-pwa', (req, res) => {
     const profileArg = profileDirectory ? `--profile-directory="${profileDirectory}"` : '';
     const commandCandidates: string[] = [];
 
-    // 1. If we have the exact .desktop file, gtk-launch preserves the exact installed Chrome profile
+    // 1. Direct GIO launch of full .desktop file (exact match on Ubuntu desktop)
+    if (desktopPath && fs.existsSync(desktopPath)) {
+      if (hasGio) commandCandidates.push(`gio launch "${desktopPath}" 2>/dev/null`);
+      if (hasGtkLaunch) commandCandidates.push(`gtk-launch "${path.basename(desktopPath, '.desktop')}" 2>/dev/null`);
+    }
+
+    // 2. If we have the exact .desktop file in ~/.local/share/applications/
     if (rawFileName) {
       const desktopName = rawFileName.replace(/\.desktop$/i, '');
       if (hasGtkLaunch) commandCandidates.push(`gtk-launch "${desktopName}" 2>/dev/null`);
       if (hasGio) commandCandidates.push(`gio launch "$HOME/.local/share/applications/${rawFileName}" 2>/dev/null`);
     }
 
-    // 2. Direct execLine if saved
+    // 3. Direct execLine if saved
     if (execLine) {
       const sanitizedExec = execLine.replace(/%[uUfF]/g, '').trim();
       if (sanitizedExec) {
@@ -89,14 +238,14 @@ app.post('/api/launch-pwa', (req, res) => {
       }
     }
 
-    // 3. App-ID with Profile
+    // 4. App-ID with Profile
     if (appId && hasChrome) {
       commandCandidates.push(`google-chrome ${profileArg} --app-id="${appId}" 2>/dev/null`);
       commandCandidates.push(`google-chrome-stable ${profileArg} --app-id="${appId}" 2>/dev/null`);
       commandCandidates.push(`chromium ${profileArg} --app-id="${appId}" 2>/dev/null`);
     }
 
-    // 4. URL App Mode with Profile
+    // 5. URL App Mode with Profile
     if (url && hasChrome) {
       commandCandidates.push(`google-chrome ${profileArg} --app="${url}" 2>/dev/null`);
       commandCandidates.push(`google-chrome-stable ${profileArg} --app="${url}" 2>/dev/null`);

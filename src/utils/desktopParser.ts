@@ -13,6 +13,7 @@ export interface ParsedDesktopApp {
   appId?: string;
   profileDirectory?: string;
   execLine?: string;
+  desktopPath?: string;
 }
 
 // Known common web apps map for Chrome --app-id PWAs on Linux
@@ -206,18 +207,28 @@ export function parseDesktopFile(content: string, fileName: string = ''): Parsed
   }
 
   let resolvedIcon: string | undefined = undefined;
-  if (icon && (icon.startsWith('http') || icon.startsWith('/') || icon.startsWith('data:'))) {
+  if (icon && (icon.startsWith('http') || icon.startsWith('data:'))) {
     resolvedIcon = icon;
+  } else if (icon) {
+    if (icon.startsWith('/')) {
+      resolvedIcon = `/api/icon?path=${encodeURIComponent(icon)}`;
+    } else {
+      resolvedIcon = `/api/icon?name=${encodeURIComponent(icon)}`;
+    }
   } else if (detectedUrl) {
     resolvedIcon = resolveFaviconAtInsertion(detectedUrl);
   }
 
+  // Generate stable ID based on appId, rawFileName or URL + Profile
+  const stableSeed = appId || fileName || `${detectedUrl}_${profileDirectory || 'default'}`;
+  const stableId = `pwa_${stableSeed.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+
   return {
-    id: `pwa_desktop_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+    id: stableId,
     name,
     url: detectedUrl,
     category,
-    notes: comment ? `${comment} (Importado do Ubuntu)` : 'Importado do Ubuntu Desktop',
+    notes: comment ? `${comment}` : '',
     icon: resolvedIcon,
     rawFileName: fileName,
     hasExactUrl,
@@ -242,6 +253,7 @@ export function convertParsedToPWAs(parsedList: ParsedDesktopApp[]): PWAItem[] {
     appId: parsed.appId,
     profileDirectory: parsed.profileDirectory,
     execLine: parsed.execLine,
+    desktopPath: parsed.desktopPath,
     lastAccessedDate: null,
     accessCount: 0,
     pinned: false,

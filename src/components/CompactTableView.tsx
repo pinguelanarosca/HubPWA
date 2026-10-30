@@ -42,11 +42,9 @@ export const CompactTableView: React.FC<CompactTableViewProps> = ({
         <thead>
           <tr className="border-b border-neutral-800 bg-neutral-900/60 text-neutral-400 font-medium select-none text-[11px]">
             <th className="py-2 px-3 w-10 text-center">Fixar</th>
-            <th className="py-2 px-3 w-32">Status Hoje</th>
-            <th className="py-2 px-3 w-64">PWA & Domínio</th>
-            <th className="py-2 px-3 w-40">Categoria</th>
+            <th className="py-2 px-3 w-36">Status Hoje</th>
+            <th className="py-2 px-3 min-w-[220px]">PWA & Domínio</th>
             <th className="py-2 px-3 min-w-[280px]">Anotações (Clique para editar)</th>
-            <th className="py-2 px-3 w-28 text-right">Ação</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-neutral-900/80">
@@ -77,23 +75,31 @@ export const CompactTableView: React.FC<CompactTableViewProps> = ({
                   </button>
                 </td>
 
-                {/* Status Indicator (Verde / Vermelho) */}
-                <td className="py-1 px-3 whitespace-nowrap">
+                {/* Status Indicator (Verde / Vermelho - Clicável para Abrir PWA) */}
+                <td
+                  className="py-1 px-3 whitespace-nowrap cursor-pointer hover:opacity-80 transition-opacity"
+                  onClick={() => onLaunch(item)}
+                  title={`Abrir ${item.name} e marcar como acessado hoje`}
+                >
                   <StatusIndicator
                     lastAccessedDate={item.lastAccessedDate}
                     todayStr={todayStr}
-                    onToggle={() => onToggleStatus(item)}
+                    onToggle={() => onLaunch(item)}
                     compact={false}
                     showText={true}
                   />
                 </td>
 
-                {/* PWA Icon + Name + Link */}
-                <td className="py-1 px-3">
+                {/* PWA Icon + Name + Link (Clicável para Abrir PWA) */}
+                <td
+                  className="py-1 px-3 cursor-pointer hover:opacity-80 transition-opacity"
+                  onClick={() => onLaunch(item)}
+                  title={`Abrir ${item.name}`}
+                >
                   <div className="flex items-center gap-2 max-w-xs">
                     <PWAIcon icon={item.icon} name={item.name} size="sm" />
                     <div className="min-w-0 truncate">
-                      <span className="font-medium text-neutral-200 group-hover:text-white truncate block">
+                      <span className="font-medium text-neutral-200 group-hover:text-emerald-400 truncate block">
                         {item.name}
                       </span>
                       <span className="text-[10px] text-neutral-400 truncate flex items-center gap-1.5">
@@ -109,13 +115,6 @@ export const CompactTableView: React.FC<CompactTableViewProps> = ({
                   </div>
                 </td>
 
-                {/* Category */}
-                <td className="py-1 px-3 whitespace-nowrap">
-                  <span className="text-[11px] text-neutral-400 font-mono tracking-tight">
-                    {item.category}
-                  </span>
-                </td>
-
                 {/* Compact Inline Editable Notes Field */}
                 <td className="py-1 px-3">
                   <InlineNoteInput
@@ -123,41 +122,6 @@ export const CompactTableView: React.FC<CompactTableViewProps> = ({
                     onSave={(newNote) => onUpdateNote(item, newNote)}
                     placeholder="Adicionar nota rápida..."
                   />
-                </td>
-
-                {/* Quick Actions (Launch & Menu) */}
-                <td className="py-1 px-3 text-right whitespace-nowrap">
-                  <div className="flex items-center justify-end gap-1">
-                    <button
-                      type="button"
-                      onClick={() => onLaunch(item)}
-                      title={`Abrir ${item.name} (marca como acessado hoje)`}
-                      className="inline-flex items-center gap-1 px-2 py-1 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-200 hover:text-white text-[11px] font-medium transition-colors cursor-pointer"
-                    >
-                      <ExternalLink className="w-3 h-3 text-emerald-400" />
-                      <span>Abrir</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => onEdit(item)}
-                      title="Editar detalhes"
-                      aria-label={`Editar ${item.name}`}
-                      className="p-1 rounded text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800/80 transition-colors cursor-pointer opacity-0 group-hover:opacity-100"
-                    >
-                      <Edit2 className="w-3 h-3" />
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => onDelete(item.id)}
-                      title="Excluir PWA"
-                      aria-label={`Excluir ${item.name}`}
-                      className="p-1 rounded text-neutral-400 hover:text-rose-400 hover:bg-rose-950/40 transition-colors cursor-pointer opacity-0 group-hover:opacity-100"
-                    >
-                      <Trash2 className="w-3 h-3" />
-                    </button>
-                  </div>
                 </td>
               </tr>
             );
