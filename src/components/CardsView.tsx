@@ -92,8 +92,14 @@ export const CardsView: React.FC<CardsViewProps> = ({
                   {/* Badges: Chrome Profile, Aliases, and Possible Duplicate */}
                   <div className="flex items-center gap-1 flex-wrap mt-1.5">
                     {item.profileDirectory && (
-                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-blue-950/80 border border-blue-800/80 text-blue-300 text-[9px] font-semibold font-mono shrink-0">
-                        <User className="w-2.5 h-2.5 text-blue-400" />
+                      <span
+                        className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-semibold font-mono shrink-0 ${
+                          item.profileDirectory.toLowerCase().includes('5')
+                            ? 'bg-emerald-950/80 border border-emerald-700/80 text-emerald-300'
+                            : 'bg-blue-950/80 border border-blue-800/80 text-blue-300'
+                        }`}
+                      >
+                        <User className="w-2.5 h-2.5" />
                         <span>{item.profileDirectory}</span>
                       </span>
                     )}

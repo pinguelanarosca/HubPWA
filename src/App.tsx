@@ -13,8 +13,10 @@ import {
   calculateStats,
   filterAndSortPWAs,
   resolveFaviconAtInsertion,
+  getCleanDomain,
 } from './utils/pwaLogic';
 import { parseDesktopFile, ParsedDesktopApp } from './utils/desktopParser';
+import { normalizeAppUrl } from './utils/desktopDeduplicator';
 import { TopBar } from './components/TopBar';
 import { ControlToolbar } from './components/ControlToolbar';
 import { CompactTableView } from './components/CompactTableView';
@@ -89,40 +91,79 @@ export default function App() {
   }, [todayStr]);
 
   // Merge scanned local Ubuntu PWAs with stored user tracking state
+  // Consolidates all previously saved versions of the same platform into the Profile 5 card
   const mergeScannedPWAs = useCallback((scannedItems: PWAItem[]) => {
     setItems((prev) => {
-      const prevMap = new Map<string, PWAItem>();
-      prev.forEach((it) => {
-        const key = it.desktopPath || it.rawFileName || `${it.appId || it.url}::${it.profileDirectory || 'Default'}`;
-        prevMap.set(key, it);
-        prevMap.set(it.id, it);
-      });
+      const absorbedPrevIds = new Set<string>();
 
       const mergedList = scannedItems.map((scanned) => {
-        const key = scanned.desktopPath || scanned.rawFileName || `${scanned.appId || scanned.url}::${scanned.profileDirectory || 'Default'}`;
-        const existing = prevMap.get(key) || prevMap.get(scanned.id);
+        const normScannedUrl = normalizeAppUrl(scanned.url);
+        const scannedDom = getCleanDomain(scanned.url || '');
 
-        if (existing) {
-          const combinedAliases = Array.from(
-            new Set([...(existing.aliases || []), ...(scanned.aliases || [])])
-          ).filter(Boolean);
+        // Find ALL previous entries that belong to this platform
+        const matches = prev.filter((p) => {
+          if (p.id === scanned.id) return true;
+          if (scanned.appId && p.appId && scanned.appId.toLowerCase() === p.appId.toLowerCase()) return true;
+          if (scanned.desktopPath && p.desktopPath && (p.desktopPath === scanned.desktopPath || (scanned.alternateDesktopPaths || []).includes(p.desktopPath))) return true;
+          if (scanned.rawFileName && p.rawFileName && (p.rawFileName === scanned.rawFileName || (scanned.mergedDesktopFiles || []).includes(p.rawFileName))) return true;
+          if (normScannedUrl && normalizeAppUrl(p.url) === normScannedUrl) return true;
+          if (scannedDom && scannedDom !== 'localhost' && getCleanDomain(p.url || '') === scannedDom) return true;
+          if ((scanned.mergedNames || []).includes(p.name)) return true;
+          return false;
+        });
+
+        matches.forEach((m) => absorbedPrevIds.add(m.id));
+
+        if (matches.length > 0) {
+          // Consolidate metadata across all matched previous installations
+          const isAnyPinned = matches.some((m) => m.pinned) || Boolean(scanned.pinned);
+
+          // Combine aliases
+          const allAliases = new Set<string>(scanned.aliases || []);
+          matches.forEach((m) => (m.aliases || []).forEach((a) => allAliases.add(a)));
+
+          // Combine notes
+          const noteList: string[] = [];
+          if (scanned.notes && scanned.notes.trim()) noteList.push(scanned.notes.trim());
+          matches.forEach((m) => {
+            if (m.notes && m.notes.trim() && !noteList.includes(m.notes.trim())) {
+              noteList.push(m.notes.trim());
+            }
+          });
+
+          // Most recent lastAccessedDate
+          let latestDate = scanned.lastAccessedDate || null;
+          for (const m of matches) {
+            if (m.lastAccessedDate) {
+              if (!latestDate || m.lastAccessedDate > latestDate) {
+                latestDate = m.lastAccessedDate;
+              }
+            }
+          }
+
+          // Total or highest accessCount
+          const totalAccess = Math.max(
+            scanned.accessCount || 0,
+            ...matches.map((m) => m.accessCount || 0)
+          );
 
           return {
             ...scanned,
-            aliases: combinedAliases.length > 0 ? combinedAliases : undefined,
-            notes: existing.notes || scanned.notes,
-            pinned: existing.pinned ?? scanned.pinned,
-            accessCount: existing.accessCount || scanned.accessCount,
-            lastAccessedDate: existing.lastAccessedDate ?? scanned.lastAccessedDate,
+            pinned: isAnyPinned,
+            aliases: Array.from(allAliases).filter(Boolean),
+            notes: noteList.join(' | '),
+            lastAccessedDate: latestDate,
+            accessCount: totalAccess,
           };
         }
+
         return scanned;
       });
 
-      const scannedKeys = new Set(mergedList.map((m) => m.id));
-      const manualItems = prev.filter((p) => !scannedKeys.has(p.id));
+      // Keep only manual items that weren't absorbed into any platform
+      const remainingManualItems = prev.filter((p) => !absorbedPrevIds.has(p.id));
 
-      return [...mergedList, ...manualItems];
+      return [...mergedList, ...remainingManualItems];
     });
   }, []);
 

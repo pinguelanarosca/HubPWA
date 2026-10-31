@@ -36,275 +36,367 @@ export function normalizeAppUrl(rawUrl: string): string {
 }
 
 /**
- * Checks whether two names appear to be from the same platform
- * (e.g. "Mercado Livre" and "95D - Mercado Livre", or one is a short code like "95D")
+ * Checks whether a name appears to be a short code (e.g. "95D", "93D", "95H", "A1")
  */
-function isCodeLikeName(name: string): boolean {
+export function isCodeLikeName(name: string): boolean {
+  if (!name) return false;
   const clean = name.trim();
-  // Patterns like "95D", "93D", "95H", "App 1", short alphanumerics <= 6 chars
+  // Patterns like "95D", "93D", "95H", short alphanumeric codes <= 5 chars
   return /^[0-9]{1,4}[a-zA-Z]{0,3}$/.test(clean) || clean.length <= 4;
 }
 
 /**
- * Chooses the best primary name between two duplicate candidates
+ * Checks whether an item belongs to Chrome's Profile 5
  */
-function pickBetterName(nameA: string, nameB: string): { primary: string; secondary: string } {
-  const isCodeA = isCodeLikeName(nameA);
-  const isCodeB = isCodeLikeName(nameB);
-
-  if (isCodeA && !isCodeB) {
-    return { primary: nameB, secondary: nameA };
+export function isItemProfile5(item: {
+  profileDirectory?: string;
+  execLine?: string;
+  desktopPath?: string;
+  rawFileName?: string;
+}): boolean {
+  if (item.profileDirectory) {
+    const clean = item.profileDirectory.toLowerCase().replace(/[\s_-]/g, '');
+    if (clean === 'profile5') return true;
   }
-  if (!isCodeA && isCodeB) {
-    return { primary: nameA, secondary: nameB };
+  if (item.execLine && /--profile-directory=["']?Profile[ _]?5["']?/i.test(item.execLine)) {
+    return true;
   }
-  // Prefer longer, more descriptive name
-  if (nameB.length > nameA.length) {
-    return { primary: nameB, secondary: nameA };
+  if (item.desktopPath && /Profile[ _]?5/i.test(item.desktopPath)) {
+    return true;
   }
-  return { primary: nameA, secondary: nameB };
+  if (item.rawFileName && /Profile[ _]?5/i.test(item.rawFileName)) {
+    return true;
+  }
+  return false;
 }
 
 /**
- * Checks if two parsed apps are confirmed duplicates (equivalent to the SAME installation in the SAME profile)
+ * Helper to get filename from rawFileName or desktopFileName
  */
-export function areConfirmedDuplicates(a: ParsedDesktopApp, b: ParsedDesktopApp): boolean {
-  // Profiles MUST be identical to even consider merging
-  const profA = (a.profileDirectory || 'Default').toLowerCase().trim();
-  const profB = (b.profileDirectory || 'Default').toLowerCase().trim();
-  if (profA !== profB) {
-    return false;
-  }
+function getDesktopFileName(item: ParsedDesktopApp): string {
+  return item.rawFileName || (item as any).desktopFileName || '';
+}
 
-  // If BOTH have an explicit Chrome appId and they differ, they are separate installations
-  if (a.appId && b.appId && a.appId.toLowerCase() !== b.appId.toLowerCase()) {
-    return false;
-  }
-
-  // Rule 1: Exact same Chrome app-id in the same profile
+/**
+ * Checks if two entries belong to the exact same platform
+ * Evaluates appId, normalized URL, domain, desktop filename, code-like cross-reference, and names.
+ */
+export function areSamePlatform(a: ParsedDesktopApp, b: ParsedDesktopApp): boolean {
+  // 1. Same Chrome appId (Chrome calculates the 32-character ID from the PWA manifest start_url)
   if (a.appId && b.appId && a.appId.toLowerCase() === b.appId.toLowerCase()) {
     return true;
   }
 
-  // Rule 2: Exact same .desktop file name across different directories (e.g. applications vs Desktop)
-  const nameA = a.rawFileName || (a as any).desktopFileName;
-  const nameB = b.rawFileName || (b as any).desktopFileName;
-  if (nameA && nameB && nameA.toLowerCase() === nameB.toLowerCase()) {
-    return true;
-  }
-
-  // Rule 3: Identical normalized target URL in the same profile
+  // 2. Exact same normalized URL
   const normUrlA = normalizeAppUrl(a.url);
   const normUrlB = normalizeAppUrl(b.url);
   if (normUrlA && normUrlB && normUrlA === normUrlB) {
     return true;
   }
 
-  // Rule 4: Same domain, same profile, and identical icon hash
-  const domainA = getCleanDomain(a.url || '');
-  const domainB = getCleanDomain(b.url || '');
-  if (
-    domainA &&
-    domainB &&
-    domainA === domainB &&
-    a.iconHash &&
-    b.iconHash &&
-    a.iconHash === b.iconHash
-  ) {
-    // If one name is a code like 95D and the other is the site name, or names match
-    const nameNormA = normalizeSearchText(a.name);
-    const nameNormB = normalizeSearchText(b.name);
-    if (nameNormA === nameNormB || isCodeLikeName(a.name) || isCodeLikeName(b.name)) {
-      return true;
+  // 3. Same clean domain (e.g. mercadolivre.com.br, web.whatsapp.com, vault.bitwarden.com)
+  const domA = getCleanDomain(a.url || '');
+  const domB = getCleanDomain(b.url || '');
+  if (domA && domB && domA !== 'localhost' && domA.length > 3) {
+    if (domA === domB) {
+      // For shared corporate domains like google.com, require matching service subdomain or subpath
+      if (domA === 'google.com') {
+        const subA = (a.url.match(/https?:\/\/([^/]+)/) || [])[1] || '';
+        const subB = (b.url.match(/https?:\/\/([^/]+)/) || [])[1] || '';
+        if (subA && subB && subA === subB) {
+          return true;
+        }
+      } else {
+        return true;
+      }
     }
   }
 
+  // 4. Identical desktop file name (e.g. 95D.desktop in ~/.local/share/applications vs Desktop/001)
+  const fileA = getDesktopFileName(a);
+  const fileB = getDesktopFileName(b);
+  if (fileA && fileB && fileA.toLowerCase() === fileB.toLowerCase()) {
+    return true;
+  }
+
+  // 5. Code-like cross-reference: one item is named "95D" and the other references "95D" in files or aliases
+  const checkCodeMatch = (codeApp: ParsedDesktopApp, targetApp: ParsedDesktopApp) => {
+    const code = codeApp.name?.trim();
+    if (!isCodeLikeName(code)) return false;
+    const cleanCode = toCompactAlphaNumeric(code);
+    if (!cleanCode) return false;
+
+    const targetFiles = [
+      getDesktopFileName(targetApp),
+      ...(targetApp.mergedDesktopFiles || []),
+      ...(targetApp.aliases || []),
+      ...(targetApp.mergedNames || []),
+    ].map(toCompactAlphaNumeric);
+
+    return targetFiles.includes(cleanCode);
+  };
+
+  if (checkCodeMatch(a, b) || checkCodeMatch(b, a)) {
+    return true;
+  }
+
+  // 6. Descriptive names match exactly (when neither is a short code like 95D)
+  const nameA = normalizeSearchText(a.name);
+  const nameB = normalizeSearchText(b.name);
+  if (nameA && nameB && nameA === nameB && !isCodeLikeName(a.name) && !isCodeLikeName(b.name)) {
+    return true;
+  }
+
+  // 7. Matching icon hash on the same root domain
+  if (
+    a.iconHash &&
+    b.iconHash &&
+    a.iconHash === b.iconHash &&
+    domA &&
+    domB &&
+    (domA === domB || domA.endsWith(`.${domB}`) || domB.endsWith(`.${domA}`))
+  ) {
+    return true;
+  }
+
   return false;
 }
 
 /**
- * Checks if two parsed apps are ambiguous candidates that should be flagged for review (not deleted)
+ * Calculates priority score for an installation of a platform.
+ * PROFILE 5 HAS ABSOLUTE PRIORITY over all other profiles (+100,000 points).
  */
-export function arePossibleDuplicates(a: ParsedDesktopApp, b: ParsedDesktopApp): boolean {
-  const profA = (a.profileDirectory || 'Default').toLowerCase().trim();
-  const profB = (b.profileDirectory || 'Default').toLowerCase().trim();
-  if (profA !== profB) {
-    return false;
+export function getInstallationScore(item: ParsedDesktopApp): number {
+  let score = 0;
+
+  // ABSOLUTE PRIORITY: Profile 5
+  if (isItemProfile5(item)) {
+    score += 100000;
   }
 
-  const domainA = getCleanDomain(a.url || '');
-  const domainB = getCleanDomain(b.url || '');
-
-  // Case A: Identical icon hash in the same profile, but different app-ids or URLs
-  if (a.iconHash && b.iconHash && a.iconHash === b.iconHash) {
-    return true;
+  // Has existing desktop launcher path
+  if (item.desktopPath) {
+    score += 1000;
+    // Prefer the canonical ~/.local/share/applications directory
+    if (item.desktopPath.includes('.local/share/applications')) {
+      score += 500;
+    }
   }
 
-  // Case B: Same clean domain in the same profile, but differing URLs
-  if (domainA && domainB && domainA === domainB && domainA !== 'localhost') {
-    return true;
+  // Has explicit Chrome appId
+  if (item.appId) {
+    score += 200;
   }
 
-  return false;
+  // Has explicit Exec command line
+  if (item.execLine) {
+    score += 100;
+  }
+
+  // Has resolved local icon
+  if (item.icon && !item.icon.includes('google.com/s2/favicons')) {
+    score += 50;
+  }
+
+  // Prefer human-readable descriptive name over short codes
+  if (!isCodeLikeName(item.name)) {
+    score += 20;
+  }
+
+  return score;
 }
 
 /**
- * Intelligently deduplicates scanned desktop apps:
- * - Automatically merges confirmed duplicates (same installation, same profile)
- * - Retains all aliases, merged names, desktop file names for search
- * - Preserves installations in different profiles
- * - Flags ambiguous cases for user review without deletion
+ * Strips unwanted profile suffixes like "(Perfil 2)" or "(Profile 1)" from names
+ */
+export function cleanProfileSuffix(name: string): string {
+  if (!name) return '';
+  return name.replace(/\s*\((?:perfil|profile)\s*\d+\)/i, '').trim();
+}
+
+/**
+ * Chooses the best human-readable descriptive name among candidates
+ */
+function pickBestDisplayName(primary: ParsedDesktopApp, allNames: string[]): string {
+  const cleanedPrimary = cleanProfileSuffix(primary.name);
+  if (cleanedPrimary && !isCodeLikeName(cleanedPrimary)) {
+    return cleanedPrimary;
+  }
+
+  // If primary is a code like 95D, find descriptive name from other candidates
+  const descriptive = allNames
+    .map(cleanProfileSuffix)
+    .filter((n) => n && !isCodeLikeName(n));
+
+  if (descriptive.length > 0) {
+    return descriptive[0];
+  }
+
+  return cleanedPrimary || primary.name || 'PWA';
+}
+
+/**
+ * Consolidated deduplication engine:
+ * - Exactly ONE card per platform across ALL profiles
+ * - Absolute priority for Chrome Profile 5
+ * - If not in Profile 5, maintains one valid installation from another profile
+ * - Retains desktop launcher, appId and profile of the chosen installation for native launch
+ * - Consolidates all notes, aliases, desktop filenames, and history
+ * - Does not modify or delete Ubuntu .desktop files
  */
 export function deduplicateDesktopApps(rawApps: ParsedDesktopApp[]): DeduplicationResult {
   const totalRawFound = rawApps.length;
-  const consolidated: ParsedDesktopApp[] = [];
+
+  if (rawApps.length === 0) {
+    return {
+      items: [],
+      stats: {
+        totalRawFound: 0,
+        confirmedDuplicatesMerged: 0,
+        activeCount: 0,
+        possibleDuplicatesCount: 0,
+      },
+    };
+  }
+
+  // Group raw apps into platform clusters
+  const clusters: ParsedDesktopApp[][] = [];
+
+  for (const app of rawApps) {
+    const matchingClusterIndices: number[] = [];
+
+    for (let i = 0; i < clusters.length; i++) {
+      const cluster = clusters[i];
+      // Check if app matches any member of this cluster
+      const matchesCluster = cluster.some((member) => areSamePlatform(member, app));
+      if (matchesCluster) {
+        matchingClusterIndices.push(i);
+      }
+    }
+
+    if (matchingClusterIndices.length === 0) {
+      // New cluster
+      clusters.push([app]);
+    } else {
+      // Add to first matching cluster
+      const primaryIndex = matchingClusterIndices[0];
+      clusters[primaryIndex].push(app);
+
+      // If matches multiple clusters (transitive link), merge them
+      for (let k = matchingClusterIndices.length - 1; k > 0; k--) {
+        const mergeFromIndex = matchingClusterIndices[k];
+        clusters[primaryIndex].push(...clusters[mergeFromIndex]);
+        clusters.splice(mergeFromIndex, 1);
+      }
+    }
+  }
+
   let confirmedDuplicatesMerged = 0;
+  const consolidated: ParsedDesktopApp[] = [];
 
-  for (const candidate of rawApps) {
-    // Check if candidate matches any already consolidated app as a confirmed duplicate
-    let merged = false;
-    for (let i = 0; i < consolidated.length; i++) {
-      const existing = consolidated[i];
-      if (areConfirmedDuplicates(existing, candidate)) {
-        // Merge candidate into existing
-        confirmedDuplicatesMerged++;
-        merged = true;
+  for (const cluster of clusters) {
+    if (cluster.length > 1) {
+      confirmedDuplicatesMerged += cluster.length - 1;
+    }
 
-        const { primary, secondary } = pickBetterName(existing.name, candidate.name);
-        existing.name = primary;
+    // Sort cluster items by installation priority (Profile 5 wins with +100,000 score)
+    cluster.sort((a, b) => getInstallationScore(b) - getInstallationScore(a));
+    const primary = cluster[0];
 
-        // Merge aliases
-        const aliasesSet = new Set<string>([
-          ...(existing.aliases || []),
-          ...(candidate.aliases || []),
-        ]);
-        if (secondary && secondary !== primary) {
-          aliasesSet.add(secondary);
+    // Pick best display name
+    const allNames = cluster.map((c) => c.name);
+    const bestName = pickBestDisplayName(primary, allNames);
+
+    // Merge all aliases & code names (e.g. 95D, 93D)
+    const aliasesSet = new Set<string>();
+    for (const item of cluster) {
+      (item.aliases || []).forEach((a) => aliasesSet.add(a));
+      if (item.name && item.name !== bestName) {
+        aliasesSet.add(item.name);
+      }
+      if (isCodeLikeName(item.name)) {
+        aliasesSet.add(item.name);
+      }
+      const fileName = getDesktopFileName(item);
+      if (fileName) {
+        const baseName = fileName.replace(/\.desktop$/i, '');
+        if (isCodeLikeName(baseName)) {
+          aliasesSet.add(baseName);
         }
-        if (isCodeLikeName(candidate.name)) {
-          aliasesSet.add(candidate.name);
+      }
+    }
+
+    // Merge names
+    const mergedNamesSet = new Set<string>();
+    for (const item of cluster) {
+      if (item.name) mergedNamesSet.add(item.name);
+      (item.mergedNames || []).forEach((n) => mergedNamesSet.add(n));
+    }
+
+    // Merge desktop files
+    const mergedFilesSet = new Set<string>();
+    for (const item of cluster) {
+      const fileName = getDesktopFileName(item);
+      if (fileName) mergedFilesSet.add(fileName);
+      (item.mergedDesktopFiles || []).forEach((f) => mergedFilesSet.add(f));
+    }
+
+    // Merge alternate desktop paths
+    const alternatePathsSet = new Set<string>();
+    for (const item of cluster) {
+      if (item.desktopPath) alternatePathsSet.add(item.desktopPath);
+      (item.alternateDesktopPaths || []).forEach((p) => alternatePathsSet.add(p));
+    }
+
+    // Merge notes
+    const uniqueNotes: string[] = [];
+    for (const item of cluster) {
+      if (item.notes && item.notes.trim()) {
+        const trimmed = item.notes.trim();
+        if (!uniqueNotes.includes(trimmed)) {
+          uniqueNotes.push(trimmed);
         }
-        const fileA = existing.rawFileName || (existing as any).desktopFileName || '';
-        const fileB = candidate.rawFileName || (candidate as any).desktopFileName || '';
+      }
+    }
+    const combinedNotes = uniqueNotes.join(' | ');
 
-        if (fileB) {
-          const baseName = fileB.replace(/\.desktop$/i, '');
-          if (isCodeLikeName(baseName)) {
-            aliasesSet.add(baseName);
-          }
-        }
-
-        // Merge names
-        const mergedNamesSet = new Set<string>([
-          ...(existing.mergedNames || []),
-          existing.name,
-          candidate.name,
-        ]);
-
-        // Merge desktop files
-        const mergedFilesSet = new Set<string>([
-          ...(existing.mergedDesktopFiles || []),
-          ...(fileA ? [fileA] : []),
-          ...(fileB ? [fileB] : []),
-        ]);
-
-        // Merge alternate paths
-        const alternatePathsSet = new Set<string>([
-          ...(existing.alternateDesktopPaths || []),
-          ...(existing.desktopPath ? [existing.desktopPath] : []),
-          ...(candidate.desktopPath ? [candidate.desktopPath] : []),
-        ]);
-
-        // Prefer path in ~/.local/share/applications if available
-        let bestPath = existing.desktopPath;
-        if (candidate.desktopPath?.includes('.local/share/applications')) {
-          bestPath = candidate.desktopPath;
-        }
-
-        // Prefer best icon and appId
-        const bestAppId = existing.appId || candidate.appId;
-        const bestIcon = existing.icon || candidate.icon;
-        const bestIconHash = existing.iconHash || candidate.iconHash;
-        const bestExec = existing.execLine || candidate.execLine;
-
-        // Merge notes if distinct
-        let mergedNotes = existing.notes || '';
-        if (candidate.notes && candidate.notes !== existing.notes) {
-          mergedNotes = mergedNotes ? `${mergedNotes} | ${candidate.notes}` : candidate.notes;
-        }
-
-        consolidated[i] = {
-          ...existing,
-          name: primary,
-          appId: bestAppId,
-          icon: bestIcon,
-          iconHash: bestIconHash,
-          execLine: bestExec,
-          desktopPath: bestPath,
-          notes: mergedNotes,
-          aliases: Array.from(aliasesSet).filter(Boolean),
-          mergedNames: Array.from(mergedNamesSet).filter(Boolean),
-          mergedDesktopFiles: Array.from(mergedFilesSet).filter(Boolean),
-          alternateDesktopPaths: Array.from(alternatePathsSet).filter(Boolean),
-        };
-
+    // Best icon (prefer local icon)
+    let bestIcon = primary.icon;
+    for (const item of cluster) {
+      if (item.icon && !item.icon.includes('google.com/s2/favicons')) {
+        bestIcon = item.icon;
         break;
       }
     }
 
-    if (!merged) {
-      // Normalize stable ID with profile prefix to guarantee profile segregation
-      const profileKey = (candidate.profileDirectory || 'Default').toLowerCase().replace(/[^a-z0-9]/g, '_');
-      const seedKey = (candidate.appId || candidate.rawFileName?.replace(/\.desktop$/i, '') || candidate.url)
-        .toLowerCase()
-        .replace(/[^a-z0-9]/g, '_');
-      const stableId = `pwa_${profileKey}_${seedKey}`;
+    // Explicitly enforce profile if Profile 5 detected
+    const finalProfile = isItemProfile5(primary)
+      ? 'Profile 5'
+      : primary.profileDirectory || 'Default';
 
-      const initialAliases = new Set<string>(candidate.aliases || []);
-      if (candidate.rawFileName) {
-        const baseName = candidate.rawFileName.replace(/\.desktop$/i, '');
-        if (isCodeLikeName(baseName)) {
-          initialAliases.add(baseName);
-        }
-      }
-      if (isCodeLikeName(candidate.name)) {
-        initialAliases.add(candidate.name);
-      }
+    // Form stable ID for platform
+    const platformSeed = (primary.appId || getCleanDomain(primary.url) || bestName)
+      .toLowerCase()
+      .replace(/[^a-z0-9]/g, '_');
+    const stableId = `pwa_platform_${platformSeed}`;
 
-      consolidated.push({
-        ...candidate,
-        id: stableId,
-        aliases: Array.from(initialAliases),
-        mergedNames: [candidate.name],
-        mergedDesktopFiles: candidate.rawFileName ? [candidate.rawFileName] : [],
-        alternateDesktopPaths: candidate.desktopPath ? [candidate.desktopPath] : [],
-      });
-    }
+    consolidated.push({
+      ...primary,
+      id: stableId,
+      name: bestName,
+      profileDirectory: finalProfile,
+      icon: bestIcon,
+      notes: combinedNotes,
+      aliases: Array.from(aliasesSet).filter(Boolean),
+      mergedNames: Array.from(mergedNamesSet).filter(Boolean),
+      mergedDesktopFiles: Array.from(mergedFilesSet).filter(Boolean),
+      alternateDesktopPaths: Array.from(alternatePathsSet).filter(Boolean),
+      isPossibleDuplicate: false,
+    });
   }
 
-  // Second pass: Identify ambiguous possible duplicates (same profile, same domain/icon but different apps)
-  let possibleDuplicatesCount = 0;
-  for (let i = 0; i < consolidated.length; i++) {
-    for (let j = i + 1; j < consolidated.length; j++) {
-      const a = consolidated[i];
-      const b = consolidated[j];
-
-      if (arePossibleDuplicates(a, b)) {
-        a.isPossibleDuplicate = true;
-        b.isPossibleDuplicate = true;
-        a.possibleDuplicateReason = `Possível equivalência com "${b.name}" (${b.profileDirectory || 'Default'})`;
-        b.possibleDuplicateReason = `Possível equivalência com "${a.name}" (${a.profileDirectory || 'Default'})`;
-        a.duplicateCandidateId = b.id;
-        b.duplicateCandidateId = a.id;
-      }
-    }
-  }
-
-  for (const item of consolidated) {
-    if (item.isPossibleDuplicate) {
-      possibleDuplicatesCount++;
-    }
-  }
+  // Sort alphabetically by name
+  consolidated.sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
 
   return {
     items: consolidated,
@@ -312,7 +404,11 @@ export function deduplicateDesktopApps(rawApps: ParsedDesktopApp[]): Deduplicati
       totalRawFound,
       confirmedDuplicatesMerged,
       activeCount: consolidated.length,
-      possibleDuplicatesCount,
+      possibleDuplicatesCount: 0,
     },
   };
 }
+
+// Backwards compatibility alias
+export const areConfirmedDuplicates = areSamePlatform;
+export const arePossibleDuplicates = () => false;
