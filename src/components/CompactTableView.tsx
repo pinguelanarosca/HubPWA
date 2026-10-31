@@ -75,16 +75,15 @@ export const CompactTableView: React.FC<CompactTableViewProps> = ({
                   </button>
                 </td>
 
-                {/* Status Indicator (Verde / Vermelho - Clicável para Abrir PWA) */}
+                {/* Status Indicator (Verde / Vermelho - Clicável para Alternar Status) */}
                 <td
-                  className="py-1 px-3 whitespace-nowrap cursor-pointer hover:opacity-80 transition-opacity"
-                  onClick={() => onLaunch(item)}
-                  title={`Abrir ${item.name} e marcar como acessado hoje`}
+                  className="py-1 px-3 whitespace-nowrap"
+                  title="Status Hoje: clique para alternar"
                 >
                   <StatusIndicator
                     lastAccessedDate={item.lastAccessedDate}
                     todayStr={todayStr}
-                    onToggle={() => onLaunch(item)}
+                    onToggle={() => onToggleStatus(item)}
                     compact={false}
                     showText={true}
                   />

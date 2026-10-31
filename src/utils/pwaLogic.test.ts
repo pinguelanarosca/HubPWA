@@ -39,9 +39,10 @@ test('markAsAccessed updates timestamp and increments access count', () => {
   };
 
   const fakeNow = new Date('2026-10-29T14:30:00.000Z');
-  const updated = markAsAccessed(item, fakeNow);
+  const updated = markAsAccessed(item, fakeNow, '2026-10-29');
 
-  assert.equal(updated.lastAccessedDate, '2026-10-29T14:30:00.000Z');
+  assert.equal(isAccessedToday(updated.lastAccessedDate, '2026-10-29'), true);
+  assert.equal(isAccessedToday(updated.lastAccessedDate, '2026-10-30'), false);
   assert.equal(updated.accessCount, 1);
 });
 

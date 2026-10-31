@@ -1,35 +1,74 @@
 import { PWAItem, PWAStats, SortOption, StatusFilter } from '../types/pwa';
 
 /**
- * Returns the current date in YYYY-MM-DD local format
+ * Returns the date in YYYY-MM-DD format in the user's local timezone
  */
-export function getTodayString(d: Date = new Date()): string {
-  const year = d.getFullYear();
-  const month = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
+export function getLocalDateString(dateInput: Date | string = new Date()): string {
+  try {
+    const d = typeof dateInput === 'string' ? new Date(dateInput) : dateInput;
+    if (isNaN(d.getTime())) return '';
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  } catch {
+    return '';
+  }
 }
 
 /**
- * Checks whether the PWA was accessed today (returns true for GREEN, false for RED)
+ * Returns the current date in YYYY-MM-DD local format
+ */
+export function getTodayString(d: Date = new Date()): string {
+  return getLocalDateString(d);
+}
+
+/**
+ * Checks whether the PWA was accessed today in the user's local timezone
+ * (returns true for GREEN / Acessado hoje, false for RED / Pendente hoje)
  */
 export function isAccessedToday(
   lastAccessedDate: string | null | undefined,
   todayStr: string = getTodayString()
 ): boolean {
   if (!lastAccessedDate) return false;
-  // Compare date prefix (YYYY-MM-DD)
-  const datePrefix = lastAccessedDate.slice(0, 10);
-  return datePrefix === todayStr;
+
+  // 1. Direct match with today's local date prefix
+  if (lastAccessedDate.startsWith(todayStr)) {
+    return true;
+  }
+
+  // 2. Parse ISO timestamp and convert to user's local timezone date
+  const accessLocalDate = getLocalDateString(lastAccessedDate);
+  if (accessLocalDate && accessLocalDate === todayStr) {
+    return true;
+  }
+
+  // 3. Fallback raw slice check
+  const rawPrefix = lastAccessedDate.slice(0, 10);
+  if (rawPrefix === todayStr) {
+    return true;
+  }
+
+  return false;
 }
 
 /**
  * Marks a PWA item as accessed today
  */
-export function markAsAccessed(item: PWAItem, now: Date = new Date()): PWAItem {
+export function markAsAccessed(
+  item: PWAItem,
+  now: Date = new Date(),
+  todayStr: string = getTodayString(now)
+): PWAItem {
+  const hours = String(now.getHours()).padStart(2, '0');
+  const minutes = String(now.getMinutes()).padStart(2, '0');
+  const seconds = String(now.getSeconds()).padStart(2, '0');
+  const localIso = `${todayStr}T${hours}:${minutes}:${seconds}.000Z`;
+
   return {
     ...item,
-    lastAccessedDate: now.toISOString(),
+    lastAccessedDate: localIso,
     accessCount: (item.accessCount || 0) + 1,
   };
 }
@@ -37,7 +76,10 @@ export function markAsAccessed(item: PWAItem, now: Date = new Date()): PWAItem {
 /**
  * Toggles a PWA's daily access state (accessed <-> pending)
  */
-export function toggleAccessedToday(item: PWAItem, todayStr: string = getTodayString()): PWAItem {
+export function toggleAccessedToday(
+  item: PWAItem,
+  todayStr: string = getTodayString()
+): PWAItem {
   const currentlyAccessed = isAccessedToday(item.lastAccessedDate, todayStr);
   if (currentlyAccessed) {
     return {
@@ -46,10 +88,15 @@ export function toggleAccessedToday(item: PWAItem, todayStr: string = getTodaySt
       accessCount: Math.max(0, (item.accessCount || 1) - 1),
     };
   } else {
-    const timeSuffix = new Date().toISOString().slice(10);
+    const now = new Date();
+    const hours = String(now.getHours()).padStart(2, '0');
+    const minutes = String(now.getMinutes()).padStart(2, '0');
+    const seconds = String(now.getSeconds()).padStart(2, '0');
+    const localIso = `${todayStr}T${hours}:${minutes}:${seconds}.000Z`;
+
     return {
       ...item,
-      lastAccessedDate: `${todayStr}${timeSuffix}`,
+      lastAccessedDate: localIso,
       accessCount: (item.accessCount || 0) + 1,
     };
   }

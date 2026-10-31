@@ -318,7 +318,7 @@ export default function App() {
   const handleLaunch = useCallback(async (item: PWAItem) => {
     // Automatically mark as accessed today
     setItems((prev) =>
-      prev.map((it) => (it.id === item.id ? markAsAccessed(it) : it))
+      prev.map((it) => (it.id === item.id ? markAsAccessed(it, new Date(), todayStr) : it))
     );
 
     try {
@@ -424,13 +424,8 @@ export default function App() {
 
   // Batch mark all today as accessed
   const handleMarkAllToday = useCallback(() => {
-    const nowIso = new Date().toISOString();
     setItems((prev) =>
-      prev.map((it) => ({
-        ...it,
-        lastAccessedDate: nowIso,
-        accessCount: (it.accessCount || 0) + (isAccessedToday(it.lastAccessedDate, todayStr) ? 0 : 1),
-      }))
+      prev.map((it) => markAsAccessed(it, new Date(), todayStr))
     );
   }, [todayStr]);
 

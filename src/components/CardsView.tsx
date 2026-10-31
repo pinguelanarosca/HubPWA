@@ -74,17 +74,23 @@ export const CardsView: React.FC<CardsViewProps> = ({
                           <Star className="w-3 h-3 text-amber-400 fill-amber-400 shrink-0" />
                         )}
                       </div>
-                      <p className="text-[10px] text-neutral-400 truncate mt-0.5">{domain}</p>
+                      <p
+                        onClick={() => onLaunch(item)}
+                        className="text-[10px] text-neutral-400 hover:text-neutral-200 truncate mt-0.5 cursor-pointer transition-colors"
+                        title={`Abrir ${item.url}`}
+                      >
+                        {domain}
+                      </p>
                     </div>
 
-                    {/* Status Indicator */}
+                    {/* Status Indicator (Verde / Vermelho com texto Acessado/Pendente) */}
                     <div className="shrink-0">
                       <StatusIndicator
                         lastAccessedDate={item.lastAccessedDate}
                         todayStr={todayStr}
                         onToggle={() => onToggleStatus(item)}
-                        compact={true}
-                        showText={false}
+                        compact={false}
+                        showText={true}
                       />
                     </div>
                   </div>
