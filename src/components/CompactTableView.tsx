@@ -110,6 +110,19 @@ export const CompactTableView: React.FC<CompactTableViewProps> = ({
                             <span>{item.profileDirectory}</span>
                           </span>
                         )}
+                        {item.isPossibleDuplicate && (
+                          <span
+                            className="px-1 py-0.5 rounded bg-amber-950/80 border border-amber-800/80 text-amber-300 text-[8px] font-medium shrink-0"
+                            title={item.possibleDuplicateReason || 'Possível duplicata para revisão'}
+                          >
+                            ⚠️ Duplicata?
+                          </span>
+                        )}
+                        {item.aliases && item.aliases.length > 0 && (
+                          <span className="px-1 py-0.5 rounded bg-neutral-800 border border-neutral-700 text-neutral-300 text-[8px] font-mono shrink-0">
+                            {item.aliases.join(', ')}
+                          </span>
+                        )}
                       </span>
                     </div>
                   </div>

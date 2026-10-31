@@ -103,8 +103,13 @@ export default function App() {
         const existing = prevMap.get(key) || prevMap.get(scanned.id);
 
         if (existing) {
+          const combinedAliases = Array.from(
+            new Set([...(existing.aliases || []), ...(scanned.aliases || [])])
+          ).filter(Boolean);
+
           return {
             ...scanned,
+            aliases: combinedAliases.length > 0 ? combinedAliases : undefined,
             notes: existing.notes || scanned.notes,
             pinned: existing.pinned ?? scanned.pinned,
             accessCount: existing.accessCount || scanned.accessCount,

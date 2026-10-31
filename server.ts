@@ -6,8 +6,10 @@ import { createServer as createViteServer } from 'vite';
 import { parseGitHubCommitResponse, isUpdateAvailable } from './src/utils/githubUpdater.js';
 
 import os from 'os';
+import crypto from 'crypto';
 import { spawn, exec, execSync } from 'child_process';
 import { parseDesktopFile, ParsedDesktopApp, convertParsedToPWAs } from './src/utils/desktopParser.js';
+import { deduplicateDesktopApps, DeduplicationResult } from './src/utils/desktopDeduplicator.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -84,10 +86,40 @@ app.get('/api/icon', (req, res) => {
   return res.status(404).end();
 });
 
-// Helper to scan local .desktop files from Ubuntu
-function scanLocalPWAs(): ParsedDesktopApp[] {
+// Helper to compute perceptual/content hash for local icon file
+function getIconHash(iconNameOrPath: string): string | null {
+  if (!iconNameOrPath) return null;
+  const iconPath = findLocalIcon(iconNameOrPath);
+  if (!iconPath || !fs.existsSync(iconPath)) return null;
+
+  try {
+    const buffer = fs.readFileSync(iconPath);
+    // 1. Content hash (sha256 prefix)
+    const contentHash = crypto.createHash('sha256').update(buffer).digest('hex').slice(0, 16);
+    // 2. Perceptual block distribution: sample 16 points across buffer to detect visually similar icons
+    let sampleSum = 0;
+    const step = Math.max(1, Math.floor(buffer.length / 16));
+    for (let i = 0; i < buffer.length; i += step) {
+      sampleSum = (sampleSum * 31 + buffer[i]) >>> 0;
+    }
+    return `${contentHash}_${sampleSum.toString(16)}`;
+  } catch {
+    return null;
+  }
+}
+
+// Helper to scan local .desktop files from Ubuntu with smart deduplication
+function scanLocalPWAsWithStats(): DeduplicationResult {
   if (process.platform !== 'linux') {
-    return [];
+    return {
+      items: [],
+      stats: {
+        totalRawFound: 0,
+        confirmedDuplicatesMerged: 0,
+        activeCount: 0,
+        possibleDuplicatesCount: 0,
+      },
+    };
   }
 
   const homeDir = process.env.HOME || os.homedir();
@@ -118,7 +150,7 @@ function scanLocalPWAs(): ParsedDesktopApp[] {
     }
   }
 
-  const seenMap = new Map<string, ParsedDesktopApp>();
+  const rawApps: ParsedDesktopApp[] = [];
 
   for (const item of foundFiles) {
     try {
@@ -137,36 +169,50 @@ function scanLocalPWAs(): ParsedDesktopApp[] {
 
       parsed.desktopPath = item.filePath;
 
-      // Deduplication key: Preserve same PWA across DIFFERENT profiles!
-      const dedupeKey = `${(parsed.appId || parsed.url).toLowerCase()}::${(parsed.profileDirectory || 'Default').toLowerCase()}`;
+      // Extract raw Icon property from desktop file to compute icon hash
+      const iconMatch = content.match(/^Icon=(.+)$/m);
+      const rawIconName = iconMatch ? iconMatch[1].trim() : parsed.icon || '';
+      parsed.iconHash = getIconHash(rawIconName) || undefined;
 
-      if (!seenMap.has(dedupeKey)) {
-        seenMap.set(dedupeKey, parsed);
-      } else {
-        const existing = seenMap.get(dedupeKey)!;
-        if (!existing.appId && parsed.appId) {
-          seenMap.set(dedupeKey, parsed);
-        } else if (item.filePath.includes('.local/share/applications')) {
-          seenMap.set(dedupeKey, parsed);
-        }
-      }
+      rawApps.push(parsed);
     } catch {
       // ignore
     }
   }
 
-  return Array.from(seenMap.values());
+  const result = deduplicateDesktopApps(rawApps);
+  console.log(
+    `[HubPWA] Scan concluído: ${result.stats.totalRawFound} encontrados, ${result.stats.confirmedDuplicatesMerged} duplicatas confirmadas consolidadas, ${result.stats.activeCount} ativos finais, ${result.stats.possibleDuplicatesCount} possíveis duplicatas sinalizadas.`
+  );
+
+  return result;
 }
 
-// Endpoint to automatically discover local PWAs on Ubuntu
+// Endpoint to automatically discover local PWAs on Ubuntu with deduplication metrics
 app.get('/api/pwas/scan', (_req, res) => {
   try {
-    const discoveredApps = scanLocalPWAs();
-    const pwaItems = convertParsedToPWAs(discoveredApps);
-    return res.json({ success: true, items: pwaItems, count: pwaItems.length });
+    const { items: consolidatedApps, stats } = scanLocalPWAsWithStats();
+    const pwaItems = convertParsedToPWAs(consolidatedApps);
+    return res.json({
+      success: true,
+      items: pwaItems,
+      count: pwaItems.length,
+      stats,
+    });
   } catch (err) {
     console.error('Erro ao escanear PWAs locais:', err);
-    return res.status(500).json({ success: false, items: [], count: 0, error: (err as Error).message });
+    return res.status(500).json({
+      success: false,
+      items: [],
+      count: 0,
+      stats: {
+        totalRawFound: 0,
+        confirmedDuplicatesMerged: 0,
+        activeCount: 0,
+        possibleDuplicatesCount: 0,
+      },
+      error: (err as Error).message,
+    });
   }
 });
 

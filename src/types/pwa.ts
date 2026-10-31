@@ -14,6 +14,15 @@ export interface PWAItem {
   profileDirectory?: string;
   execLine?: string;
   desktopPath?: string;
+  // Deduplication & Intelligent Search fields:
+  aliases?: string[];
+  mergedNames?: string[];
+  mergedDesktopFiles?: string[];
+  alternateDesktopPaths?: string[];
+  isPossibleDuplicate?: boolean;
+  possibleDuplicateReason?: string;
+  duplicateCandidateId?: string;
+  iconHash?: string;
 }
 
 export type ViewDensity = 'compact-table' | 'dense-grid' | 'cards';

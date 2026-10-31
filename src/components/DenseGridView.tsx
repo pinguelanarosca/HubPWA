@@ -68,6 +68,14 @@ export const DenseGridView: React.FC<DenseGridViewProps> = ({
                           <span>{item.profileDirectory}</span>
                         </span>
                       )}
+                      {item.isPossibleDuplicate && (
+                        <span
+                          className="px-1 py-0.2 rounded bg-amber-950/80 border border-amber-800/80 text-amber-300 text-[8px] font-medium shrink-0"
+                          title={item.possibleDuplicateReason || 'Possível duplicata'}
+                        >
+                          ⚠️
+                        </span>
+                      )}
                     </p>
                   </div>
                 </div>

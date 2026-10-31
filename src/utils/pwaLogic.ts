@@ -123,6 +123,67 @@ export function calculateStats(items: PWAItem[], todayStr: string = getTodayStri
 }
 
 /**
+ * Normalizes text for resilient searching (lowercased, diacritics stripped, trimmed)
+ */
+export function normalizeSearchText(text: string | null | undefined): string {
+  if (!text) return '';
+  return text
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim();
+}
+
+/**
+ * Returns compact alphanumeric representation of text (e.g. "95-D" -> "95d")
+ */
+export function toCompactAlphaNumeric(text: string | null | undefined): string {
+  if (!text) return '';
+  return normalizeSearchText(text).replace(/[^a-z0-9]/g, '');
+}
+
+/**
+ * Intelligent search matcher for PWA items
+ */
+export function matchesPWASearch(item: PWAItem, rawQuery: string): boolean {
+  if (!rawQuery || !rawQuery.trim()) return true;
+  const qNorm = normalizeSearchText(rawQuery);
+  const qCompact = toCompactAlphaNumeric(rawQuery);
+  if (!qNorm) return true;
+
+  const queryTokens = qNorm.split(/\s+/).filter(Boolean);
+  const domain = getCleanDomain(item.url || '');
+
+  const corpusParts: string[] = [
+    item.name || '',
+    item.url || '',
+    domain,
+    item.rawFileName || '',
+    item.appId || '',
+    item.profileDirectory || '',
+    item.category || '',
+    item.notes || '',
+    ...(Array.isArray(item.aliases) ? item.aliases : []),
+    ...(Array.isArray(item.mergedNames) ? item.mergedNames : []),
+    ...(Array.isArray(item.mergedDesktopFiles) ? item.mergedDesktopFiles : []),
+  ];
+
+  const fullCorpusNorm = corpusParts.map(normalizeSearchText).join(' ');
+  const fullCorpusCompact = corpusParts.map(toCompactAlphaNumeric).join(' ');
+
+  // 1. All search tokens match in normalized text
+  const allTokensMatch = queryTokens.every((token) => fullCorpusNorm.includes(token));
+  if (allTokensMatch) return true;
+
+  // 2. Compact alphanumeric match (e.g. "95D" matching "95-D" or "95d.desktop")
+  if (qCompact.length >= 2 && fullCorpusCompact.includes(qCompact)) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
  * Filters and sorts PWA list
  */
 export function filterAndSortPWAs(
@@ -144,8 +205,6 @@ export function filterAndSortPWAs(
     todayStr = getTodayString(),
   } = options;
 
-  const normalizedSearch = search.trim().toLowerCase();
-
   return safeItems
     .filter((item) => {
       // Category filter
@@ -160,13 +219,9 @@ export function filterAndSortPWAs(
         if (statusFilter === 'pending' && accessed) return false;
       }
 
-      // Search query (matches name, url, category, notes)
-      if (normalizedSearch) {
-        const inName = item.name.toLowerCase().includes(normalizedSearch);
-        const inUrl = item.url.toLowerCase().includes(normalizedSearch);
-        const inCategory = item.category.toLowerCase().includes(normalizedSearch);
-        const inNotes = item.notes.toLowerCase().includes(normalizedSearch);
-        if (!inName && !inUrl && !inCategory && !inNotes) {
+      // Intelligent multi-field search
+      if (search && search.trim()) {
+        if (!matchesPWASearch(item, search)) {
           return false;
         }
       }

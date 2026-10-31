@@ -6,7 +6,7 @@ interface PWAIconProps {
   name: string;
   url?: string;
   customIcon?: string;
-  size?: 'xs' | 'sm' | 'md' | 'lg';
+  size?: 'xs' | 'sm' | 'md' | 'lg' | 'xl';
   className?: string;
 }
 
@@ -20,10 +20,11 @@ export const PWAIcon: React.FC<PWAIconProps> = ({
   const [hasError, setHasError] = useState(false);
 
   const sizeClasses = {
-    xs: 'w-4 h-4 text-[10px]',
-    sm: 'w-5 h-5 text-xs',
-    md: 'w-7 h-7 text-sm',
-    lg: 'w-9 h-9 text-base',
+    xs: 'w-4 h-4 text-[10px] rounded',
+    sm: 'w-5 h-5 text-xs rounded',
+    md: 'w-7 h-7 text-sm rounded-md',
+    lg: 'w-9 h-9 text-base rounded-lg',
+    xl: 'w-14 h-14 text-xl rounded-xl', // Exactly 56x56 px for Card View protagonist
   }[size];
 
   // Use the pre-computed icon stored at insertion time

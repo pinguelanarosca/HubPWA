@@ -25,6 +25,7 @@ export const AddEditPWAModal: React.FC<AddEditPWAModalProps> = ({
   const [notes, setNotes] = useState('');
   const [customIcon, setCustomIcon] = useState('');
   const [profileDirectory, setProfileDirectory] = useState('');
+  const [aliasesText, setAliasesText] = useState('');
   const [pinned, setPinned] = useState(false);
   const [error, setError] = useState('');
 
@@ -38,6 +39,7 @@ export const AddEditPWAModal: React.FC<AddEditPWAModalProps> = ({
       const isAutoFavicon = editingItem.icon?.includes('google.com/s2/favicons');
       setCustomIcon(isAutoFavicon ? '' : (editingItem.icon || ''));
       setProfileDirectory(editingItem.profileDirectory || '');
+      setAliasesText(Array.isArray(editingItem.aliases) ? editingItem.aliases.join(', ') : '');
       setPinned(Boolean(editingItem.pinned));
       setError('');
     } else {
@@ -47,6 +49,7 @@ export const AddEditPWAModal: React.FC<AddEditPWAModalProps> = ({
       setNotes('');
       setCustomIcon('');
       setProfileDirectory('');
+      setAliasesText('');
       setPinned(false);
       setError('');
     }
@@ -86,6 +89,11 @@ export const AddEditPWAModal: React.FC<AddEditPWAModalProps> = ({
       finalUrl = `https://${finalUrl}`;
     }
 
+    const parsedAliases = aliasesText
+      .split(/[,;\n]/)
+      .map((a) => a.trim())
+      .filter((a) => a.length > 0);
+
     onSave({
       ...(editingItem ? { id: editingItem.id } : {}),
       name: name.trim(),
@@ -94,6 +102,7 @@ export const AddEditPWAModal: React.FC<AddEditPWAModalProps> = ({
       notes: notes.trim(),
       icon: customIcon.trim() || resolveFaviconAtInsertion(finalUrl),
       profileDirectory: profileDirectory.trim() || undefined,
+      aliases: parsedAliases.length > 0 ? parsedAliases : undefined,
       pinned,
     });
     onClose();
@@ -260,6 +269,24 @@ export const AddEditPWAModal: React.FC<AddEditPWAModalProps> = ({
               placeholder="Ex: Default, Profile 1, Profile 2"
               className="w-full bg-neutral-950 border border-neutral-800 text-neutral-300 text-xs rounded-lg px-3 py-1.5 focus:outline-none focus:border-emerald-500 font-mono"
             />
+          </div>
+
+          {/* Aliases / Apelidos para busca inteligente */}
+          <div>
+            <label htmlFor="pwa-aliases" className="block text-xs font-medium text-neutral-300 mb-1">
+              Apelidos / Tags de Busca (Opcional)
+            </label>
+            <input
+              id="pwa-aliases"
+              type="text"
+              value={aliasesText}
+              onChange={(e) => setAliasesText(e.target.value)}
+              placeholder="Ex: 95D, CRM, Loja Principal (separados por vírgula)"
+              className="w-full bg-neutral-950 border border-neutral-800 text-neutral-200 text-xs rounded-lg px-3 py-1.5 focus:outline-none focus:border-emerald-500"
+            />
+            <p className="text-[10px] text-neutral-400 mt-1">
+              Digite apelidos ou códigos para encontrar esta PWA instantaneamente na busca.
+            </p>
           </div>
 
           {/* Optional Custom Icon URL */}
