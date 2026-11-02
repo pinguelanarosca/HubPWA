@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { X, Globe, Star, RotateCw } from 'lucide-react';
 import { PWAItem } from '../types/pwa';
 import { PWAIcon } from './PWAIcon';
+import { StarRating } from './StarRating';
 import { getCleanDomain, resolveFaviconAtInsertion } from '../utils/pwaLogic';
 
 interface AddEditPWAModalProps {
@@ -27,6 +28,7 @@ export const AddEditPWAModal: React.FC<AddEditPWAModalProps> = ({
   const [profileDirectory, setProfileDirectory] = useState('');
   const [aliasesText, setAliasesText] = useState('');
   const [pinned, setPinned] = useState(false);
+  const [rating, setRating] = useState(0);
   const [error, setError] = useState('');
 
   useEffect(() => {
@@ -40,7 +42,9 @@ export const AddEditPWAModal: React.FC<AddEditPWAModalProps> = ({
       setCustomIcon(isAutoFavicon ? '' : (editingItem.icon || ''));
       setProfileDirectory(editingItem.profileDirectory || '');
       setAliasesText(Array.isArray(editingItem.aliases) ? editingItem.aliases.join(', ') : '');
-      setPinned(Boolean(editingItem.pinned));
+      const initialRating = typeof editingItem.rating === 'number' ? editingItem.rating : (editingItem.pinned ? 5 : 0);
+      setRating(initialRating);
+      setPinned(initialRating > 0);
       setError('');
     } else {
       setName('');
@@ -50,6 +54,7 @@ export const AddEditPWAModal: React.FC<AddEditPWAModalProps> = ({
       setCustomIcon('');
       setProfileDirectory('');
       setAliasesText('');
+      setRating(0);
       setPinned(false);
       setError('');
     }
@@ -103,7 +108,8 @@ export const AddEditPWAModal: React.FC<AddEditPWAModalProps> = ({
       icon: customIcon.trim() || resolveFaviconAtInsertion(finalUrl),
       profileDirectory: profileDirectory.trim() || undefined,
       aliases: parsedAliases.length > 0 ? parsedAliases : undefined,
-      pinned,
+      pinned: rating > 0 || pinned,
+      rating,
     });
     onClose();
   };
@@ -304,19 +310,26 @@ export const AddEditPWAModal: React.FC<AddEditPWAModalProps> = ({
             />
           </div>
 
-          {/* Pin option */}
-          <div className="flex items-center gap-2 pt-1">
-            <input
-              id="pwa-pinned"
-              type="checkbox"
-              checked={pinned}
-              onChange={(e) => setPinned(e.target.checked)}
-              className="rounded bg-neutral-950 border-neutral-800 text-emerald-500 focus:ring-0 cursor-pointer"
+          {/* 1 to 5 Stars Classification */}
+          <div className="flex items-center justify-between pt-1 pb-1 px-1 rounded-lg bg-neutral-950/60 border border-neutral-800/60 p-2">
+            <div>
+              <label className="text-xs font-medium text-neutral-200 block">
+                Classificação (1 a 5 estrelas)
+              </label>
+              <p className="text-[10px] text-neutral-400">
+                {rating > 0
+                  ? `${rating} estrela${rating > 1 ? 's' : ''} (fixada com prioridade)`
+                  : 'Nenhuma estrela selecionada'}
+              </p>
+            </div>
+            <StarRating
+              rating={rating}
+              onChange={(newRating) => {
+                setRating(newRating);
+                setPinned(newRating > 0);
+              }}
+              size="md"
             />
-            <label htmlFor="pwa-pinned" className="text-xs text-neutral-300 flex items-center gap-1 cursor-pointer">
-              <Star className="w-3 h-3 text-amber-400 fill-amber-400" />
-              <span>Fixar no topo da lista</span>
-            </label>
           </div>
 
           {/* Form Actions */}

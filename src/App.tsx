@@ -117,6 +117,10 @@ export default function App() {
         if (matches.length > 0) {
           // Consolidate metadata across all matched previous installations
           const isAnyPinned = matches.some((m) => m.pinned) || Boolean(scanned.pinned);
+          const maxRating = Math.max(
+            typeof scanned.rating === 'number' ? scanned.rating : 0,
+            ...matches.map((m) => (typeof m.rating === 'number' ? m.rating : (m.pinned ? 5 : 0)))
+          );
 
           // Combine aliases
           const allAliases = new Set<string>(scanned.aliases || []);
@@ -149,7 +153,8 @@ export default function App() {
 
           return {
             ...scanned,
-            pinned: isAnyPinned,
+            pinned: isAnyPinned || maxRating > 0,
+            rating: maxRating,
             aliases: Array.from(allAliases).filter(Boolean),
             notes: noteList.join(' | '),
             lastAccessedDate: latestDate,
@@ -370,10 +375,36 @@ export default function App() {
     );
   }, []);
 
-  // Toggle pin
+  // Set rating (0 to 5 stars)
+  const handleSetRating = useCallback((item: PWAItem, newRating: number) => {
+    setItems((prev) =>
+      prev.map((it) =>
+        it.id === item.id
+          ? {
+              ...it,
+              rating: newRating,
+              pinned: newRating > 0,
+            }
+          : it
+      )
+    );
+  }, []);
+
+  // Toggle pin / rating (toggles between 5 stars and 0)
   const handleTogglePin = useCallback((item: PWAItem) => {
     setItems((prev) =>
-      prev.map((it) => (it.id === item.id ? { ...it, pinned: !it.pinned } : it))
+      prev.map((it) => {
+        if (it.id === item.id) {
+          const currentRating = typeof it.rating === 'number' ? it.rating : (it.pinned ? 5 : 0);
+          const nextRating = currentRating > 0 ? 0 : 5;
+          return {
+            ...it,
+            pinned: nextRating > 0,
+            rating: nextRating,
+          };
+        }
+        return it;
+      })
     );
   }, []);
 
@@ -396,6 +427,7 @@ export default function App() {
       );
     } else {
       // Add
+      const initialRating = typeof data.rating === 'number' ? data.rating : (data.pinned ? 5 : 0);
       const newItem: PWAItem = {
         id: `pwa_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
         name: data.name,
@@ -403,7 +435,8 @@ export default function App() {
         category: data.category,
         notes: data.notes,
         icon: finalIcon,
-        pinned: Boolean(data.pinned),
+        pinned: initialRating > 0,
+        rating: initialRating,
         lastAccessedDate: null,
         accessCount: 0,
         createdAt: new Date().toISOString(),
@@ -601,6 +634,7 @@ export default function App() {
                   onToggleStatus={handleToggleStatus}
                   onUpdateNote={handleUpdateNote}
                   onTogglePin={handleTogglePin}
+                  onSetRating={handleSetRating}
                   onEdit={(item) => {
                     setEditingItem(item);
                     setIsAddEditOpen(true);
@@ -617,6 +651,7 @@ export default function App() {
                   onToggleStatus={handleToggleStatus}
                   onUpdateNote={handleUpdateNote}
                   onTogglePin={handleTogglePin}
+                  onSetRating={handleSetRating}
                   onEdit={(item) => {
                     setEditingItem(item);
                     setIsAddEditOpen(true);
@@ -633,6 +668,7 @@ export default function App() {
                   onToggleStatus={handleToggleStatus}
                   onUpdateNote={handleUpdateNote}
                   onTogglePin={handleTogglePin}
+                  onSetRating={handleSetRating}
                   onEdit={(item) => {
                     setEditingItem(item);
                     setIsAddEditOpen(true);

@@ -276,16 +276,20 @@ export function filterAndSortPWAs(
       return true;
     })
     .sort((a, b) => {
-      // Pinned items always have higher priority if sortBy is 'pinned' or default
+      // Rating / Pinned items priority (5 stars down to 1 star, then unrated)
+      const ratingA = typeof a.rating === 'number' ? a.rating : (a.pinned ? 5 : 0);
+      const ratingB = typeof b.rating === 'number' ? b.rating : (b.pinned ? 5 : 0);
+
       if (sortBy === 'pinned') {
-        if (a.pinned && !b.pinned) return -1;
-        if (!a.pinned && b.pinned) return 1;
+        if (ratingA !== ratingB) {
+          return ratingB - ratingA;
+        }
         return a.name.localeCompare(b.name, 'pt-BR', { sensitivity: 'base' });
       }
 
-      // Keep pinned on top for other sorts too, or purely sort by criteria
-      if (a.pinned !== b.pinned) {
-        return a.pinned ? -1 : 1;
+      // Keep rated/pinned on top for other sorts too
+      if (ratingA !== ratingB) {
+        return ratingB - ratingA;
       }
 
       switch (sortBy) {

@@ -128,7 +128,7 @@ export const ControlToolbar: React.FC<ControlToolbarProps> = ({
               aria-label="Ordenar PWAs"
               className="bg-neutral-900 border border-neutral-800 text-neutral-300 text-xs rounded-lg pl-7 pr-3 py-1.5 focus:outline-none focus:border-neutral-600 appearance-none cursor-pointer"
             >
-              <option value="pinned">Fixadas primeiro</option>
+              <option value="pinned">Classificação (Estrelas)</option>
               <option value="name">Nome (A - Z)</option>
               <option value="category">Por Categoria</option>
               <option value="accessCount">Mais Acessadas</option>

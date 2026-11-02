@@ -1,9 +1,10 @@
 import React from 'react';
-import { ExternalLink, Star, Trash2, Edit2, User } from 'lucide-react';
+import { ExternalLink, Trash2, Edit2, User } from 'lucide-react';
 import { PWAItem } from '../types/pwa';
 import { PWAIcon } from './PWAIcon';
 import { StatusIndicator } from './StatusIndicator';
 import { InlineNoteInput } from './InlineNoteInput';
+import { StarRating } from './StarRating';
 import { getCleanDomain } from '../utils/pwaLogic';
 
 interface CompactTableViewProps {
@@ -13,6 +14,7 @@ interface CompactTableViewProps {
   onToggleStatus: (item: PWAItem) => void;
   onUpdateNote: (item: PWAItem, newNote: string) => void;
   onTogglePin: (item: PWAItem) => void;
+  onSetRating?: (item: PWAItem, rating: number) => void;
   onEdit: (item: PWAItem) => void;
   onDelete: (id: string) => void;
 }
@@ -24,6 +26,7 @@ export const CompactTableView: React.FC<CompactTableViewProps> = ({
   onToggleStatus,
   onUpdateNote,
   onTogglePin,
+  onSetRating,
   onEdit,
   onDelete,
 }) => {
@@ -41,38 +44,30 @@ export const CompactTableView: React.FC<CompactTableViewProps> = ({
       <table className="w-full text-left text-xs border-collapse">
         <thead>
           <tr className="border-b border-neutral-800 bg-neutral-900/60 text-neutral-400 font-medium select-none text-[11px]">
-            <th className="py-2 px-3 w-10 text-center">Fixar</th>
+            <th className="py-2 px-3 w-32 text-left">Classificação</th>
             <th className="py-2 px-3 w-36">Status Hoje</th>
             <th className="py-2 px-3 min-w-[220px]">PWA & Domínio</th>
-            <th className="py-2 px-3 min-w-[280px]">Anotações (Clique para editar)</th>
+            <th className="py-2 px-3 min-w-[260px]">Anotações (Clique para editar)</th>
+            <th className="py-2 px-3 w-20 text-right">Ações</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-neutral-900/80">
           {items.map((item) => {
             const domain = getCleanDomain(item.url);
+            const currentRating = typeof item.rating === 'number' ? item.rating : (item.pinned ? 5 : 0);
 
             return (
               <tr
                 key={item.id}
                 className="group hover:bg-neutral-900/50 transition-colors h-9"
               >
-                {/* Pin Button */}
-                <td className="py-1 px-3 text-center">
-                  <button
-                    type="button"
-                    onClick={() => onTogglePin(item)}
-                    title={item.pinned ? 'Desafixar PWA' : 'Fixar no topo'}
-                    aria-label={item.pinned ? 'Desafixar PWA' : 'Fixar no topo'}
-                    className={`p-1 rounded cursor-pointer transition-colors ${
-                      item.pinned
-                        ? 'text-amber-400 hover:text-amber-300'
-                        : 'text-neutral-400 hover:text-neutral-300 opacity-20 group-hover:opacity-100'
-                    }`}
-                  >
-                    <Star
-                      className={`w-3.5 h-3.5 ${item.pinned ? 'fill-amber-400' : ''}`}
-                    />
-                  </button>
+                {/* 1 to 5 Star Rating */}
+                <td className="py-1 px-3 whitespace-nowrap">
+                  <StarRating
+                    rating={currentRating}
+                    onChange={(newRating) => (onSetRating ? onSetRating(item, newRating) : onTogglePin(item))}
+                    size="sm"
+                  />
                 </td>
 
                 {/* Status Indicator (Verde / Vermelho - Clicável para Alternar Status) */}
@@ -134,6 +129,30 @@ export const CompactTableView: React.FC<CompactTableViewProps> = ({
                     onSave={(newNote) => onUpdateNote(item, newNote)}
                     placeholder="Adicionar nota rápida..."
                   />
+                </td>
+
+                {/* Ações: Editar e Excluir */}
+                <td className="py-1 px-3 text-right whitespace-nowrap">
+                  <div className="flex items-center justify-end gap-1 opacity-80 group-hover:opacity-100 transition-opacity">
+                    <button
+                      type="button"
+                      onClick={() => onEdit(item)}
+                      title={`Editar ${item.name}`}
+                      aria-label={`Editar ${item.name}`}
+                      className="p-1 rounded text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors cursor-pointer"
+                    >
+                      <Edit2 className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onDelete(item.id)}
+                      title={`Excluir ${item.name}`}
+                      aria-label={`Excluir ${item.name}`}
+                      className="p-1 rounded text-neutral-400 hover:text-rose-400 hover:bg-rose-950/40 transition-colors cursor-pointer"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
                 </td>
               </tr>
             );

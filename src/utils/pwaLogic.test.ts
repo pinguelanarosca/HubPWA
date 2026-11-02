@@ -190,3 +190,46 @@ test('import and export JSON handles arrays and sanitizes items', () => {
   const reExported = exportPWAsToJson(imported);
   assert.match(reExported, /"name": "Notion"/);
 });
+
+test('filterAndSortPWAs sorts by 1 to 5 star ratings descending', () => {
+  const items: PWAItem[] = [
+    {
+      id: '1',
+      name: 'Unrated App',
+      url: 'https://app0.com',
+      category: 'Geral',
+      notes: '',
+      lastAccessedDate: null,
+      accessCount: 0,
+      rating: 0,
+      createdAt: '2026-10-01',
+    },
+    {
+      id: '2',
+      name: '5 Star App',
+      url: 'https://app5.com',
+      category: 'Geral',
+      notes: '',
+      lastAccessedDate: null,
+      accessCount: 0,
+      rating: 5,
+      createdAt: '2026-10-01',
+    },
+    {
+      id: '3',
+      name: '3 Star App',
+      url: 'https://app3.com',
+      category: 'Geral',
+      notes: '',
+      lastAccessedDate: null,
+      accessCount: 0,
+      rating: 3,
+      createdAt: '2026-10-01',
+    },
+  ];
+
+  const sorted = filterAndSortPWAs(items, { sortBy: 'pinned' });
+  assert.equal(sorted[0].name, '5 Star App');
+  assert.equal(sorted[1].name, '3 Star App');
+  assert.equal(sorted[2].name, 'Unrated App');
+});

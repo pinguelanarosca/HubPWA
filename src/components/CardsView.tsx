@@ -4,6 +4,7 @@ import { PWAItem } from '../types/pwa';
 import { PWAIcon } from './PWAIcon';
 import { StatusIndicator } from './StatusIndicator';
 import { InlineNoteInput } from './InlineNoteInput';
+import { StarRating } from './StarRating';
 import { getCleanDomain } from '../utils/pwaLogic';
 
 interface CardsViewProps {
@@ -13,6 +14,7 @@ interface CardsViewProps {
   onToggleStatus: (item: PWAItem) => void;
   onUpdateNote: (item: PWAItem, newNote: string) => void;
   onTogglePin: (item: PWAItem) => void;
+  onSetRating?: (item: PWAItem, rating: number) => void;
   onEdit: (item: PWAItem) => void;
   onDelete: (id: string) => void;
 }
@@ -24,6 +26,7 @@ export const CardsView: React.FC<CardsViewProps> = ({
   onToggleStatus,
   onUpdateNote,
   onTogglePin,
+  onSetRating,
   onEdit,
   onDelete,
 }) => {
@@ -40,6 +43,7 @@ export const CardsView: React.FC<CardsViewProps> = ({
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
       {items.map((item) => {
         const domain = getCleanDomain(item.url);
+        const currentRating = typeof item.rating === 'number' ? item.rating : (item.pinned ? 5 : 0);
 
         return (
           <div
@@ -62,7 +66,7 @@ export const CardsView: React.FC<CardsViewProps> = ({
                 <div className="min-w-0 flex-1">
                   <div className="flex items-start justify-between gap-1.5">
                     <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-1.5">
+                      <div className="flex items-center gap-1.5 flex-wrap">
                         <h3
                           onClick={() => onLaunch(item)}
                           className="font-semibold text-xs text-neutral-100 group-hover:text-emerald-400 truncate cursor-pointer transition-colors"
@@ -70,8 +74,14 @@ export const CardsView: React.FC<CardsViewProps> = ({
                         >
                           {item.name}
                         </h3>
-                        {item.pinned && (
-                          <Star className="w-3 h-3 text-amber-400 fill-amber-400 shrink-0" />
+                        {currentRating > 0 && (
+                          <span
+                            className="inline-flex items-center gap-0.5 px-1 py-0.2 rounded bg-amber-950/60 border border-amber-800/60 text-amber-300 text-[10px] font-semibold font-mono"
+                            title={`${currentRating} de 5 estrelas`}
+                          >
+                            <Star className="w-2.5 h-2.5 text-amber-400 fill-amber-400" />
+                            <span>{currentRating}</span>
+                          </span>
                         )}
                       </div>
                       <p
@@ -138,41 +148,44 @@ export const CardsView: React.FC<CardsViewProps> = ({
               </div>
             </div>
 
-            {/* Card footer */}
-            <div className="flex items-center justify-between pt-2 border-t border-neutral-800/80">
-              <div className="flex items-center gap-1">
-                <button
-                  type="button"
-                  onClick={() => onTogglePin(item)}
-                  title={item.pinned ? 'Desafixar' : 'Fixar'}
-                  className={`p-1 rounded text-xs transition-colors ${
-                    item.pinned ? 'text-amber-400' : 'text-neutral-400 hover:text-neutral-200'
-                  }`}
-                >
-                  <Star className={`w-3.5 h-3.5 ${item.pinned ? 'fill-amber-400' : ''}`} />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => onEdit(item)}
-                  title="Editar"
-                  className="p-1 rounded text-neutral-400 hover:text-neutral-200"
-                >
-                  <Edit2 className="w-3.5 h-3.5" />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => onDelete(item.id)}
-                  title="Excluir"
-                  className="p-1 rounded text-neutral-400 hover:text-rose-400"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                </button>
+            {/* Card footer: 1 to 5 star rating, Editar, Excluir, Abrir PWA */}
+            <div className="flex items-center justify-between pt-2 border-t border-neutral-800/80 gap-2 flex-wrap">
+              <div className="flex items-center gap-2">
+                {/* 1 to 5 Stars Classification */}
+                <StarRating
+                  rating={currentRating}
+                  onChange={(newRating) => (onSetRating ? onSetRating(item, newRating) : onTogglePin(item))}
+                  size="sm"
+                />
+
+                <div className="flex items-center gap-1 border-l border-neutral-800 pl-2">
+                  <button
+                    type="button"
+                    onClick={() => onEdit(item)}
+                    title={`Editar ${item.name}`}
+                    aria-label={`Editar ${item.name}`}
+                    className="inline-flex items-center gap-1 px-1.5 py-1 rounded text-neutral-400 hover:text-white hover:bg-neutral-800 text-[11px] font-medium transition-colors cursor-pointer"
+                  >
+                    <Edit2 className="w-3 h-3" />
+                    <span>Editar</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onDelete(item.id)}
+                    title={`Excluir ${item.name}`}
+                    aria-label={`Excluir ${item.name}`}
+                    className="inline-flex items-center gap-1 px-1.5 py-1 rounded text-neutral-400 hover:text-rose-400 hover:bg-rose-950/40 text-[11px] font-medium transition-colors cursor-pointer"
+                  >
+                    <Trash2 className="w-3 h-3" />
+                    <span>Excluir</span>
+                  </button>
+                </div>
               </div>
 
               <button
                 type="button"
                 onClick={() => onLaunch(item)}
-                className="inline-flex items-center gap-1.5 px-3 py-1 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-200 hover:text-white text-xs font-medium transition-colors cursor-pointer"
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-200 hover:text-white text-xs font-medium transition-colors cursor-pointer shrink-0"
               >
                 <ExternalLink className="w-3 h-3 text-emerald-400" />
                 <span>Abrir PWA</span>
