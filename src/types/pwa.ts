@@ -23,6 +23,29 @@ export interface PWAItem {
   isPossibleDuplicate?: boolean;
   possibleDuplicateReason?: string;
   duplicateCandidateId?: string;
+}
+
+export interface ParsedDesktopApp {
+  id: string;
+  name: string;
+  url: string;
+  category: string;
+  notes: string;
+  icon?: string;
+  rawFileName: string;
+  hasExactUrl: boolean;
+  appId?: string;
+  profileDirectory?: string;
+  execLine?: string;
+  desktopPath?: string;
+  desktopFileName?: string;
+  aliases?: string[];
+  mergedNames?: string[];
+  mergedDesktopFiles?: string[];
+  alternateDesktopPaths?: string[];
+  isPossibleDuplicate?: boolean;
+  possibleDuplicateReason?: string;
+  duplicateCandidateId?: string;
   iconHash?: string;
 }
 

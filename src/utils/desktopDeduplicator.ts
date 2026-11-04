@@ -310,7 +310,7 @@ export function deduplicateDesktopApps(rawApps: ParsedDesktopApp[]): Deduplicati
     // Merge all aliases & code names (e.g. 95D, 93D)
     const aliasesSet = new Set<string>();
     for (const item of cluster) {
-      (item.aliases || []).forEach((a) => aliasesSet.add(a));
+      (item.aliases || []).forEach((a: string) => aliasesSet.add(a));
       if (item.name && item.name !== bestName) {
         aliasesSet.add(item.name);
       }
@@ -330,7 +330,7 @@ export function deduplicateDesktopApps(rawApps: ParsedDesktopApp[]): Deduplicati
     const mergedNamesSet = new Set<string>();
     for (const item of cluster) {
       if (item.name) mergedNamesSet.add(item.name);
-      (item.mergedNames || []).forEach((n) => mergedNamesSet.add(n));
+      (item.mergedNames || []).forEach((n: string) => mergedNamesSet.add(n));
     }
 
     // Merge desktop files
@@ -338,14 +338,14 @@ export function deduplicateDesktopApps(rawApps: ParsedDesktopApp[]): Deduplicati
     for (const item of cluster) {
       const fileName = getDesktopFileName(item);
       if (fileName) mergedFilesSet.add(fileName);
-      (item.mergedDesktopFiles || []).forEach((f) => mergedFilesSet.add(f));
+      (item.mergedDesktopFiles || []).forEach((f: string) => mergedFilesSet.add(f));
     }
 
     // Merge alternate desktop paths
     const alternatePathsSet = new Set<string>();
     for (const item of cluster) {
       if (item.desktopPath) alternatePathsSet.add(item.desktopPath);
-      (item.alternateDesktopPaths || []).forEach((p) => alternatePathsSet.add(p));
+      (item.alternateDesktopPaths || []).forEach((p: string) => alternatePathsSet.add(p));
     }
 
     // Merge notes

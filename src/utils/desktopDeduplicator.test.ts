@@ -10,6 +10,17 @@ import { ParsedDesktopApp } from '../types/pwa.js';
 import { matchesPWASearch } from './pwaLogic.js';
 import { convertParsedToPWAs } from './desktopParser.js';
 
+function makeApp(data: Partial<ParsedDesktopApp> & { name: string; url: string }): ParsedDesktopApp {
+  return {
+    id: data.id || `app-${Math.random().toString(36).slice(2)}`,
+    category: data.category || 'Geral',
+    notes: data.notes || '',
+    rawFileName: data.rawFileName || data.desktopFileName || `${data.name}.desktop`,
+    hasExactUrl: true,
+    ...data,
+  };
+}
+
 describe('desktopDeduplicator - Platform Consolidation & Profile 5 Priority', () => {
   it('normalizes URLs removing tracking parameters and trailing slashes', () => {
     const u1 = normalizeAppUrl('https://app.example.com/login?utm_source=desktop#app');
@@ -30,7 +41,7 @@ describe('desktopDeduplicator - Platform Consolidation & Profile 5 Priority', ()
 
   it('guarantees ABSOLUTE PRIORITY to Profile 5 when platform exists in multiple profiles', () => {
     const rawApps: ParsedDesktopApp[] = [
-      {
+      makeApp({
         name: 'Mercado Livre',
         url: 'https://www.mercadolivre.com.br',
         desktopFileName: 'chrome-ml123-Profile_1.desktop',
@@ -39,16 +50,16 @@ describe('desktopDeduplicator - Platform Consolidation & Profile 5 Priority', ()
         appId: 'ml123',
         profileDirectory: 'Profile 1',
         notes: 'Nota do Perfil 1',
-      },
-      {
+      }),
+      makeApp({
         name: '95D',
         url: 'https://www.mercadolivre.com.br',
         desktopFileName: '95D.desktop',
         desktopPath: '/home/user/Área de trabalho/001/95D.desktop',
         appId: 'ml123',
         profileDirectory: 'Default',
-      },
-      {
+      }),
+      makeApp({
         name: 'Mercado Livre Brasil',
         url: 'https://www.mercadolivre.com.br',
         desktopFileName: 'chrome-ml123-Profile_5.desktop',
@@ -57,8 +68,8 @@ describe('desktopDeduplicator - Platform Consolidation & Profile 5 Priority', ()
         appId: 'ml123',
         profileDirectory: 'Profile 5',
         notes: 'Nota importante do Perfil 5',
-      },
-      {
+      }),
+      makeApp({
         name: 'Mercado Livre (Perfil 2)',
         url: 'https://www.mercadolivre.com.br',
         desktopFileName: 'chrome-ml123-Profile_2.desktop',
@@ -66,7 +77,7 @@ describe('desktopDeduplicator - Platform Consolidation & Profile 5 Priority', ()
         execLine: 'google-chrome --profile-directory="Profile 2" --app-id="ml123"',
         appId: 'ml123',
         profileDirectory: 'Profile 2',
-      },
+      }),
     ];
 
     const { items, stats } = deduplicateDesktopApps(rawApps);
@@ -104,7 +115,7 @@ describe('desktopDeduplicator - Platform Consolidation & Profile 5 Priority', ()
 
   it('keeps single installation from another profile if Profile 5 does not exist', () => {
     const rawApps: ParsedDesktopApp[] = [
-      {
+      makeApp({
         name: 'Bitwarden',
         url: 'https://vault.bitwarden.com',
         desktopFileName: 'chrome-bw-Profile_1.desktop',
@@ -112,8 +123,8 @@ describe('desktopDeduplicator - Platform Consolidation & Profile 5 Priority', ()
         execLine: 'google-chrome --profile-directory="Profile 1" --app-id="bw123"',
         appId: 'bw123',
         profileDirectory: 'Profile 1',
-      },
-      {
+      }),
+      makeApp({
         name: 'Bitwarden Vault',
         url: 'https://vault.bitwarden.com',
         desktopFileName: 'chrome-bw-Profile_2.desktop',
@@ -121,7 +132,7 @@ describe('desktopDeduplicator - Platform Consolidation & Profile 5 Priority', ()
         execLine: 'google-chrome --profile-directory="Profile 2" --app-id="bw123"',
         appId: 'bw123',
         profileDirectory: 'Profile 2',
-      },
+      }),
     ];
 
     const { items, stats } = deduplicateDesktopApps(rawApps);
@@ -136,39 +147,39 @@ describe('desktopDeduplicator - Platform Consolidation & Profile 5 Priority', ()
   it('handles multiple distinct platforms correctly: 1 card per platform', () => {
     const rawApps: ParsedDesktopApp[] = [
       // Platform 1: WhatsApp (in Profile 2 and Profile 5)
-      {
+      makeApp({
         name: '93D',
         url: 'https://web.whatsapp.com',
         desktopFileName: '93D.desktop',
         desktopPath: '/home/user/Área de trabalho/001/93D.desktop',
         appId: 'wa-id',
         profileDirectory: 'Default',
-      },
-      {
+      }),
+      makeApp({
         name: 'WhatsApp Web',
         url: 'https://web.whatsapp.com',
         desktopFileName: 'chrome-wa-Profile_5.desktop',
         desktopPath: '/home/user/.local/share/applications/chrome-wa-Profile_5.desktop',
         appId: 'wa-id',
         profileDirectory: 'Profile 5',
-      },
-      {
+      }),
+      makeApp({
         name: 'WhatsApp Web',
         url: 'https://web.whatsapp.com',
         desktopFileName: 'chrome-wa-Profile_2.desktop',
         desktopPath: '/home/user/.local/share/applications/chrome-wa-Profile_2.desktop',
         appId: 'wa-id',
         profileDirectory: 'Profile 2',
-      },
+      }),
       // Platform 2: GitHub (in Profile 1 only)
-      {
+      makeApp({
         name: 'GitHub',
         url: 'https://github.com',
         desktopFileName: 'chrome-gh-Profile_1.desktop',
         desktopPath: '/home/user/.local/share/applications/chrome-gh-Profile_1.desktop',
         appId: 'gh-id',
         profileDirectory: 'Profile 1',
-      },
+      }),
     ];
 
     const { items, stats } = deduplicateDesktopApps(rawApps);

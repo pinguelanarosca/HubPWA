@@ -1,20 +1,7 @@
-import { PWAItem } from '../types/pwa';
+import { PWAItem, ParsedDesktopApp } from '../types/pwa';
 import { resolveFaviconAtInsertion } from './pwaLogic';
 
-export interface ParsedDesktopApp {
-  id: string;
-  name: string;
-  url: string;
-  category: string;
-  notes: string;
-  icon?: string;
-  rawFileName: string;
-  hasExactUrl: boolean;
-  appId?: string;
-  profileDirectory?: string;
-  execLine?: string;
-  desktopPath?: string;
-}
+export type { ParsedDesktopApp };
 
 // Known common web apps map for Chrome --app-id PWAs on Linux
 const COMMON_APP_URLS: Record<string, { url: string; category: string }> = {
