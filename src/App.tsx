@@ -122,7 +122,6 @@ export default function App() {
           if (scanned.desktopPath && p.desktopPath && (p.desktopPath === scanned.desktopPath || (scanned.alternateDesktopPaths || []).includes(p.desktopPath))) return true;
           if (scanned.rawFileName && p.rawFileName && (p.rawFileName === scanned.rawFileName || (scanned.mergedDesktopFiles || []).includes(p.rawFileName))) return true;
           if (normScannedUrl && normalizeAppUrl(p.url) === normScannedUrl) return true;
-          if (scannedDom && scannedDom !== 'localhost' && getCleanDomain(p.url || '') === scannedDom) return true;
           if ((scanned.mergedNames || []).includes(p.name)) return true;
           return false;
         });
@@ -360,21 +359,15 @@ export default function App() {
 
   // Launch PWA: opens link as a true standalone PWA window and automatically marks accessed today (GREEN indicator)
   const handleLaunch = useCallback(async (item: PWAItem) => {
-    // Automatically mark as accessed today in React state
-    const updated = markAsAccessed(item, new Date(), todayStr);
+    // 1. Immediately update React state using functional updater so rapid clicks across many cards are never lost
+    const now = new Date();
     setItems((prev) =>
-      prev.map((it) => (it.id === item.id ? updated : it))
+      prev.map((it) => (it.id === item.id ? markAsAccessed(it, now, todayStr) : it))
     );
 
-    // Sync state immediately to server database
-    fetch('/api/pwas/state', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ items: [updated] }),
-    }).catch(() => {});
-
     try {
-      // 1. Attempt native OS launch on Ubuntu (opens standalone Chrome App window or gtk-launch)
+      // 2. Attempt native OS launch on Ubuntu (opens standalone Chrome App window or gtk-launch)
+      // The server in-memory database automatically records the access timestamp and persists it
       const res = await fetch('/api/launch-pwa', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -392,8 +385,8 @@ export default function App() {
 
       const data = await res.json();
 
-      if (!data.launchedNative) {
-        // 2. Fallback: Open in a standalone App Window without browser tabs or address bar
+      if (!data.launchedNative && item.url) {
+        // Fallback: Open in a standalone App Window without browser tabs or address bar
         window.open(
           item.url,
           `pwa_${item.id.replace(/[^a-zA-Z0-9]/g, '_')}`,
@@ -402,11 +395,13 @@ export default function App() {
       }
     } catch {
       // Fallback for cloud preview
-      window.open(
-        item.url,
-        `pwa_${item.id.replace(/[^a-zA-Z0-9]/g, '_')}`,
-        'popup=yes,width=1280,height=800,menubar=no,toolbar=no,location=no,status=no,resizable=yes,scrollbars=yes'
-      );
+      if (item.url) {
+        window.open(
+          item.url,
+          `pwa_${item.id.replace(/[^a-zA-Z0-9]/g, '_')}`,
+          'popup=yes,width=1280,height=800,menubar=no,toolbar=no,location=no,status=no,resizable=yes,scrollbars=yes'
+        );
+      }
     }
   }, [todayStr]);
 

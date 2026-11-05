@@ -40,6 +40,8 @@ interface ServerDb {
   deletedIds: string[];
 }
 
+let inMemoryDb: ServerDb | null = null;
+
 function loadServerDb(): ServerDb {
   try {
     if (!fs.existsSync(DATA_DIR)) {
@@ -61,12 +63,21 @@ function loadServerDb(): ServerDb {
   return { version: 1, pwas: {}, deletedIds: [] };
 }
 
+function getDb(): ServerDb {
+  if (!inMemoryDb) {
+    inMemoryDb = loadServerDb();
+  }
+  return inMemoryDb;
+}
+
 function saveServerDb(db: ServerDb) {
   try {
     if (!fs.existsSync(DATA_DIR)) {
       fs.mkdirSync(DATA_DIR, { recursive: true });
     }
-    fs.writeFileSync(STATE_FILE, JSON.stringify(db, null, 2), 'utf-8');
+    const tempFile = `${STATE_FILE}.tmp.${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    fs.writeFileSync(tempFile, JSON.stringify(db, null, 2), 'utf-8');
+    fs.renameSync(tempFile, STATE_FILE);
   } catch (err) {
     console.error('Erro ao salvar hubpwa_state.json:', err);
   }
@@ -83,27 +94,35 @@ function findStoredState(
     return db.pwas[item.id];
   }
 
-  // 2. Match by appId, url, rawFileName, or name
-  const normUrl = item.url ? normalizeAppUrl(item.url) : '';
-  const cleanDom = item.url ? getCleanDomain(item.url) : '';
+  // 2. Exact appId match
+  if (item.appId) {
+    const targetAppId = item.appId.toLowerCase();
+    for (const savedId in db.pwas) {
+      const saved = db.pwas[savedId];
+      if (saved.appId && saved.appId.toLowerCase() === targetAppId) {
+        return saved;
+      }
+    }
+  }
 
-  for (const savedId in db.pwas) {
-    const saved = db.pwas[savedId];
-    if (item.id && saved.id === item.id) return saved;
-    if (item.appId && saved.appId && item.appId.toLowerCase() === saved.appId.toLowerCase()) {
-      return saved;
+  // 3. Exact rawFileName match
+  if (item.rawFileName) {
+    for (const savedId in db.pwas) {
+      const saved = db.pwas[savedId];
+      if (saved.rawFileName && saved.rawFileName === item.rawFileName) {
+        return saved;
+      }
     }
-    if (item.rawFileName && saved.rawFileName && item.rawFileName === saved.rawFileName) {
-      return saved;
-    }
-    if (normUrl && saved.url && normalizeAppUrl(saved.url) === normUrl) {
-      return saved;
-    }
-    if (cleanDom && cleanDom !== 'localhost' && saved.url && getCleanDomain(saved.url) === cleanDom) {
-      return saved;
-    }
-    if (item.name && saved.name && item.name.toLowerCase() === saved.name.toLowerCase()) {
-      return saved;
+  }
+
+  // 4. Match by normalized URL (exact URL including path, never bare domain)
+  const normUrl = item.url ? normalizeAppUrl(item.url) : '';
+  if (normUrl) {
+    for (const savedId in db.pwas) {
+      const saved = db.pwas[savedId];
+      if (saved.url && normalizeAppUrl(saved.url) === normUrl) {
+        return saved;
+      }
     }
   }
 
@@ -117,12 +136,18 @@ const DEFAULT_BRANCH = 'main';
 
 app.use(express.json());
 
-// Helper to check if a command exists in system $PATH
+// Memoize command existence checks to avoid running execSync on every launch
+const commandCache = new Map<string, boolean>();
 function hasCommand(cmd: string): boolean {
+  if (commandCache.has(cmd)) {
+    return commandCache.get(cmd)!;
+  }
   try {
     execSync(`command -v ${cmd} 2>/dev/null`, { stdio: 'ignore' });
+    commandCache.set(cmd, true);
     return true;
   } catch {
+    commandCache.set(cmd, false);
     return false;
   }
 }
@@ -291,7 +316,7 @@ app.get('/api/pwas/scan', (_req, res) => {
     const pwaItems = convertParsedToPWAs(consolidatedApps);
 
     // Merge with persisted disk database so notes, ratings, accessed status, and custom edits survive restarts
-    const db = loadServerDb();
+    const db = getDb();
     const activeItems = pwaItems
       .filter((pwa) => !db.deletedIds.includes(pwa.id))
       .map((pwa) => {
@@ -340,7 +365,7 @@ app.get('/api/pwas/scan', (_req, res) => {
 // GET /api/pwas/state - Retrieve server-persisted user state
 app.get('/api/pwas/state', (_req, res) => {
   try {
-    const db = loadServerDb();
+    const db = getDb();
     return res.json({ success: true, db });
   } catch (err) {
     return res.status(500).json({ error: (err as Error).message });
@@ -351,7 +376,7 @@ app.get('/api/pwas/state', (_req, res) => {
 app.post('/api/pwas/state', (req, res) => {
   try {
     const { items, deletedIds } = req.body || {};
-    const db = loadServerDb();
+    const db = getDb();
 
     if (Array.isArray(deletedIds)) {
       deletedIds.forEach((id: string) => {
@@ -394,7 +419,7 @@ app.post('/api/pwas/delete', (req, res) => {
   try {
     const { id } = req.body || {};
     if (!id) return res.status(400).json({ error: 'ID obrigatório' });
-    const db = loadServerDb();
+    const db = getDb();
     if (!db.deletedIds.includes(id)) {
       db.deletedIds.push(id);
     }
@@ -434,18 +459,19 @@ app.post('/api/launch-pwa', (req, res) => {
     return res.status(400).json({ error: 'URL ou atalho é obrigatório para lançar a PWA.' });
   }
 
-  // Automatically record access in server disk database
+  // Automatically record access in server in-memory & disk database
+  let localTimeStr = '';
   try {
-    const db = loadServerDb();
+    const db = getDb();
     const effectiveToday = todayStr || getTodayString();
     const now = new Date();
     const hours = String(now.getHours()).padStart(2, '0');
     const minutes = String(now.getMinutes()).padStart(2, '0');
     const seconds = String(now.getSeconds()).padStart(2, '0');
-    const localTimeStr = `${effectiveToday}T${hours}:${minutes}:${seconds}.000Z`;
+    localTimeStr = `${effectiveToday}T${hours}:${minutes}:${seconds}.000Z`;
 
     const matched = findStoredState({ id, appId, url, rawFileName }, db);
-    const key = id || (matched ? matched.id : `pwa_platform_${(appId || getCleanDomain(url) || 'app').toLowerCase().replace(/[^a-z0-9]/g, '_')}`);
+    const key = id || (matched ? matched.id : `pwa_${(appId || (rawFileName ? rawFileName.replace(/\.desktop$/i, '') : Date.now().toString())).toLowerCase().replace(/[^a-z0-9]/g, '_')}`);
 
     db.pwas[key] = {
       ...(matched || {}),
@@ -475,7 +501,7 @@ app.post('/api/launch-pwa', (req, res) => {
 
     if (!hasGtkLaunch && !hasGio && !hasChrome) {
       // In headless/container preview with no browser installed, return fallback gracefully
-      return res.json({ launchedNative: false, fallbackUrl: url });
+      return res.json({ success: true, launchedNative: false, fallbackUrl: url, lastAccessedDate: localTimeStr });
     }
 
     const profileArg = profileDirectory ? `--profile-directory="${profileDirectory}"` : '';
@@ -519,7 +545,7 @@ app.post('/api/launch-pwa', (req, res) => {
     }
 
     if (commandCandidates.length === 0) {
-      return res.json({ launchedNative: false, fallbackUrl: url });
+      return res.json({ success: true, launchedNative: false, fallbackUrl: url, lastAccessedDate: localTimeStr });
     }
 
     const fullCommand = commandCandidates.join(' || ');
@@ -530,12 +556,14 @@ app.post('/api/launch-pwa', (req, res) => {
     });
 
     return res.json({
+      success: true,
       launchedNative: true,
+      lastAccessedDate: localTimeStr,
       message: `PWA lançada no perfil '${profileDirectory || 'padrão'}' em modo standalone!`,
     });
   }
 
-  return res.json({ launchedNative: false, fallbackUrl: url });
+  return res.json({ success: true, launchedNative: false, fallbackUrl: url, lastAccessedDate: localTimeStr });
 });
 
 // 1. GET /api/updater/status - Check local vs remote GitHub repository
