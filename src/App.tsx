@@ -32,20 +32,35 @@ const STORAGE_KEY = 'chrome_pwa_hub_items_empty_v1';
 const DENSITY_STORAGE_KEY = 'chrome_pwa_hub_density';
 
 export default function App() {
-  // Empty by default: User adds their own PWAs (via Ubuntu .desktop file selection or manual entry)
   const [items, setItems] = useState<PWAItem[]>(() => {
     try {
       const stored = localStorage.getItem(STORAGE_KEY);
       if (stored) {
         const parsed = JSON.parse(stored);
-        if (Array.isArray(parsed)) {
+        if (Array.isArray(parsed) && parsed.length > 0) {
           return parsed;
+        }
+      }
+      // Check legacy keys to prevent data loss across updates
+      const legacyKeys = [
+        'chrome_pwa_hub_items_v2',
+        'chrome_pwa_hub_items_v1',
+        'chrome_pwa_hub_items',
+        'pwa_items',
+      ];
+      for (const k of legacyKeys) {
+        const legacy = localStorage.getItem(k);
+        if (legacy) {
+          const parsed = JSON.parse(legacy);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            return parsed;
+          }
         }
       }
     } catch {
       // Fallback
     }
-    return []; // Empty by default!
+    return [];
   });
 
   const [density, setDensity] = useState<ViewDensity>(() => {
@@ -116,6 +131,9 @@ export default function App() {
 
         if (matches.length > 0) {
           // Consolidate metadata across all matched previous installations
+          const customName = matches.find((m) => m.name && m.name !== scanned.name)?.name || scanned.name;
+          const customCategory = matches.find((m) => m.category && m.category !== 'Geral')?.category || scanned.category;
+
           const isAnyPinned = matches.some((m) => m.pinned) || Boolean(scanned.pinned);
           const maxRating = Math.max(
             typeof scanned.rating === 'number' ? scanned.rating : 0,
@@ -153,6 +171,8 @@ export default function App() {
 
           return {
             ...scanned,
+            name: customName,
+            category: customCategory,
             pinned: isAnyPinned || maxRating > 0,
             rating: maxRating,
             aliases: Array.from(allAliases).filter(Boolean),
@@ -167,8 +187,16 @@ export default function App() {
 
       // Keep only manual items that weren't absorbed into any platform
       const remainingManualItems = prev.filter((p) => !absorbedPrevIds.has(p.id));
+      const finalMerged = [...mergedList, ...remainingManualItems];
 
-      return [...mergedList, ...remainingManualItems];
+      // Sync merged state to server disk database
+      fetch('/api/pwas/state', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ items: finalMerged }),
+      }).catch(() => {});
+
+      return finalMerged;
     });
   }, []);
 
@@ -192,12 +220,23 @@ export default function App() {
     handleRescanLocalPWAs();
   }, [handleRescanLocalPWAs]);
 
-  // Persist items to localStorage
+  // Persist items to localStorage and sync to server database
   useEffect(() => {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
     } catch {
       // ignore
+    }
+
+    if (items.length > 0) {
+      const timer = setTimeout(() => {
+        fetch('/api/pwas/state', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ items }),
+        }).catch(() => {});
+      }, 600);
+      return () => clearTimeout(timer);
     }
   }, [items]);
 
@@ -321,10 +360,18 @@ export default function App() {
 
   // Launch PWA: opens link as a true standalone PWA window and automatically marks accessed today (GREEN indicator)
   const handleLaunch = useCallback(async (item: PWAItem) => {
-    // Automatically mark as accessed today
+    // Automatically mark as accessed today in React state
+    const updated = markAsAccessed(item, new Date(), todayStr);
     setItems((prev) =>
-      prev.map((it) => (it.id === item.id ? markAsAccessed(it, new Date(), todayStr) : it))
+      prev.map((it) => (it.id === item.id ? updated : it))
     );
+
+    // Sync state immediately to server database
+    fetch('/api/pwas/state', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ items: [updated] }),
+    }).catch(() => {});
 
     try {
       // 1. Attempt native OS launch on Ubuntu (opens standalone Chrome App window or gtk-launch)
@@ -332,12 +379,14 @@ export default function App() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          id: item.id,
           url: item.url,
           rawFileName: item.rawFileName,
           appId: item.appId,
           profileDirectory: item.profileDirectory,
           execLine: item.execLine,
           desktopPath: item.desktopPath,
+          todayStr,
         }),
       });
 
@@ -359,35 +408,49 @@ export default function App() {
         'popup=yes,width=1280,height=800,menubar=no,toolbar=no,location=no,status=no,resizable=yes,scrollbars=yes'
       );
     }
-  }, []);
+  }, [todayStr]);
 
   // Toggle status (green <-> red)
   const handleToggleStatus = useCallback((item: PWAItem) => {
+    const updated = toggleAccessedToday(item, todayStr);
     setItems((prev) =>
-      prev.map((it) => (it.id === item.id ? toggleAccessedToday(it, todayStr) : it))
+      prev.map((it) => (it.id === item.id ? updated : it))
     );
+    fetch('/api/pwas/state', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ items: [updated] }),
+    }).catch(() => {});
   }, [todayStr]);
 
   // Update inline note
   const handleUpdateNote = useCallback((item: PWAItem, newNote: string) => {
+    const updated = { ...item, notes: newNote };
     setItems((prev) =>
-      prev.map((it) => (it.id === item.id ? { ...it, notes: newNote } : it))
+      prev.map((it) => (it.id === item.id ? updated : it))
     );
+    fetch('/api/pwas/state', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ items: [updated] }),
+    }).catch(() => {});
   }, []);
 
   // Set rating (0 to 5 stars)
   const handleSetRating = useCallback((item: PWAItem, newRating: number) => {
+    const updated = {
+      ...item,
+      rating: newRating,
+      pinned: newRating > 0,
+    };
     setItems((prev) =>
-      prev.map((it) =>
-        it.id === item.id
-          ? {
-              ...it,
-              rating: newRating,
-              pinned: newRating > 0,
-            }
-          : it
-      )
+      prev.map((it) => (it.id === item.id ? updated : it))
     );
+    fetch('/api/pwas/state', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ items: [updated] }),
+    }).catch(() => {});
   }, []);
 
   // Toggle pin / rating (toggles between 5 stars and 0)
@@ -397,11 +460,17 @@ export default function App() {
         if (it.id === item.id) {
           const currentRating = typeof it.rating === 'number' ? it.rating : (it.pinned ? 5 : 0);
           const nextRating = currentRating > 0 ? 0 : 5;
-          return {
+          const updated = {
             ...it,
             pinned: nextRating > 0,
             rating: nextRating,
           };
+          fetch('/api/pwas/state', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ items: [updated] }),
+          }).catch(() => {});
+          return updated;
         }
         return it;
       })
@@ -414,6 +483,12 @@ export default function App() {
     const confirmMessage = target ? `Excluir a PWA "${target.name}"?` : 'Excluir esta PWA?';
     if (window.confirm(confirmMessage)) {
       setItems((prev) => prev.filter((it) => it.id !== id));
+      // Persist deletion on backend so re-scan doesn't re-introduce it
+      fetch('/api/pwas/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id }),
+      }).catch((err) => console.warn('Erro ao persistir exclusão no servidor:', err));
     }
   }, [items]);
 

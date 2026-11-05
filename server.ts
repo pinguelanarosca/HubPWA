@@ -9,10 +9,106 @@ import os from 'os';
 import crypto from 'crypto';
 import { spawn, exec, execSync } from 'child_process';
 import { parseDesktopFile, ParsedDesktopApp, convertParsedToPWAs } from './src/utils/desktopParser.js';
-import { deduplicateDesktopApps, DeduplicationResult } from './src/utils/desktopDeduplicator.js';
+import { deduplicateDesktopApps, DeduplicationResult, normalizeAppUrl } from './src/utils/desktopDeduplicator.js';
+import { getCleanDomain, getTodayString } from './src/utils/pwaLogic.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+const DATA_DIR = path.resolve(__dirname, 'data');
+const STATE_FILE = path.join(DATA_DIR, 'hubpwa_state.json');
+
+interface ServerPWAState {
+  id: string;
+  name?: string;
+  category?: string;
+  notes?: string;
+  url?: string;
+  rawFileName?: string;
+  appId?: string;
+  profileDirectory?: string;
+  rating?: number;
+  pinned?: boolean;
+  lastAccessedDate?: string | null;
+  accessCount?: number;
+  updatedAt?: string;
+}
+
+interface ServerDb {
+  version: number;
+  pwas: Record<string, ServerPWAState>;
+  deletedIds: string[];
+}
+
+function loadServerDb(): ServerDb {
+  try {
+    if (!fs.existsSync(DATA_DIR)) {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+    }
+    if (fs.existsSync(STATE_FILE)) {
+      const data = JSON.parse(fs.readFileSync(STATE_FILE, 'utf-8'));
+      if (data && typeof data === 'object') {
+        return {
+          version: data.version || 1,
+          pwas: data.pwas || {},
+          deletedIds: Array.isArray(data.deletedIds) ? data.deletedIds : [],
+        };
+      }
+    }
+  } catch (err) {
+    console.warn('Aviso ao carregar hubpwa_state.json:', err);
+  }
+  return { version: 1, pwas: {}, deletedIds: [] };
+}
+
+function saveServerDb(db: ServerDb) {
+  try {
+    if (!fs.existsSync(DATA_DIR)) {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+    }
+    fs.writeFileSync(STATE_FILE, JSON.stringify(db, null, 2), 'utf-8');
+  } catch (err) {
+    console.error('Erro ao salvar hubpwa_state.json:', err);
+  }
+}
+
+function findStoredState(
+  item: { id?: string; appId?: string; url?: string; rawFileName?: string; name?: string },
+  db: ServerDb
+): ServerPWAState | null {
+  if (!db || !db.pwas) return null;
+
+  // 1. Direct ID match
+  if (item.id && db.pwas[item.id]) {
+    return db.pwas[item.id];
+  }
+
+  // 2. Match by appId, url, rawFileName, or name
+  const normUrl = item.url ? normalizeAppUrl(item.url) : '';
+  const cleanDom = item.url ? getCleanDomain(item.url) : '';
+
+  for (const savedId in db.pwas) {
+    const saved = db.pwas[savedId];
+    if (item.id && saved.id === item.id) return saved;
+    if (item.appId && saved.appId && item.appId.toLowerCase() === saved.appId.toLowerCase()) {
+      return saved;
+    }
+    if (item.rawFileName && saved.rawFileName && item.rawFileName === saved.rawFileName) {
+      return saved;
+    }
+    if (normUrl && saved.url && normalizeAppUrl(saved.url) === normUrl) {
+      return saved;
+    }
+    if (cleanDom && cleanDom !== 'localhost' && saved.url && getCleanDomain(saved.url) === cleanDom) {
+      return saved;
+    }
+    if (item.name && saved.name && item.name.toLowerCase() === saved.name.toLowerCase()) {
+      return saved;
+    }
+  }
+
+  return null;
+}
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
@@ -188,16 +284,41 @@ function scanLocalPWAsWithStats(): DeduplicationResult {
   return result;
 }
 
-// Endpoint to automatically discover local PWAs on Ubuntu with deduplication metrics
+// Endpoint to automatically discover local PWAs on Ubuntu with deduplication metrics and state persistence
 app.get('/api/pwas/scan', (_req, res) => {
   try {
     const { items: consolidatedApps, stats } = scanLocalPWAsWithStats();
     const pwaItems = convertParsedToPWAs(consolidatedApps);
+
+    // Merge with persisted disk database so notes, ratings, accessed status, and custom edits survive restarts
+    const db = loadServerDb();
+    const activeItems = pwaItems
+      .filter((pwa) => !db.deletedIds.includes(pwa.id))
+      .map((pwa) => {
+        const stored = findStoredState(pwa, db);
+        if (stored) {
+          return {
+            ...pwa,
+            name: stored.name || pwa.name,
+            category: stored.category || pwa.category,
+            notes: stored.notes !== undefined ? stored.notes : pwa.notes,
+            rating: typeof stored.rating === 'number' ? stored.rating : (stored.pinned ? 5 : 0),
+            pinned: Boolean(stored.pinned || (stored.rating && stored.rating > 0)),
+            lastAccessedDate: stored.lastAccessedDate || pwa.lastAccessedDate,
+            accessCount: typeof stored.accessCount === 'number' ? stored.accessCount : pwa.accessCount,
+          };
+        }
+        return pwa;
+      });
+
     return res.json({
       success: true,
-      items: pwaItems,
-      count: pwaItems.length,
-      stats,
+      items: activeItems,
+      count: activeItems.length,
+      stats: {
+        ...stats,
+        activeCount: activeItems.length,
+      },
     });
   } catch (err) {
     console.error('Erro ao escanear PWAs locais:', err);
@@ -213,6 +334,75 @@ app.get('/api/pwas/scan', (_req, res) => {
       },
       error: (err as Error).message,
     });
+  }
+});
+
+// GET /api/pwas/state - Retrieve server-persisted user state
+app.get('/api/pwas/state', (_req, res) => {
+  try {
+    const db = loadServerDb();
+    return res.json({ success: true, db });
+  } catch (err) {
+    return res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+// POST /api/pwas/state - Save / update user state to disk
+app.post('/api/pwas/state', (req, res) => {
+  try {
+    const { items, deletedIds } = req.body || {};
+    const db = loadServerDb();
+
+    if (Array.isArray(deletedIds)) {
+      deletedIds.forEach((id: string) => {
+        if (!db.deletedIds.includes(id)) {
+          db.deletedIds.push(id);
+        }
+      });
+    }
+
+    if (Array.isArray(items)) {
+      for (const item of items) {
+        if (!item || !item.id) continue;
+        db.pwas[item.id] = {
+          id: item.id,
+          name: item.name,
+          category: item.category,
+          url: item.url,
+          rawFileName: item.rawFileName,
+          appId: item.appId,
+          notes: item.notes || '',
+          rating: typeof item.rating === 'number' ? item.rating : (item.pinned ? 5 : 0),
+          pinned: Boolean(item.pinned || (item.rating && item.rating > 0)),
+          lastAccessedDate: item.lastAccessedDate || null,
+          accessCount: typeof item.accessCount === 'number' ? item.accessCount : 0,
+          updatedAt: new Date().toISOString(),
+        };
+      }
+    }
+
+    saveServerDb(db);
+    return res.json({ success: true, count: Object.keys(db.pwas).length });
+  } catch (err) {
+    console.error('Erro ao salvar estado:', err);
+    return res.status(500).json({ success: false, error: (err as Error).message });
+  }
+});
+
+// POST /api/pwas/delete - Permanently mark PWA as deleted so it does not reappear on re-scan
+app.post('/api/pwas/delete', (req, res) => {
+  try {
+    const { id } = req.body || {};
+    if (!id) return res.status(400).json({ error: 'ID obrigatório' });
+    const db = loadServerDb();
+    if (!db.deletedIds.includes(id)) {
+      db.deletedIds.push(id);
+    }
+    delete db.pwas[id];
+    saveServerDb(db);
+    return res.json({ success: true, deletedId: id });
+  } catch (err) {
+    return res.status(500).json({ error: (err as Error).message });
   }
 });
 
@@ -239,9 +429,37 @@ function getLocalVersion() {
 
 // 0. POST /api/launch-pwa - Launches PWA in native Chrome Standalone App Window on Ubuntu/Linux preserving profile
 app.post('/api/launch-pwa', (req, res) => {
-  const { url, rawFileName, appId, profileDirectory, execLine, desktopPath } = req.body || {};
+  const { id, url, rawFileName, appId, profileDirectory, execLine, desktopPath, todayStr } = req.body || {};
   if (!url && !rawFileName && !execLine && !desktopPath) {
     return res.status(400).json({ error: 'URL ou atalho é obrigatório para lançar a PWA.' });
+  }
+
+  // Automatically record access in server disk database
+  try {
+    const db = loadServerDb();
+    const effectiveToday = todayStr || getTodayString();
+    const now = new Date();
+    const hours = String(now.getHours()).padStart(2, '0');
+    const minutes = String(now.getMinutes()).padStart(2, '0');
+    const seconds = String(now.getSeconds()).padStart(2, '0');
+    const localTimeStr = `${effectiveToday}T${hours}:${minutes}:${seconds}.000Z`;
+
+    const matched = findStoredState({ id, appId, url, rawFileName }, db);
+    const key = id || (matched ? matched.id : `pwa_platform_${(appId || getCleanDomain(url) || 'app').toLowerCase().replace(/[^a-z0-9]/g, '_')}`);
+
+    db.pwas[key] = {
+      ...(matched || {}),
+      id: key,
+      url: url || (matched ? matched.url : ''),
+      appId: appId || (matched ? matched.appId : undefined),
+      rawFileName: rawFileName || (matched ? matched.rawFileName : undefined),
+      lastAccessedDate: localTimeStr,
+      accessCount: ((matched && matched.accessCount) || 0) + 1,
+      updatedAt: now.toISOString(),
+    };
+    saveServerDb(db);
+  } catch (err) {
+    console.warn('Aviso ao registrar acesso no servidor:', err);
   }
 
   // Only execute native desktop launch if running on Linux/Ubuntu with a browser installed

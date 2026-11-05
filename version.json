@@ -1,9 +1,10 @@
 {
   "repo": "pinguelanarosca/HubPWA",
   "branch": "main",
-  "commitSha": "92ba6d88bd06e2d6350d78c55ab4698c6568a595",
-  "commitShort": "92ba6d8",
-  "commitDate": "2026-10-29T12:58:32Z",
-  "commitMessage": "feat: initialize Chrome PWA Hub project",
-  "version": "1.1.0"
+  "commitSha": "57777fd9d56710770c0db13101c6a050c41001fd",
+  "commitShort": "57777fd",
+  "commitDate": "2026-11-04T18:15:18Z",
+  "commitMessage": "refactor(types): extend PWA interfaces and fix type safety\n\nAdd metadata fields to PWA interfaces for better duplicate tracking and \nupdate deduplication logic with explicit type annotations for arrays.",
+  "version": "1.1.0",
+  "updatedAt": "2026-11-04T18:21:49.952Z"
 }

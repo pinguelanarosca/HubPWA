@@ -59,12 +59,26 @@ export const DenseGridView: React.FC<DenseGridViewProps> = ({
             <div>
               <div className="flex items-start justify-between gap-1.5 mb-1.5">
                 <div className="flex items-center gap-2 min-w-0">
-                  <PWAIcon icon={item.icon} name={item.name} size="md" />
+                  <div
+                    className="cursor-pointer shrink-0 transition-transform active:scale-95"
+                    onClick={() => onLaunch(item)}
+                    title={`Abrir ${item.name} (marca como acessado hoje)`}
+                  >
+                    <PWAIcon icon={item.icon} name={item.name} size="md" />
+                  </div>
                   <div className="min-w-0">
-                    <h3 className="font-semibold text-xs text-neutral-200 group-hover:text-white truncate">
+                    <h3
+                      onClick={() => onLaunch(item)}
+                      className="font-semibold text-xs text-neutral-200 group-hover:text-emerald-400 truncate cursor-pointer transition-colors"
+                      title={item.name}
+                    >
                       {item.name}
                     </h3>
-                    <p className="text-[10px] text-neutral-400 truncate flex items-center gap-1">
+                    <p
+                      onClick={() => onLaunch(item)}
+                      className="text-[10px] text-neutral-400 hover:text-neutral-200 truncate flex items-center gap-1 cursor-pointer transition-colors"
+                      title={`Abrir ${item.url}`}
+                    >
                       <span className="truncate">{domain}</span>
                       {item.profileDirectory && (
                         <span className="inline-flex items-center gap-0.5 px-1 py-0.2 rounded bg-blue-950/80 border border-blue-800/80 text-blue-300 text-[8px] font-semibold font-mono shrink-0">
