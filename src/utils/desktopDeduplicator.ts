@@ -1,5 +1,5 @@
 import { ParsedDesktopApp } from './desktopParser';
-import { getCleanDomain, normalizeSearchText, toCompactAlphaNumeric } from './pwaLogic';
+import { getCleanDomain, normalizeSearchText, toCompactAlphaNumeric, isAndroidOrRedroidApp } from './pwaLogic';
 
 export interface DeduplicationStats {
   totalRawFound: number;
@@ -245,9 +245,11 @@ function pickBestDisplayName(primary: ParsedDesktopApp, allNames: string[]): str
  * - Does not modify or delete Ubuntu .desktop files
  */
 export function deduplicateDesktopApps(rawApps: ParsedDesktopApp[]): DeduplicationResult {
-  const totalRawFound = rawApps.length;
+  // Disregard Android and Redroid apps
+  const validApps = rawApps.filter((app) => !isAndroidOrRedroidApp(app));
+  const totalRawFound = validApps.length;
 
-  if (rawApps.length === 0) {
+  if (validApps.length === 0) {
     return {
       items: [],
       stats: {
@@ -262,7 +264,7 @@ export function deduplicateDesktopApps(rawApps: ParsedDesktopApp[]): Deduplicati
   // Group raw apps into platform clusters
   const clusters: ParsedDesktopApp[][] = [];
 
-  for (const app of rawApps) {
+  for (const app of validApps) {
     const matchingClusterIndices: number[] = [];
 
     for (let i = 0; i < clusters.length; i++) {

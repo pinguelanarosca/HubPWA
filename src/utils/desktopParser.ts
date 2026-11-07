@@ -1,5 +1,5 @@
 import { PWAItem, ParsedDesktopApp } from '../types/pwa';
-import { resolveFaviconAtInsertion } from './pwaLogic';
+import { resolveFaviconAtInsertion, isAndroidOrRedroidApp } from './pwaLogic';
 
 export type { ParsedDesktopApp };
 
@@ -119,6 +119,20 @@ export function parseDesktopFile(content: string, fileName: string = ''): Parsed
   const rawCategories = data['Categories'] || '';
   const icon = data['Icon'] || '';
 
+  // Disregard Android and Redroid apps/shortcuts
+  if (
+    isAndroidOrRedroidApp({
+      name,
+      rawFileName: fileName,
+      execLine,
+      url: data['URL'] || '',
+      notes: comment,
+      category: rawCategories,
+    })
+  ) {
+    return null;
+  }
+
   let detectedUrl = '';
   let hasExactUrl = false;
   let appId: string | undefined = undefined;
@@ -229,7 +243,9 @@ export function parseDesktopFile(content: string, fileName: string = ''): Parsed
  * Converts a list of ParsedDesktopApp into PWAItem objects
  */
 export function convertParsedToPWAs(parsedList: ParsedDesktopApp[]): PWAItem[] {
-  return parsedList.map((parsed) => ({
+  return parsedList
+    .filter((parsed) => !isAndroidOrRedroidApp(parsed))
+    .map((parsed) => ({
     id: parsed.id,
     name: parsed.name,
     url: parsed.url,

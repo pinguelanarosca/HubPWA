@@ -8,9 +8,10 @@ import { getCleanDomain, resolveFaviconAtInsertion } from '../utils/pwaLogic';
 interface AddEditPWAModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSave: (pwaData: Partial<PWAItem> & { name: string; url: string; category: string; notes: string }) => void;
+  onSave: (pwaData: Partial<PWAItem> & { name: string; url: string; category: string; group?: string; notes: string }) => void;
   editingItem: PWAItem | null;
-  existingCategories: string[];
+  existingGroups?: string[];
+  existingCategories?: string[];
 }
 
 export const AddEditPWAModal: React.FC<AddEditPWAModalProps> = ({
@@ -18,11 +19,13 @@ export const AddEditPWAModal: React.FC<AddEditPWAModalProps> = ({
   onClose,
   onSave,
   editingItem,
-  existingCategories,
+  existingGroups,
+  existingCategories = [],
 }) => {
+  const groupsList = existingGroups || existingCategories;
   const [name, setName] = useState('');
   const [url, setUrl] = useState('');
-  const [category, setCategory] = useState('Produtividade');
+  const [group, setGroup] = useState('Geral');
   const [notes, setNotes] = useState('');
   const [customIcon, setCustomIcon] = useState('');
   const [profileDirectory, setProfileDirectory] = useState('');
@@ -35,7 +38,7 @@ export const AddEditPWAModal: React.FC<AddEditPWAModalProps> = ({
     if (editingItem) {
       setName(editingItem.name);
       setUrl(editingItem.url);
-      setCategory(editingItem.category);
+      setGroup(editingItem.group || editingItem.category || 'Geral');
       setNotes(editingItem.notes || '');
       // If icon is auto-resolved Google favicon, don't lock customIcon so changing URL dynamically updates icon
       const isAutoFavicon = editingItem.icon?.includes('google.com/s2/favicons');
@@ -49,7 +52,7 @@ export const AddEditPWAModal: React.FC<AddEditPWAModalProps> = ({
     } else {
       setName('');
       setUrl('');
-      setCategory(existingCategories[0] || 'Produtividade');
+      setGroup(groupsList[0] || 'Geral');
       setNotes('');
       setCustomIcon('');
       setProfileDirectory('');
@@ -58,7 +61,7 @@ export const AddEditPWAModal: React.FC<AddEditPWAModalProps> = ({
       setPinned(false);
       setError('');
     }
-  }, [editingItem, isOpen, existingCategories]);
+  }, [editingItem, isOpen, groupsList]);
 
   if (!isOpen) return null;
 
@@ -103,7 +106,8 @@ export const AddEditPWAModal: React.FC<AddEditPWAModalProps> = ({
       ...(editingItem ? { id: editingItem.id } : {}),
       name: name.trim(),
       url: finalUrl,
-      category: category.trim() || 'Geral',
+      category: group.trim() || 'Geral',
+      group: group.trim() || 'Geral',
       notes: notes.trim(),
       icon: customIcon.trim() || resolveFaviconAtInsertion(finalUrl),
       profileDirectory: profileDirectory.trim() || undefined,
@@ -206,24 +210,24 @@ export const AddEditPWAModal: React.FC<AddEditPWAModalProps> = ({
             />
           </div>
 
-          {/* Category Input */}
+          {/* Group Input */}
           <div>
-            <label htmlFor="pwa-category" className="block text-xs font-medium text-neutral-300 mb-1">
-              Categoria
+            <label htmlFor="pwa-group" className="block text-xs font-medium text-neutral-300 mb-1">
+              Grupo
             </label>
             <div className="flex gap-2">
               <input
-                id="pwa-category"
+                id="pwa-group"
                 type="text"
-                value={category}
-                onChange={(e) => setCategory(e.target.value)}
+                value={group}
+                onChange={(e) => setGroup(e.target.value)}
                 placeholder="Ex: Produtividade, Dev, Social..."
-                list="category-suggestions"
+                list="group-suggestions"
                 className="w-full bg-neutral-950 border border-neutral-800 text-neutral-200 text-xs rounded-lg px-3 py-2 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
               />
-              <datalist id="category-suggestions">
-                {existingCategories.map((c) => (
-                  <option key={c} value={c} />
+              <datalist id="group-suggestions">
+                {groupsList.map((g) => (
+                  <option key={g} value={g} />
                 ))}
               </datalist>
             </div>

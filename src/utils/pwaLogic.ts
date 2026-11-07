@@ -54,6 +54,46 @@ export function isAccessedToday(
 }
 
 /**
+ * Detects whether an app or desktop shortcut belongs to Android or Redroid
+ */
+export function isAndroidOrRedroidApp(app: {
+  name?: string;
+  rawFileName?: string;
+  execLine?: string;
+  url?: string;
+  notes?: string;
+  category?: string;
+  desktopPath?: string;
+  appId?: string;
+  aliases?: string[];
+}): boolean {
+  if (!app) return false;
+
+  const aliasesStr = Array.isArray(app.aliases) ? app.aliases.join(' ') : '';
+  const text = [
+    app.name || '',
+    app.rawFileName || '',
+    app.execLine || '',
+    app.url || '',
+    app.notes || '',
+    app.category || '',
+    app.desktopPath || '',
+    app.appId || '',
+    aliasesStr,
+  ]
+    .join(' ')
+    .toLowerCase();
+
+  return (
+    text.includes('redroid') ||
+    text.includes('android') ||
+    text.includes('waydroid') ||
+    text.includes('anbox') ||
+    text.includes('scrcpy')
+  );
+}
+
+/**
  * Formats access timestamp into human-readable date and time for access logs
  */
 export function formatAccessDateTime(
@@ -125,6 +165,73 @@ export function formatAccessDateTime(
   } catch {
     return { dateStr: '', timeStr: '', fullStr: 'Sem registro', hasRecord: false };
   }
+}
+
+/**
+ * Formats access timestamp strictly as "DD/MM HH:mm" without seconds.
+ * Example: "06/11 14:32"
+ */
+export function formatAccessCompact(dateInput: string | null | undefined): string {
+  if (!dateInput || !dateInput.trim()) {
+    return '';
+  }
+  try {
+    const raw = dateInput.trim();
+    let m = '';
+    let d = '';
+    let hh = '00';
+    let mm = '00';
+
+    if (raw.includes('T')) {
+      const [dPart, tPart] = raw.split('T');
+      if (dPart) {
+        const dPieces = dPart.split('-');
+        if (dPieces.length === 3) {
+          [, m, d] = dPieces;
+        }
+      }
+      if (tPart) {
+        const cleanT = tPart.replace(/Z|[-+].*$/, '');
+        const tPieces = cleanT.split(':');
+        if (tPieces.length >= 2) {
+          hh = tPieces[0].padStart(2, '0');
+          mm = tPieces[1].padStart(2, '0');
+        }
+      }
+    } else if (raw.includes('-')) {
+      const dPieces = raw.split('-');
+      if (dPieces.length === 3) {
+        [, m, d] = dPieces;
+      }
+    }
+
+    if (!d || !m) {
+      const parsedDate = new Date(raw);
+      if (!isNaN(parsedDate.getTime())) {
+        m = String(parsedDate.getMonth() + 1).padStart(2, '0');
+        d = String(parsedDate.getDate()).padStart(2, '0');
+        hh = String(parsedDate.getHours()).padStart(2, '0');
+        mm = String(parsedDate.getMinutes()).padStart(2, '0');
+      }
+    }
+
+    if (!d || !m) {
+      return '';
+    }
+
+    return `${d}/${m} ${hh}:${mm}`;
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * Formats access timestamp with dash: "06/11 - 21:22" or "- Sem registro -" when missing
+ */
+export function formatAccessLogDash(dateInput: string | null | undefined): string {
+  const compact = formatAccessCompact(dateInput);
+  if (!compact) return '- Sem registro -';
+  return compact.replace(' ', ' - ');
 }
 
 /**
@@ -320,7 +427,9 @@ export function filterAndSortPWAs(
   options: {
     search?: string;
     category?: string;
+    group?: string;
     statusFilter?: StatusFilter;
+    starFilter?: string;
     sortBy?: SortOption;
     todayStr?: string;
   }
@@ -328,17 +437,24 @@ export function filterAndSortPWAs(
   const safeItems = Array.isArray(items) ? items.filter((it) => it && typeof it === 'object' && typeof it.name === 'string') : [];
   const {
     search = '',
-    category = 'all',
+    category,
+    group,
     statusFilter = 'all',
+    starFilter = 'all',
     sortBy = 'pinned',
     todayStr = getTodayString(),
   } = options;
 
+  const targetGroup = group || category || 'all';
+
   return safeItems
     .filter((item) => {
-      // Category filter
-      if (category !== 'all' && item.category.toLowerCase() !== category.toLowerCase()) {
-        return false;
+      // Group/Category filter
+      if (targetGroup !== 'all') {
+        const itemGroup = item.group || item.category || 'Geral';
+        if (itemGroup.toLowerCase() !== targetGroup.toLowerCase()) {
+          return false;
+        }
       }
 
       // Daily status filter
@@ -346,6 +462,15 @@ export function filterAndSortPWAs(
         const accessed = isAccessedToday(item.lastAccessedDate, todayStr);
         if (statusFilter === 'accessed' && !accessed) return false;
         if (statusFilter === 'pending' && accessed) return false;
+      }
+
+      // Star rating filter
+      if (starFilter && starFilter !== 'all') {
+        const rating = typeof item.rating === 'number' ? item.rating : (item.pinned ? 5 : 0);
+        if (starFilter === '5' && rating !== 5) return false;
+        if (starFilter === '4' && rating < 4) return false;
+        if (starFilter === '3' && rating < 3) return false;
+        if (starFilter === 'unrated' && rating > 0) return false;
       }
 
       // Intelligent multi-field search
@@ -358,9 +483,21 @@ export function filterAndSortPWAs(
       return true;
     })
     .sort((a, b) => {
-      // Rating / Pinned items priority (5 stars down to 1 star, then unrated)
       const ratingA = typeof a.rating === 'number' ? a.rating : (a.pinned ? 5 : 0);
       const ratingB = typeof b.rating === 'number' ? b.rating : (b.pinned ? 5 : 0);
+
+      const accessedA = isAccessedToday(a.lastAccessedDate, todayStr);
+      const accessedB = isAccessedToday(b.lastAccessedDate, todayStr);
+
+      if (sortBy === 'pendingFirst') {
+        if (accessedA !== accessedB) {
+          return accessedA ? 1 : -1;
+        }
+        if (ratingA !== ratingB) {
+          return ratingB - ratingA;
+        }
+        return a.name.localeCompare(b.name, 'pt-BR', { sensitivity: 'base' });
+      }
 
       if (sortBy === 'pinned') {
         if (ratingA !== ratingB) {
@@ -369,21 +506,21 @@ export function filterAndSortPWAs(
         return a.name.localeCompare(b.name, 'pt-BR', { sensitivity: 'base' });
       }
 
-      // Keep rated/pinned on top for other sorts too
-      if (ratingA !== ratingB) {
-        return ratingB - ratingA;
-      }
-
       switch (sortBy) {
         case 'name':
           return a.name.localeCompare(b.name, 'pt-BR', { sensitivity: 'base' });
-        case 'category':
+        case 'category': {
+          const groupA = a.group || a.category || 'Geral';
+          const groupB = b.group || b.category || 'Geral';
           return (
-            a.category.localeCompare(b.category, 'pt-BR', { sensitivity: 'base' }) ||
+            groupA.localeCompare(groupB, 'pt-BR', { sensitivity: 'base' }) ||
             a.name.localeCompare(b.name, 'pt-BR', { sensitivity: 'base' })
           );
+        }
         case 'accessCount':
           return (b.accessCount || 0) - (a.accessCount || 0);
+        case 'leastAccessed':
+          return (a.accessCount || 0) - (b.accessCount || 0);
         case 'lastAccessed': {
           const timeA = a.lastAccessedDate ? new Date(a.lastAccessedDate).getTime() : 0;
           const timeB = b.lastAccessedDate ? new Date(b.lastAccessedDate).getTime() : 0;
@@ -418,7 +555,8 @@ export function importPWAsFromJson(rawJson: string): PWAItem[] {
         id: String(r.id || `pwa_${Date.now()}_${idx}_${Math.random().toString(36).substring(2, 7)}`),
         name,
         url: url.startsWith('http') ? url : `https://${url}`,
-        category: String(r.category || 'Geral').trim(),
+        category: String(r.group || r.category || 'Geral').trim(),
+        group: String(r.group || r.category || 'Geral').trim(),
         notes: String(r.notes || r.anotacoes || r.description || '').trim(),
         icon: typeof r.icon === 'string' && r.icon.trim()
           ? r.icon.trim()

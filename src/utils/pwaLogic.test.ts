@@ -10,6 +10,8 @@ import {
   importPWAsFromJson,
   exportPWAsToJson,
   formatAccessDateTime,
+  formatAccessCompact,
+  isAndroidOrRedroidApp,
 } from './pwaLogic';
 import { PWAItem } from '../types/pwa';
 
@@ -258,5 +260,31 @@ test('formatAccessDateTime accurately parses and formats date and time', () => {
   const res4 = formatAccessDateTime('');
   assert.equal(res4.hasRecord, false);
   assert.equal(res4.fullStr, 'Sem registro');
+});
+
+test('isAndroidOrRedroidApp detects and disregards Android, Redroid, Waydroid, and Anbox apps', () => {
+  // Should detect Android / Redroid apps
+  assert.equal(isAndroidOrRedroidApp({ name: 'Redroid Client' }), true);
+  assert.equal(isAndroidOrRedroidApp({ name: 'Android Emulator' }), true);
+  assert.equal(isAndroidOrRedroidApp({ name: 'WhatsApp', rawFileName: 'redroid_whatsapp.desktop' }), true);
+  assert.equal(isAndroidOrRedroidApp({ name: 'WhatsApp', execLine: 'scrcpy -s 127.0.0.1:5555' }), true);
+  assert.equal(isAndroidOrRedroidApp({ name: 'App', url: 'http://localhost:8000/redroid' }), true);
+  assert.equal(isAndroidOrRedroidApp({ name: 'Waydroid Launcher' }), true);
+  assert.equal(isAndroidOrRedroidApp({ name: 'Anbox Session' }), true);
+
+  // Normal Chrome PWAs must NOT be flagged
+  assert.equal(isAndroidOrRedroidApp({ name: 'Gmail', url: 'https://mail.google.com' }), false);
+  assert.equal(isAndroidOrRedroidApp({ name: 'GitHub', url: 'https://github.com' }), false);
+  assert.equal(isAndroidOrRedroidApp({ name: 'Slack', url: 'https://slack.com' }), false);
+  assert.equal(isAndroidOrRedroidApp({ name: 'WhatsApp Web', url: 'https://web.whatsapp.com' }), false);
+  assert.equal(isAndroidOrRedroidApp({ name: 'ChatGPT', url: 'https://chatgpt.com' }), false);
+});
+
+test('formatAccessCompact formats strictly as DD/MM HH:mm without seconds', () => {
+  assert.equal(formatAccessCompact('2026-11-06T14:32:05.000Z'), '06/11 14:32');
+  assert.equal(formatAccessCompact('2026-03-09T09:05:42.123Z'), '09/03 09:05');
+  assert.equal(formatAccessCompact('2026-11-06'), '06/11 00:00');
+  assert.equal(formatAccessCompact(null), '');
+  assert.equal(formatAccessCompact(''), '');
 });
 

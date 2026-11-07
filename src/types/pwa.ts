@@ -4,6 +4,7 @@ export interface PWAItem {
   url: string;
   icon?: string;
   category: string;
+  group?: string;
   notes: string;
   lastAccessedDate: string | null; // ISO YYYY-MM-DD or full timestamp
   accessLogs?: string[]; // Array of recent access timestamps
@@ -31,6 +32,7 @@ export interface ParsedDesktopApp {
   name: string;
   url: string;
   category: string;
+  group?: string;
   notes: string;
   icon?: string;
   rawFileName: string;
@@ -54,7 +56,9 @@ export type ViewDensity = 'compact-table' | 'dense-grid' | 'cards';
 
 export type StatusFilter = 'all' | 'pending' | 'accessed';
 
-export type SortOption = 'name' | 'lastAccessed' | 'category' | 'accessCount' | 'pinned';
+export type StarFilter = 'all' | '5' | '4' | '3' | 'unrated';
+
+export type SortOption = 'pinned' | 'name' | 'lastAccessed' | 'category' | 'accessCount' | 'leastAccessed' | 'pendingFirst';
 
 export interface PWAStats {
   total: number;

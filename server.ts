@@ -10,7 +10,7 @@ import crypto from 'crypto';
 import { spawn, exec, execSync } from 'child_process';
 import { parseDesktopFile, ParsedDesktopApp, convertParsedToPWAs } from './src/utils/desktopParser.js';
 import { deduplicateDesktopApps, DeduplicationResult, normalizeAppUrl } from './src/utils/desktopDeduplicator.js';
-import { getCleanDomain, getTodayString } from './src/utils/pwaLogic.js';
+import { getCleanDomain, getTodayString, isAndroidOrRedroidApp } from './src/utils/pwaLogic.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -50,9 +50,16 @@ function loadServerDb(): ServerDb {
     if (fs.existsSync(STATE_FILE)) {
       const data = JSON.parse(fs.readFileSync(STATE_FILE, 'utf-8'));
       if (data && typeof data === 'object') {
+        const rawPwas = data.pwas || {};
+        const cleanPwas: Record<string, ServerPWAState> = {};
+        for (const [k, p] of Object.entries(rawPwas)) {
+          if (!isAndroidOrRedroidApp(p as any)) {
+            cleanPwas[k] = p as ServerPWAState;
+          }
+        }
         return {
           version: data.version || 1,
-          pwas: data.pwas || {},
+          pwas: cleanPwas,
           deletedIds: Array.isArray(data.deletedIds) ? data.deletedIds : [],
         };
       }
@@ -274,6 +281,13 @@ function scanLocalPWAsWithStats(): DeduplicationResult {
   const rawApps: ParsedDesktopApp[] = [];
 
   for (const item of foundFiles) {
+    if (
+      item.fileName.toLowerCase().includes('redroid') ||
+      item.fileName.toLowerCase().includes('android')
+    ) {
+      continue;
+    }
+
     try {
       const content = fs.readFileSync(item.filePath, 'utf-8');
       if (
@@ -286,7 +300,7 @@ function scanLocalPWAsWithStats(): DeduplicationResult {
       }
 
       const parsed = parseDesktopFile(content, item.fileName);
-      if (!parsed) continue;
+      if (!parsed || isAndroidOrRedroidApp(parsed)) continue;
 
       parsed.desktopPath = item.filePath;
 
@@ -318,7 +332,7 @@ app.get('/api/pwas/scan', (_req, res) => {
     // Merge with persisted disk database so notes, ratings, accessed status, and custom edits survive restarts
     const db = getDb();
     const activeItems = pwaItems
-      .filter((pwa) => !db.deletedIds.includes(pwa.id))
+      .filter((pwa) => !db.deletedIds.includes(pwa.id) && !isAndroidOrRedroidApp(pwa))
       .map((pwa) => {
         const stored = findStoredState(pwa, db);
         if (stored) {
@@ -388,7 +402,7 @@ app.post('/api/pwas/state', (req, res) => {
 
     if (Array.isArray(items)) {
       for (const item of items) {
-        if (!item || !item.id) continue;
+        if (!item || !item.id || isAndroidOrRedroidApp(item)) continue;
         db.pwas[item.id] = {
           id: item.id,
           name: item.name,

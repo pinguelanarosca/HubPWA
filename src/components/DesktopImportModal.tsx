@@ -66,7 +66,8 @@ export const DesktopImportModal: React.FC<DesktopImportModalProps> = ({
       id: app.id,
       name: app.name.trim(),
       url: app.url.trim().startsWith('http') ? app.url.trim() : `https://${app.url.trim()}`,
-      category: app.category.trim() || 'Produtividade',
+      category: app.category.trim() || 'Geral',
+      group: app.category.trim() || 'Geral',
       notes: app.notes.trim() || 'Importado do Ubuntu Desktop',
       icon: app.icon,
       rawFileName: app.rawFileName,
@@ -177,14 +178,14 @@ export const DesktopImportModal: React.FC<DesktopImportModalProps> = ({
                         />
                       </div>
 
-                      {/* Category select */}
+                      {/* Group select */}
                       <div className="w-36">
                         <input
                           type="text"
                           value={app.category}
-                          list="modal-categories"
+                          list="modal-groups"
                           onChange={(e) => handleUpdateApp(app.id, 'category', e.target.value)}
-                          placeholder="Categoria"
+                          placeholder="Grupo"
                           className="w-full bg-neutral-900 border border-neutral-800 text-neutral-300 text-xs rounded px-2 py-1 focus:outline-none focus:border-emerald-500"
                         />
                       </div>
@@ -243,7 +244,7 @@ export const DesktopImportModal: React.FC<DesktopImportModalProps> = ({
           })}
         </div>
 
-        <datalist id="modal-categories">
+        <datalist id="modal-groups">
           {existingCategories.map((cat) => (
             <option key={cat} value={cat} />
           ))}

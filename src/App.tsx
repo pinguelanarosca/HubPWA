@@ -3,8 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useEffect, useMemo, useCallback } from 'react';
-import { PWAItem, ViewDensity, StatusFilter, SortOption } from './types/pwa';
+import { useState, useEffect, useMemo, useCallback, Fragment } from 'react';
+import { PWAItem, ViewDensity, StatusFilter, StarFilter, SortOption } from './types/pwa';
 import {
   getTodayString,
   isAccessedToday,
@@ -14,6 +14,7 @@ import {
   filterAndSortPWAs,
   resolveFaviconAtInsertion,
   getCleanDomain,
+  isAndroidOrRedroidApp,
 } from './utils/pwaLogic';
 import { parseDesktopFile, ParsedDesktopApp } from './utils/desktopParser';
 import { normalizeAppUrl } from './utils/desktopDeduplicator';
@@ -22,6 +23,8 @@ import { ControlToolbar } from './components/ControlToolbar';
 import { CompactTableView } from './components/CompactTableView';
 import { DenseGridView } from './components/DenseGridView';
 import { CardsView } from './components/CardsView';
+import { BatchActionsBar } from './components/BatchActionsBar';
+import { BatchEditModal } from './components/BatchEditModal';
 import { AddEditPWAModal } from './components/AddEditPWAModal';
 import { BackupModal } from './components/BackupModal';
 import { DesktopImportModal } from './components/DesktopImportModal';
@@ -30,6 +33,7 @@ import { FolderUp, FolderOpen, Plus } from 'lucide-react';
 
 const STORAGE_KEY = 'chrome_pwa_hub_items_empty_v1';
 const DENSITY_STORAGE_KEY = 'chrome_pwa_hub_density';
+const GROUP_BY_STORAGE_KEY = 'chrome_pwa_hub_group_by_group';
 
 export default function App() {
   const [items, setItems] = useState<PWAItem[]>(() => {
@@ -38,7 +42,7 @@ export default function App() {
       if (stored) {
         const parsed = JSON.parse(stored);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed;
+          return parsed.filter((it: PWAItem) => !isAndroidOrRedroidApp(it));
         }
       }
       // Check legacy keys to prevent data loss across updates
@@ -53,7 +57,7 @@ export default function App() {
         if (legacy) {
           const parsed = JSON.parse(legacy);
           if (Array.isArray(parsed) && parsed.length > 0) {
-            return parsed;
+            return parsed.filter((it: PWAItem) => !isAndroidOrRedroidApp(it));
           }
         }
       }
@@ -72,17 +76,31 @@ export default function App() {
     } catch {
       // Fallback
     }
-    return 'compact-table';
+    return 'cards';
   });
 
   const [search, setSearch] = useState('');
-  const [selectedCategory, setSelectedCategory] = useState('all');
+  const [selectedGroup, setSelectedGroup] = useState('all');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
+  const [starFilter, setStarFilter] = useState<StarFilter>('all');
   const [sortBy, setSortBy] = useState<SortOption>('pinned');
+  const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage, setItemsPerPage] = useState<number | 'all'>(16);
+  const [groupByGroup, setGroupByGroup] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(GROUP_BY_STORAGE_KEY) === 'true';
+    } catch {
+      return false;
+    }
+  });
+
+  // Card batch selection state
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
   // Modals state
   const [isAddEditOpen, setIsAddEditOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<PWAItem | null>(null);
+  const [isBatchEditOpen, setIsBatchEditOpen] = useState(false);
   const [isBackupOpen, setIsBackupOpen] = useState(false);
   const [isUpdateModalOpen, setIsUpdateModalOpen] = useState(false);
 
@@ -108,15 +126,16 @@ export default function App() {
   // Merge scanned local Ubuntu PWAs with stored user tracking state
   // Consolidates all previously saved versions of the same platform into the Profile 5 card
   const mergeScannedPWAs = useCallback((scannedItems: PWAItem[]) => {
+    const validScanned = scannedItems.filter((s) => !isAndroidOrRedroidApp(s));
     setItems((prev) => {
+      const cleanPrev = prev.filter((p) => !isAndroidOrRedroidApp(p));
       const absorbedPrevIds = new Set<string>();
 
-      const mergedList = scannedItems.map((scanned) => {
+      const mergedList = validScanned.map((scanned) => {
         const normScannedUrl = normalizeAppUrl(scanned.url);
-        const scannedDom = getCleanDomain(scanned.url || '');
 
         // Find ALL previous entries that belong to this platform
-        const matches = prev.filter((p) => {
+        const matches = cleanPrev.filter((p) => {
           if (p.id === scanned.id) return true;
           if (scanned.appId && p.appId && scanned.appId.toLowerCase() === p.appId.toLowerCase()) return true;
           if (scanned.desktopPath && p.desktopPath && (p.desktopPath === scanned.desktopPath || (scanned.alternateDesktopPaths || []).includes(p.desktopPath))) return true;
@@ -185,8 +204,8 @@ export default function App() {
       });
 
       // Keep only manual items that weren't absorbed into any platform
-      const remainingManualItems = prev.filter((p) => !absorbedPrevIds.has(p.id));
-      const finalMerged = [...mergedList, ...remainingManualItems];
+      const remainingManualItems = cleanPrev.filter((p) => !absorbedPrevIds.has(p.id));
+      const finalMerged = [...mergedList, ...remainingManualItems].filter((it) => !isAndroidOrRedroidApp(it));
 
       // Sync merged state to server disk database
       fetch('/api/pwas/state', {
@@ -308,41 +327,62 @@ export default function App() {
 
   // Confirm import of parsed Ubuntu desktop PWAs
   const handleConfirmDesktopImport = useCallback((newItems: PWAItem[]) => {
+    const validNew = newItems.filter((i) => !isAndroidOrRedroidApp(i));
     setItems((prev) => {
-      const existingIds = new Set(prev.map((i) => i.id));
-      const withResolvedIcons = newItems.map((item) => ({
+      const cleanPrev = prev.filter((p) => !isAndroidOrRedroidApp(p));
+      const existingIds = new Set(cleanPrev.map((i) => i.id));
+      const withResolvedIcons = validNew.map((item) => ({
         ...item,
         icon: item.icon || resolveFaviconAtInsertion(item.url),
       }));
       const filtered = withResolvedIcons.filter((i) => !existingIds.has(i.id));
-      return [...filtered, ...prev];
+      return [...filtered, ...cleanPrev];
     });
   }, []);
 
-  // Extract unique categories
-  const categories = useMemo(() => {
+  // Active non-Android/Redroid items
+  const cleanItems = useMemo(() => {
+    return items.filter((it) => !isAndroidOrRedroidApp(it));
+  }, [items]);
+
+  // Extract unique groups
+  const groups = useMemo(() => {
     const set = new Set<string>();
-    items.forEach((item) => {
-      if (item && item.category) set.add(item.category);
+    cleanItems.forEach((item) => {
+      const g = item.group || item.category || 'Geral';
+      if (g) set.add(g);
     });
     return Array.from(set).sort((a, b) => a.localeCompare(b, 'pt-BR'));
-  }, [items]);
+  }, [cleanItems]);
 
   // Compute daily stats
   const stats = useMemo(() => {
-    return calculateStats(items, todayStr);
-  }, [items, todayStr]);
+    return calculateStats(cleanItems, todayStr);
+  }, [cleanItems, todayStr]);
+
+  // Reset page when filters or search change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [search, selectedGroup, statusFilter, starFilter, sortBy]);
 
   // Filtered and sorted items
   const displayedItems = useMemo(() => {
-    return filterAndSortPWAs(items, {
+    return filterAndSortPWAs(cleanItems, {
       search,
-      category: selectedCategory,
+      group: selectedGroup,
       statusFilter,
+      starFilter,
       sortBy,
       todayStr,
     });
-  }, [items, search, selectedCategory, statusFilter, sortBy, todayStr]);
+  }, [cleanItems, search, selectedGroup, statusFilter, starFilter, sortBy, todayStr]);
+
+  // Paginated items for display
+  const paginatedItems = useMemo(() => {
+    if (itemsPerPage === 'all' || groupByGroup) return displayedItems;
+    const start = (currentPage - 1) * itemsPerPage;
+    return displayedItems.slice(start, start + itemsPerPage);
+  }, [displayedItems, currentPage, itemsPerPage, groupByGroup]);
 
   // Today display string in full Portuguese without abbreviation ambiguities
   const todayDisplay = useMemo(() => {
@@ -489,12 +529,13 @@ export default function App() {
   }, [items]);
 
   // Save new or edited PWA
-  const handleSavePWA = useCallback((data: Partial<PWAItem> & { name: string; url: string; category: string; notes: string }) => {
+  const handleSavePWA = useCallback((data: Partial<PWAItem> & { name: string; url: string; category: string; group?: string; notes: string }) => {
     const finalIcon = data.icon || resolveFaviconAtInsertion(data.url);
+    const grp = data.group || data.category || 'Geral';
     if (data.id) {
       // Edit
       setItems((prev) =>
-        prev.map((it) => (it.id === data.id ? { ...it, ...data, icon: finalIcon } : it))
+        prev.map((it) => (it.id === data.id ? { ...it, ...data, group: grp, category: grp, icon: finalIcon } : it))
       );
     } else {
       // Add
@@ -503,7 +544,8 @@ export default function App() {
         id: `pwa_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
         name: data.name,
         url: data.url,
-        category: data.category,
+        category: grp,
+        group: grp,
         notes: data.notes,
         icon: finalIcon,
         pinned: initialRating > 0,
@@ -514,6 +556,140 @@ export default function App() {
       };
       setItems((prev) => [newItem, ...prev]);
     }
+  }, []);
+
+  // Card selection handlers
+  const handleToggleSelect = useCallback((id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  }, []);
+
+  const handleToggleSelectAll = useCallback(() => {
+    setSelectedIds((prev) => {
+      const visibleIds = displayedItems.map((it) => it.id);
+      const allSelected = visibleIds.length > 0 && visibleIds.every((id) => prev.has(id));
+      if (allSelected) {
+        return new Set();
+      } else {
+        return new Set(visibleIds);
+      }
+    });
+  }, [displayedItems]);
+
+  const handleDeselectAll = useCallback(() => {
+    setSelectedIds(new Set());
+  }, []);
+
+  // Batch toggle status (acessado / pendente)
+  const handleBatchToggleStatus = useCallback(() => {
+    if (selectedIds.size === 0) return;
+    setItems((prev) => {
+      const updatedList: PWAItem[] = [];
+      const next = prev.map((it) => {
+        if (selectedIds.has(it.id)) {
+          const updated = toggleAccessedToday(it, todayStr);
+          updatedList.push(updated);
+          return updated;
+        }
+        return it;
+      });
+      if (updatedList.length > 0) {
+        fetch('/api/pwas/state', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ items: updatedList }),
+        }).catch(() => {});
+      }
+      return next;
+    });
+  }, [selectedIds, todayStr]);
+
+  // Batch delete selected items
+  const handleBatchDelete = useCallback(() => {
+    if (selectedIds.size === 0) return;
+    const count = selectedIds.size;
+    if (window.confirm(`Tem certeza que deseja excluir ${count} PWA${count > 1 ? 's' : ''} selecionada${count > 1 ? 's' : ''}?`)) {
+      const idsToDelete = Array.from(selectedIds);
+      setItems((prev) => prev.filter((it) => !selectedIds.has(it.id)));
+      setSelectedIds(new Set());
+
+      idsToDelete.forEach((id) => {
+        fetch('/api/pwas/delete', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id }),
+        }).catch(() => {});
+      });
+    }
+  }, [selectedIds]);
+
+  // Batch edit apply
+  const handleApplyBatchEdit = useCallback((changes: {
+    group?: string;
+    rating?: number;
+    notes?: string;
+    notesMode?: 'append' | 'replace';
+  }) => {
+    if (selectedIds.size === 0) return;
+
+    setItems((prev) => {
+      const updatedList: PWAItem[] = [];
+      const next = prev.map((it) => {
+        if (!selectedIds.has(it.id)) return it;
+
+        let newNotes = it.notes;
+        if (typeof changes.notes === 'string' && changes.notes.length > 0) {
+          if (changes.notesMode === 'replace') {
+            newNotes = changes.notes;
+          } else {
+            newNotes = it.notes ? `${it.notes} · ${changes.notes}` : changes.notes;
+          }
+        }
+
+        const grp = changes.group ? changes.group.trim() : (it.group || it.category || 'Geral');
+
+        const updated: PWAItem = {
+          ...it,
+          group: grp,
+          category: grp,
+          ...(typeof changes.rating === 'number' ? { rating: changes.rating, pinned: changes.rating > 0 } : {}),
+          ...(typeof changes.notes === 'string' ? { notes: newNotes } : {}),
+        };
+
+        updatedList.push(updated);
+        return updated;
+      });
+
+      if (updatedList.length > 0) {
+        fetch('/api/pwas/state', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ items: updatedList }),
+        }).catch(() => {});
+      }
+
+      return next;
+    });
+
+    setSelectedIds(new Set());
+  }, [selectedIds]);
+
+  // Toggle group by group layout
+  const handleToggleGroupByGroup = useCallback(() => {
+    setGroupByGroup((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem(GROUP_BY_STORAGE_KEY, String(next));
+      } catch {}
+      return next;
+    });
   }, []);
 
   // Batch refresh icons for all PWAs based on their URLs
@@ -555,13 +731,15 @@ export default function App() {
 
   // Import JSON items
   const handleImport = useCallback((newItems: PWAItem[], mode: 'replace' | 'merge') => {
+    const validNew = newItems.filter((i) => !isAndroidOrRedroidApp(i));
     if (mode === 'replace') {
-      setItems(newItems);
+      setItems(validNew);
     } else {
       setItems((prev) => {
-        const existingIds = new Set(prev.map((i) => i.id));
-        const nonDuplicate = newItems.filter((i) => !existingIds.has(i.id));
-        return [...prev, ...nonDuplicate];
+        const cleanPrev = prev.filter((p) => !isAndroidOrRedroidApp(p));
+        const existingIds = new Set(cleanPrev.map((i) => i.id));
+        const nonDuplicate = validNew.filter((i) => !existingIds.has(i.id));
+        return [...cleanPrev, ...nonDuplicate];
       });
     }
   }, []);
@@ -681,25 +859,29 @@ export default function App() {
             <ControlToolbar
               search={search}
               onSearchChange={setSearch}
-              selectedCategory={selectedCategory}
-              onCategoryChange={setSelectedCategory}
-              categories={categories}
+              selectedGroup={selectedGroup}
+              onGroupChange={setSelectedGroup}
+              groups={groups}
               statusFilter={statusFilter}
               onStatusFilterChange={setStatusFilter}
+              starFilter={starFilter}
+              onStarFilterChange={setStarFilter}
               density={density}
               onDensityChange={handleDensityChange}
               sortBy={sortBy}
               onSortByChange={setSortBy}
-              totalCount={items.length}
+              totalCount={cleanItems.length}
               pendingCount={stats.pendingTodayCount}
               accessedCount={stats.accessedTodayCount}
+              groupByGroup={groupByGroup}
+              onToggleGroupByGroup={handleToggleGroupByGroup}
             />
 
             {/* View Render */}
             <div className="flex-1">
               {density === 'compact-table' && (
                 <CompactTableView
-                  items={displayedItems}
+                  items={paginatedItems}
                   todayStr={todayStr}
                   onLaunch={handleLaunch}
                   onToggleStatus={handleToggleStatus}
@@ -716,7 +898,7 @@ export default function App() {
 
               {density === 'dense-grid' && (
                 <DenseGridView
-                  items={displayedItems}
+                  items={paginatedItems}
                   todayStr={todayStr}
                   onLaunch={handleLaunch}
                   onToggleStatus={handleToggleStatus}
@@ -733,8 +915,10 @@ export default function App() {
 
               {density === 'cards' && (
                 <CardsView
-                  items={displayedItems}
+                  items={paginatedItems}
                   todayStr={todayStr}
+                  selectedIds={selectedIds}
+                  onToggleSelect={handleToggleSelect}
                   onLaunch={handleLaunch}
                   onToggleStatus={handleToggleStatus}
                   onUpdateNote={handleUpdateNote}
@@ -745,22 +929,134 @@ export default function App() {
                     setIsAddEditOpen(true);
                   }}
                   onDelete={handleDelete}
+                  groupByGroup={groupByGroup}
                 />
               )}
             </div>
 
-            {/* Compact Footer Status */}
-            <footer className="mt-6 pt-3 border-t border-neutral-900 flex flex-wrap items-center justify-between text-[11px] text-neutral-400 font-mono">
-              <span>
-                Exibindo {displayedItems.length} de {items.length} PWAs cadastradas
-              </span>
-              <span className="text-neutral-400">
-                Dica Ubuntu: Você pode selecionar ou arrastar arquivos <code className="text-neutral-300 font-mono">.desktop</code> de <code className="text-neutral-300 font-mono">~/.local/share/applications</code> direto para o Hub.
-              </span>
-            </footer>
+            {/* Pagination & Counter Footer */}
+            {displayedItems.length > 0 && (
+              <footer className="mt-6 pt-4 border-t border-[#242633] flex flex-wrap items-center justify-between gap-4 text-xs text-neutral-400 font-mono">
+                <div>
+                  Mostrando{' '}
+                  <strong className="text-white">
+                    {itemsPerPage === 'all' || groupByGroup
+                      ? `1-${displayedItems.length}`
+                      : `${Math.min((currentPage - 1) * itemsPerPage + 1, displayedItems.length)}-${Math.min(
+                          currentPage * itemsPerPage,
+                          displayedItems.length
+                        )}`}
+                  </strong>{' '}
+                  de <strong className="text-white">{displayedItems.length}</strong> PWAs
+                </div>
+
+                {/* Pagination Controls */}
+                {itemsPerPage !== 'all' && !groupByGroup && Math.ceil(displayedItems.length / itemsPerPage) > 1 && (
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      disabled={currentPage === 1}
+                      onClick={() => setCurrentPage(1)}
+                      className="px-2 py-1 rounded bg-[#14151a] border border-[#242633] text-neutral-300 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
+                    >
+                      &laquo;
+                    </button>
+                    <button
+                      type="button"
+                      disabled={currentPage === 1}
+                      onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                      className="px-2.5 py-1 rounded bg-[#14151a] border border-[#242633] text-neutral-300 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
+                    >
+                      &lt;
+                    </button>
+
+                    {Array.from({ length: Math.ceil(displayedItems.length / itemsPerPage) })
+                      .map((_, i) => i + 1)
+                      .filter((p) => Math.abs(p - currentPage) <= 2 || p === 1 || p === Math.ceil(displayedItems.length / itemsPerPage))
+                      .map((page, idx, arr) => {
+                        const prevPage = arr[idx - 1];
+                        const showEllipsis = prevPage && page - prevPage > 1;
+                        return (
+                          <Fragment key={page}>
+                            {showEllipsis && <span className="px-1 text-neutral-600">...</span>}
+                            <button
+                              type="button"
+                              onClick={() => setCurrentPage(page)}
+                              className={`px-3 py-1 rounded font-bold transition-colors cursor-pointer ${
+                                currentPage === page
+                                  ? 'bg-emerald-400 text-neutral-950 shadow-xs'
+                                  : 'bg-[#14151a] border border-[#242633] text-neutral-300 hover:text-white'
+                              }`}
+                            >
+                              {page}
+                            </button>
+                          </Fragment>
+                        );
+                      })}
+
+                    <button
+                      type="button"
+                      disabled={currentPage === Math.ceil(displayedItems.length / itemsPerPage)}
+                      onClick={() => setCurrentPage((p) => Math.min(Math.ceil(displayedItems.length / itemsPerPage), p + 1))}
+                      className="px-2.5 py-1 rounded bg-[#14151a] border border-[#242633] text-neutral-300 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
+                    >
+                      &gt;
+                    </button>
+                    <button
+                      type="button"
+                      disabled={currentPage === Math.ceil(displayedItems.length / itemsPerPage)}
+                      onClick={() => setCurrentPage(Math.ceil(displayedItems.length / itemsPerPage))}
+                      className="px-2 py-1 rounded bg-[#14151a] border border-[#242633] text-neutral-300 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
+                    >
+                      &raquo;
+                    </button>
+                  </div>
+                )}
+
+                {/* Items per page selector */}
+                <div className="flex items-center gap-2">
+                  <span className="text-neutral-400">Itens por página:</span>
+                  <select
+                    value={itemsPerPage}
+                    onChange={(e) => {
+                      const val = e.target.value === 'all' ? 'all' : Number(e.target.value);
+                      setItemsPerPage(val);
+                      setCurrentPage(1);
+                    }}
+                    className="bg-[#14151a] border border-[#242633] text-neutral-200 text-xs rounded px-2.5 py-1 focus:outline-none focus:border-emerald-500 cursor-pointer"
+                  >
+                    <option value={16}>16</option>
+                    <option value={32}>32</option>
+                    <option value={64}>64</option>
+                    <option value="all">Todas ({displayedItems.length})</option>
+                  </select>
+                </div>
+              </footer>
+            )}
           </>
         )}
       </main>
+
+      {/* Floating Batch Actions Bar (Tarefas em Lote) */}
+      <BatchActionsBar
+        selectedCount={selectedIds.size}
+        totalCount={displayedItems.length}
+        allSelected={displayedItems.length > 0 && displayedItems.every((it) => selectedIds.has(it.id))}
+        onToggleSelectAll={handleToggleSelectAll}
+        onDeselectAll={handleDeselectAll}
+        onBatchToggleStatus={handleBatchToggleStatus}
+        onBatchEdit={() => setIsBatchEditOpen(true)}
+        onBatchDelete={handleBatchDelete}
+      />
+
+      {/* Batch Edit Modal */}
+      <BatchEditModal
+        isOpen={isBatchEditOpen}
+        onClose={() => setIsBatchEditOpen(false)}
+        selectedCount={selectedIds.size}
+        existingGroups={groups}
+        onApply={handleApplyBatchEdit}
+      />
 
       {/* Add / Edit Modal (Manual Entry) */}
       <AddEditPWAModal
@@ -771,7 +1067,7 @@ export default function App() {
         }}
         onSave={handleSavePWA}
         editingItem={editingItem}
-        existingCategories={categories}
+        existingGroups={groups}
       />
 
       {/* Ubuntu .desktop Import Review Modal */}
@@ -783,7 +1079,7 @@ export default function App() {
         }}
         parsedApps={parsedDesktopApps}
         onConfirmImport={handleConfirmDesktopImport}
-        existingCategories={categories}
+        existingCategories={groups}
       />
 
       {/* Backup & Import Modal */}
