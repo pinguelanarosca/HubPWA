@@ -69,10 +69,10 @@ export const CardsView: React.FC<CardsViewProps> = ({
     return (
       <div
         key={item.id}
-        className={`group relative p-3.5 rounded-xl border bg-[#14151a] hover:bg-[#181920] transition-all flex flex-col justify-between shadow-sm hover:shadow-md hover:border-neutral-700/80 ${
+        className={`group relative p-3.5 rounded-xl border bg-[#14151a] hover:bg-[#181920] transition-all flex flex-col justify-between shadow-sm hover:shadow-md hover:border-t-neutral-600 hover:border-r-neutral-600 hover:border-b-neutral-600 ${
           isAccessed
-            ? 'border-l-4 border-l-emerald-500 border-t border-r border-b border-[#242633]'
-            : 'border-l-4 border-l-rose-500 border-t border-r border-b border-[#242633]'
+            ? 'border-l-4 border-l-emerald-500 hover:border-l-emerald-500 border-t border-r border-b border-[#242633]'
+            : 'border-l-4 border-l-rose-500 hover:border-l-rose-500 border-t border-r border-b border-[#242633]'
         } ${isSelected ? 'ring-2 ring-emerald-500/80 bg-[#1a1c24]' : ''}`}
       >
         <div>
