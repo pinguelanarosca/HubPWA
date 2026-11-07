@@ -1,6 +1,7 @@
 import React, { useRef, useEffect } from 'react';
-import { Search, X, List, Rows3, ArrowUpDown, Folder, Star, Compass } from 'lucide-react';
+import { Search, X, List, Rows3, ArrowUpDown, Folder, Star, Compass, Settings } from 'lucide-react';
 import { SortOption, StatusFilter, StarFilter, ViewDensity } from '../types/pwa';
+import { getGroupTheme } from '../utils/groupLogic';
 
 interface ControlToolbarProps {
   search: string;
@@ -8,6 +9,9 @@ interface ControlToolbarProps {
   selectedGroup: string;
   onGroupChange: (group: string) => void;
   groups: string[];
+  groupConfigs?: Record<string, string>;
+  groupColors?: Record<string, string>;
+  onOpenGroupManager?: () => void;
   statusFilter: StatusFilter;
   onStatusFilterChange: (status: StatusFilter) => void;
   starFilter: StarFilter;
@@ -29,6 +33,9 @@ export const ControlToolbar: React.FC<ControlToolbarProps> = ({
   selectedGroup,
   onGroupChange,
   groups,
+  groupConfigs = {},
+  groupColors = {},
+  onOpenGroupManager,
   statusFilter,
   onStatusFilterChange,
   starFilter,
@@ -201,9 +208,19 @@ export const ControlToolbar: React.FC<ControlToolbarProps> = ({
 
       {/* Grupos Filter Strip */}
       <div className="flex items-center gap-1.5 overflow-x-auto pb-1.5 scrollbar-none text-xs">
-        <div className="flex items-center gap-1.5 text-neutral-400 shrink-0 mr-1">
+        <div className="flex items-center gap-1 text-neutral-400 shrink-0 mr-1">
           <Folder className="w-3.5 h-3.5 text-emerald-400" />
           <span className="text-xs font-semibold text-neutral-300">Grupos:</span>
+          {onOpenGroupManager && (
+            <button
+              type="button"
+              onClick={onOpenGroupManager}
+              title="Gerenciar nomes e símbolos dos grupos"
+              className="p-1 rounded text-neutral-400 hover:text-emerald-400 hover:bg-[#1f212a] transition-colors cursor-pointer ml-0.5"
+            >
+              <Settings className="w-3.5 h-3.5" />
+            </button>
+          )}
         </div>
 
         <button
@@ -218,20 +235,24 @@ export const ControlToolbar: React.FC<ControlToolbarProps> = ({
           Todos os Grupos
         </button>
 
-        {groups.map((grp) => (
-          <button
-            key={grp}
-            type="button"
-            onClick={() => onGroupChange(grp)}
-            className={`px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-colors cursor-pointer ${
-              selectedGroup === grp
-                ? 'bg-neutral-100 text-neutral-950 font-bold shadow-xs'
-                : 'bg-[#14151a] hover:bg-[#1f212a] text-neutral-300 hover:text-white border border-[#242633]'
-            }`}
-          >
-            {grp}
-          </button>
-        ))}
+        {groups.map((grp) => {
+          const theme = getGroupTheme(grp, groupColors);
+          return (
+            <button
+              key={grp}
+              type="button"
+              onClick={() => onGroupChange(grp)}
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-colors cursor-pointer ${
+                selectedGroup === grp
+                  ? 'bg-neutral-100 text-neutral-950 font-bold shadow-xs'
+                  : 'bg-[#14151a] hover:bg-[#1f212a] text-neutral-300 hover:text-white border border-[#242633]'
+              }`}
+            >
+              <span className={`w-2 h-2 rounded-full ${theme.dotColor}`} />
+              <span>{grp}</span>
+            </button>
+          );
+        })}
       </div>
     </div>
   );

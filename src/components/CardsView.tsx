@@ -4,11 +4,14 @@ import { PWAIcon } from './PWAIcon';
 import { InlineNoteInput } from './InlineNoteInput';
 import { StarRating } from './StarRating';
 import { isAccessedToday, formatAccessLogDash } from '../utils/pwaLogic';
+import { getGroupTheme } from '../utils/groupLogic';
 import { Check, CheckCircle2, Clock, MoreVertical, Edit2, Trash2, Folder, ExternalLink } from 'lucide-react';
 
 interface CardsViewProps {
   items: PWAItem[];
   todayStr: string;
+  groupConfigs?: Record<string, string>;
+  groupColors?: Record<string, string>;
   selectedIds?: Set<string>;
   onToggleSelect?: (id: string) => void;
   onLaunch: (item: PWAItem) => void;
@@ -24,6 +27,8 @@ interface CardsViewProps {
 export const CardsView: React.FC<CardsViewProps> = ({
   items,
   todayStr,
+  groupConfigs = {},
+  groupColors = {},
   selectedIds = new Set<string>(),
   onToggleSelect,
   onLaunch,
@@ -59,25 +64,48 @@ export const CardsView: React.FC<CardsViewProps> = ({
     );
   }
 
-  // Render an individual card exactly as specified in the user's design mockup
+  // Render an individual card with translucent background elements color-coding its group
   const renderCard = (item: PWAItem) => {
     const isAccessed = isAccessedToday(item.lastAccessedDate, todayStr);
     const accessLogStr = formatAccessLogDash(item.lastAccessedDate);
     const isSelected = selectedIds.has(item.id);
     const currentRating = typeof item.rating === 'number' ? item.rating : (item.pinned ? 5 : 0);
+    const grpName = item.group || item.category || 'Geral';
+    const groupTheme = getGroupTheme(grpName, groupColors);
 
     return (
       <div
         key={item.id}
-        className={`group relative p-3.5 rounded-xl border bg-[#14151a] hover:bg-[#181920] transition-all flex flex-col justify-between shadow-sm hover:shadow-md hover:border-t-neutral-600 hover:border-r-neutral-600 hover:border-b-neutral-600 ${
+        className={`group relative p-3.5 rounded-xl border bg-[#14151a] hover:bg-[#181920] transition-all flex flex-col justify-between shadow-sm hover:shadow-md overflow-hidden hover:border-t-neutral-600 hover:border-r-neutral-600 hover:border-b-neutral-600 ${
           isAccessed
             ? 'border-l-4 border-l-emerald-500 hover:border-l-emerald-500 border-t border-r border-b border-[#242633]'
             : 'border-l-4 border-l-rose-500 hover:border-l-rose-500 border-t border-r border-b border-[#242633]'
         } ${isSelected ? 'ring-2 ring-emerald-500/80 bg-[#1a1c24]' : ''}`}
       >
-        <div>
-          {/* Card Top Row: 5 Stars on Left | Today Badge + 3-Dots Menu on Right */}
-          <div className="flex items-center justify-between gap-2 mb-3">
+        {/* Translucent Top Edge Accent Bar for Group Identification */}
+        <div
+          className={`absolute top-0 left-0 right-0 h-0.5 ${groupTheme.accentBar} opacity-80 group-hover:opacity-100 transition-opacity pointer-events-none`}
+        />
+
+        {/* Translucent Background Element 1: Vibrant Top-Right Ambient Radial Glow Orb */}
+        <div
+          className={`absolute -top-10 -right-10 w-40 h-40 rounded-full blur-2xl pointer-events-none transition-all duration-300 opacity-80 group-hover:opacity-100 ${groupTheme.glow}`}
+        />
+
+        {/* Translucent Background Element 2: High-Contrast Corner Accent Gradient Overlay */}
+        <div
+          className={`absolute inset-0 bg-gradient-to-br ${groupTheme.gradient} pointer-events-none opacity-60 group-hover:opacity-90 transition-opacity`}
+        />
+
+        {/* Translucent Background Element 3: Bottom-Left Ambient Glow Orb */}
+        <div
+          className={`absolute -bottom-10 -left-10 w-32 h-32 rounded-full blur-xl pointer-events-none opacity-35 group-hover:opacity-70 transition-opacity ${groupTheme.secondaryGlow}`}
+        />
+
+        {/* Card Interactive Content */}
+        <div className="relative z-10">
+          {/* Card Top Row: 5 Stars on Left | Today Badge + 3-Dots Menu + Group Symbol on Right */}
+          <div className="flex items-start justify-between gap-2 mb-3">
             {/* Left: Interactive 5 Stars Rating */}
             <div className="flex items-center gap-1">
               {onToggleSelect && (
@@ -232,7 +260,7 @@ export const CardsView: React.FC<CardsViewProps> = ({
               <h3
                 onClick={() => onLaunch(item)}
                 className="font-bold text-sm text-white group-hover:text-emerald-400 truncate cursor-pointer transition-colors leading-snug"
-                title={item.name}
+                title={`${item.name} (${grpName})`}
               >
                 {item.name}
               </h3>

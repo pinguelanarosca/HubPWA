@@ -30,6 +30,8 @@ import { BackupModal } from './components/BackupModal';
 import { DesktopImportModal } from './components/DesktopImportModal';
 import { GitHubUpdateModal } from './components/GitHubUpdateModal';
 import { AutostartModal } from './components/AutostartModal';
+import { loadGroupConfigs, saveGroupConfigs, loadGroupColors, saveGroupColors } from './utils/groupLogic';
+import { GroupManagerModal } from './components/GroupManagerModal';
 import { FolderUp, FolderOpen, Plus } from 'lucide-react';
 
 const STORAGE_KEY = 'chrome_pwa_hub_items_empty_v1';
@@ -103,6 +105,22 @@ export default function App() {
   const [isBackupOpen, setIsBackupOpen] = useState(false);
   const [isUpdateModalOpen, setIsUpdateModalOpen] = useState(false);
   const [isAutostartOpen, setIsAutostartOpen] = useState(false);
+  const [isGroupManagerOpen, setIsGroupManagerOpen] = useState(false);
+
+  // Group Configurations (name -> symbol mapping)
+  const [groupConfigs, setGroupConfigs] = useState<Record<string, string>>(() => loadGroupConfigs());
+
+  // Group Color Themes (name -> colorKey mapping)
+  const [groupColors, setGroupColors] = useState<Record<string, string>>(() => loadGroupColors());
+
+  // Save group configs and colors whenever updated
+  useEffect(() => {
+    saveGroupConfigs(groupConfigs);
+  }, [groupConfigs]);
+
+  useEffect(() => {
+    saveGroupColors(groupColors);
+  }, [groupColors]);
 
   // Ubuntu desktop file import state
   const [parsedDesktopApps, setParsedDesktopApps] = useState<ParsedDesktopApp[]>([]);
@@ -669,6 +687,74 @@ export default function App() {
     setSelectedIds(new Set());
   }, [selectedIds]);
 
+  // Group manager actions
+  const handleRenameGroup = useCallback((oldName: string, newName: string, colorKey: string) => {
+    setItems((prev) =>
+      prev.map((it) => {
+        const currentGrp = it.group || it.category || 'Geral';
+        if (currentGrp === oldName) {
+          return {
+            ...it,
+            group: newName,
+            category: newName,
+          };
+        }
+        return it;
+      })
+    );
+
+    setGroupColors((prev) => {
+      const copy = { ...prev };
+      delete copy[oldName];
+      copy[newName] = colorKey;
+      return copy;
+    });
+
+    if (selectedGroup === oldName) {
+      setSelectedGroup(newName);
+    }
+  }, [selectedGroup]);
+
+  const handleUpdateGroupColor = useCallback((groupName: string, colorKey: string) => {
+    setGroupColors((prev) => ({
+      ...prev,
+      [groupName]: colorKey,
+    }));
+  }, []);
+
+  const handleAddGroup = useCallback((name: string, colorKey: string) => {
+    setGroupColors((prev) => ({
+      ...prev,
+      [name]: colorKey,
+    }));
+  }, []);
+
+  const handleDeleteGroup = useCallback((groupName: string) => {
+    setItems((prev) =>
+      prev.map((it) => {
+        const currentGrp = it.group || it.category || 'Geral';
+        if (currentGrp === groupName) {
+          return {
+            ...it,
+            group: 'Geral',
+            category: 'Geral',
+          };
+        }
+        return it;
+      })
+    );
+
+    setGroupColors((prev) => {
+      const copy = { ...prev };
+      delete copy[groupName];
+      return copy;
+    });
+
+    if (selectedGroup === groupName) {
+      setSelectedGroup('all');
+    }
+  }, [selectedGroup]);
+
   // Toggle group by group layout
   const handleToggleGroupByGroup = useCallback(() => {
     setGroupByGroup((prev) => {
@@ -851,6 +937,9 @@ export default function App() {
               selectedGroup={selectedGroup}
               onGroupChange={setSelectedGroup}
               groups={groups}
+              groupConfigs={groupConfigs}
+              groupColors={groupColors}
+              onOpenGroupManager={() => setIsGroupManagerOpen(true)}
               statusFilter={statusFilter}
               onStatusFilterChange={setStatusFilter}
               starFilter={starFilter}
@@ -906,6 +995,8 @@ export default function App() {
                 <CardsView
                   items={displayedItems}
                   todayStr={todayStr}
+                  groupConfigs={groupConfigs}
+                  groupColors={groupColors}
                   selectedIds={selectedIds}
                   onToggleSelect={handleToggleSelect}
                   onLaunch={handleLaunch}
@@ -1000,6 +1091,18 @@ export default function App() {
       <AutostartModal
         isOpen={isAutostartOpen}
         onClose={() => setIsAutostartOpen(false)}
+      />
+
+      {/* Group Manager Modal */}
+      <GroupManagerModal
+        isOpen={isGroupManagerOpen}
+        onClose={() => setIsGroupManagerOpen(false)}
+        groups={groups}
+        groupColors={groupColors}
+        onRenameGroup={handleRenameGroup}
+        onUpdateGroupColor={handleUpdateGroupColor}
+        onAddGroup={handleAddGroup}
+        onDeleteGroup={handleDeleteGroup}
       />
     </div>
   );

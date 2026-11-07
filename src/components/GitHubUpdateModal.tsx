@@ -250,6 +250,17 @@ export const GitHubUpdateModal: React.FC<GitHubUpdateModalProps> = ({
               <span>{successMessage}</span>
             </div>
           )}
+
+          {/* Terminal pre-start update hint */}
+          <div className="p-3 rounded-lg bg-neutral-950/60 border border-neutral-800/80 text-[11px] text-neutral-400 space-y-1">
+            <span className="font-semibold text-neutral-300 block">💡 Atualizar antes de iniciar (via Terminal):</span>
+            <p className="text-[10px] text-neutral-400 leading-relaxed">
+              Você também pode baixar as atualizações diretamente pelo terminal do Ubuntu sem precisar abrir a interface web antes:
+            </p>
+            <code className="block p-1.5 rounded bg-neutral-950 border border-neutral-800 text-emerald-400 font-mono text-[10px] select-all">
+              bash scripts/update-hub.sh
+            </code>
+          </div>
         </div>
 
         {/* Footer actions */}
