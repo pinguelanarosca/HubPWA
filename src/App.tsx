@@ -84,8 +84,6 @@ export default function App() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [starFilter, setStarFilter] = useState<StarFilter>('all');
   const [sortBy, setSortBy] = useState<SortOption>('pinned');
-  const [currentPage, setCurrentPage] = useState(1);
-  const [itemsPerPage, setItemsPerPage] = useState<number | 'all'>(16);
   const [groupByGroup, setGroupByGroup] = useState<boolean>(() => {
     try {
       return localStorage.getItem(GROUP_BY_STORAGE_KEY) === 'true';
@@ -360,11 +358,6 @@ export default function App() {
     return calculateStats(cleanItems, todayStr);
   }, [cleanItems, todayStr]);
 
-  // Reset page when filters or search change
-  useEffect(() => {
-    setCurrentPage(1);
-  }, [search, selectedGroup, statusFilter, starFilter, sortBy]);
-
   // Filtered and sorted items
   const displayedItems = useMemo(() => {
     return filterAndSortPWAs(cleanItems, {
@@ -376,13 +369,6 @@ export default function App() {
       todayStr,
     });
   }, [cleanItems, search, selectedGroup, statusFilter, starFilter, sortBy, todayStr]);
-
-  // Paginated items for display
-  const paginatedItems = useMemo(() => {
-    if (itemsPerPage === 'all' || groupByGroup) return displayedItems;
-    const start = (currentPage - 1) * itemsPerPage;
-    return displayedItems.slice(start, start + itemsPerPage);
-  }, [displayedItems, currentPage, itemsPerPage, groupByGroup]);
 
   // Today display string in full Portuguese without abbreviation ambiguities
   const todayDisplay = useMemo(() => {
@@ -881,7 +867,7 @@ export default function App() {
             <div className="flex-1">
               {density === 'compact-table' && (
                 <CompactTableView
-                  items={paginatedItems}
+                  items={displayedItems}
                   todayStr={todayStr}
                   onLaunch={handleLaunch}
                   onToggleStatus={handleToggleStatus}
@@ -898,7 +884,7 @@ export default function App() {
 
               {density === 'dense-grid' && (
                 <DenseGridView
-                  items={paginatedItems}
+                  items={displayedItems}
                   todayStr={todayStr}
                   onLaunch={handleLaunch}
                   onToggleStatus={handleToggleStatus}
@@ -915,7 +901,7 @@ export default function App() {
 
               {density === 'cards' && (
                 <CardsView
-                  items={paginatedItems}
+                  items={displayedItems}
                   todayStr={todayStr}
                   selectedIds={selectedIds}
                   onToggleSelect={handleToggleSelect}
@@ -934,105 +920,15 @@ export default function App() {
               )}
             </div>
 
-            {/* Pagination & Counter Footer */}
-            {displayedItems.length > 0 && (
-              <footer className="mt-6 pt-4 border-t border-[#242633] flex flex-wrap items-center justify-between gap-4 text-xs text-neutral-400 font-mono">
-                <div>
-                  Mostrando{' '}
-                  <strong className="text-white">
-                    {itemsPerPage === 'all' || groupByGroup
-                      ? `1-${displayedItems.length}`
-                      : `${Math.min((currentPage - 1) * itemsPerPage + 1, displayedItems.length)}-${Math.min(
-                          currentPage * itemsPerPage,
-                          displayedItems.length
-                        )}`}
-                  </strong>{' '}
-                  de <strong className="text-white">{displayedItems.length}</strong> PWAs
-                </div>
-
-                {/* Pagination Controls */}
-                {itemsPerPage !== 'all' && !groupByGroup && Math.ceil(displayedItems.length / itemsPerPage) > 1 && (
-                  <div className="flex items-center gap-1.5">
-                    <button
-                      type="button"
-                      disabled={currentPage === 1}
-                      onClick={() => setCurrentPage(1)}
-                      className="px-2 py-1 rounded bg-[#14151a] border border-[#242633] text-neutral-300 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
-                    >
-                      &laquo;
-                    </button>
-                    <button
-                      type="button"
-                      disabled={currentPage === 1}
-                      onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-                      className="px-2.5 py-1 rounded bg-[#14151a] border border-[#242633] text-neutral-300 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
-                    >
-                      &lt;
-                    </button>
-
-                    {Array.from({ length: Math.ceil(displayedItems.length / itemsPerPage) })
-                      .map((_, i) => i + 1)
-                      .filter((p) => Math.abs(p - currentPage) <= 2 || p === 1 || p === Math.ceil(displayedItems.length / itemsPerPage))
-                      .map((page, idx, arr) => {
-                        const prevPage = arr[idx - 1];
-                        const showEllipsis = prevPage && page - prevPage > 1;
-                        return (
-                          <Fragment key={page}>
-                            {showEllipsis && <span className="px-1 text-neutral-600">...</span>}
-                            <button
-                              type="button"
-                              onClick={() => setCurrentPage(page)}
-                              className={`px-3 py-1 rounded font-bold transition-colors cursor-pointer ${
-                                currentPage === page
-                                  ? 'bg-emerald-400 text-neutral-950 shadow-xs'
-                                  : 'bg-[#14151a] border border-[#242633] text-neutral-300 hover:text-white'
-                              }`}
-                            >
-                              {page}
-                            </button>
-                          </Fragment>
-                        );
-                      })}
-
-                    <button
-                      type="button"
-                      disabled={currentPage === Math.ceil(displayedItems.length / itemsPerPage)}
-                      onClick={() => setCurrentPage((p) => Math.min(Math.ceil(displayedItems.length / itemsPerPage), p + 1))}
-                      className="px-2.5 py-1 rounded bg-[#14151a] border border-[#242633] text-neutral-300 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
-                    >
-                      &gt;
-                    </button>
-                    <button
-                      type="button"
-                      disabled={currentPage === Math.ceil(displayedItems.length / itemsPerPage)}
-                      onClick={() => setCurrentPage(Math.ceil(displayedItems.length / itemsPerPage))}
-                      className="px-2 py-1 rounded bg-[#14151a] border border-[#242633] text-neutral-300 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
-                    >
-                      &raquo;
-                    </button>
-                  </div>
-                )}
-
-                {/* Items per page selector */}
-                <div className="flex items-center gap-2">
-                  <span className="text-neutral-400">Itens por página:</span>
-                  <select
-                    value={itemsPerPage}
-                    onChange={(e) => {
-                      const val = e.target.value === 'all' ? 'all' : Number(e.target.value);
-                      setItemsPerPage(val);
-                      setCurrentPage(1);
-                    }}
-                    className="bg-[#14151a] border border-[#242633] text-neutral-200 text-xs rounded px-2.5 py-1 focus:outline-none focus:border-emerald-500 cursor-pointer"
-                  >
-                    <option value={16}>16</option>
-                    <option value={32}>32</option>
-                    <option value={64}>64</option>
-                    <option value="all">Todas ({displayedItems.length})</option>
-                  </select>
-                </div>
-              </footer>
-            )}
+            {/* Footer Counter (Página Única Sem Paginação) */}
+            <footer className="mt-6 pt-4 border-t border-[#242633] flex flex-wrap items-center justify-between text-xs text-neutral-400 font-mono">
+              <span>
+                Exibindo todas as <strong className="text-white">{displayedItems.length}</strong> PWAs de <strong className="text-white">{items.length}</strong> cadastradas
+              </span>
+              <span className="text-neutral-500">
+                Dica Ubuntu: Você pode selecionar ou arrastar arquivos <code className="text-neutral-400 font-mono">.desktop</code> de <code className="text-neutral-400 font-mono">~/.local/share/applications</code> direto para o Hub.
+              </span>
+            </footer>
           </>
         )}
       </main>
