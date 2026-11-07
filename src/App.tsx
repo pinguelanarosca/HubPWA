@@ -31,6 +31,7 @@ import { DesktopImportModal } from './components/DesktopImportModal';
 import { GitHubUpdateModal } from './components/GitHubUpdateModal';
 import { AutostartModal } from './components/AutostartModal';
 import { loadGroupConfigs, saveGroupConfigs, loadGroupColors, saveGroupColors } from './utils/groupLogic';
+import { extractPWAsToMarkdown } from './utils/markdownExporter';
 import { GroupManagerModal } from './components/GroupManagerModal';
 import { FolderUp, FolderOpen, Plus } from 'lucide-react';
 
@@ -366,12 +367,15 @@ export default function App() {
   // Extract unique groups
   const groups = useMemo(() => {
     const set = new Set<string>();
+    set.add('Geral');
+    Object.keys(groupConfigs).forEach((g) => set.add(g));
+    Object.keys(groupColors).forEach((g) => set.add(g));
     cleanItems.forEach((item) => {
       const g = item.group || item.category || 'Geral';
       if (g) set.add(g);
     });
     return Array.from(set).sort((a, b) => a.localeCompare(b, 'pt-BR'));
-  }, [cleanItems]);
+  }, [cleanItems, groupConfigs, groupColors]);
 
   // Compute daily stats
   const stats = useMemo(() => {
@@ -686,6 +690,43 @@ export default function App() {
 
     setSelectedIds(new Set());
   }, [selectedIds]);
+
+  // Batch reassign group for selected PWAs
+  const handleBatchAssignGroup = useCallback((targetGroupName: string) => {
+    if (selectedIds.size === 0 || !targetGroupName) return;
+
+    setItems((prev) => {
+      const updatedList: PWAItem[] = [];
+      const next = prev.map((it) => {
+        if (!selectedIds.has(it.id)) return it;
+        const updated: PWAItem = {
+          ...it,
+          group: targetGroupName,
+          category: targetGroupName,
+        };
+        updatedList.push(updated);
+        return updated;
+      });
+
+      if (updatedList.length > 0) {
+        fetch('/api/pwas/state', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ items: updatedList }),
+        }).catch(() => {});
+      }
+
+      return next;
+    });
+
+    setSelectedIds(new Set());
+  }, [selectedIds]);
+
+  // Batch extract URLs to Markdown (.md)
+  const handleBatchExtractUrls = useCallback(() => {
+    if (selectedIds.size === 0) return;
+    extractPWAsToMarkdown(items, selectedIds);
+  }, [items, selectedIds]);
 
   // Group manager actions
   const handleRenameGroup = useCallback((oldName: string, newName: string, colorKey: string) => {
@@ -1035,8 +1076,11 @@ export default function App() {
         onToggleSelectAll={handleToggleSelectAll}
         onDeselectAll={handleDeselectAll}
         onBatchToggleStatus={handleBatchToggleStatus}
+        onBatchAssignGroup={handleBatchAssignGroup}
+        onBatchExtractUrls={handleBatchExtractUrls}
         onBatchEdit={() => setIsBatchEditOpen(true)}
         onBatchDelete={handleBatchDelete}
+        existingGroups={groups}
       />
 
       {/* Batch Edit Modal */}
