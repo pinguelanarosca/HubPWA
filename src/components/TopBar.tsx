@@ -1,5 +1,5 @@
 import React, { useRef } from 'react';
-import { Plus, Download, Upload, CheckCircle2, RotateCcw, RotateCw, FolderOpen, ChevronDown, Link, Github, Calendar, Target } from 'lucide-react';
+import { Plus, Download, Upload, CheckCircle2, RotateCcw, RotateCw, FolderOpen, ChevronDown, Link, Github, Calendar, Target, Power } from 'lucide-react';
 import { PWAStats } from '../types/pwa';
 
 interface TopBarProps {
@@ -9,6 +9,7 @@ interface TopBarProps {
   onOpenManualAddModal: () => void;
   onOpenBackupModal: () => void;
   onOpenUpdateModal: () => void;
+  onOpenAutostartModal?: () => void;
   onMarkAllToday: () => void;
   onResetToday: () => void;
   onRefreshAllIcons?: () => void;
@@ -22,6 +23,7 @@ export const TopBar: React.FC<TopBarProps> = ({
   onOpenManualAddModal,
   onOpenBackupModal,
   onOpenUpdateModal,
+  onOpenAutostartModal,
   onMarkAllToday,
   onResetToday,
   onRefreshAllIcons,
@@ -170,6 +172,19 @@ export const TopBar: React.FC<TopBarProps> = ({
               </button>
             </div>
           </div>
+
+          {/* Autostart Ubuntu Button */}
+          {onOpenAutostartModal && (
+            <button
+              type="button"
+              onClick={onOpenAutostartModal}
+              title="Configurar inicialização automática ao ligar ou reiniciar o PC (Ubuntu)"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-emerald-300 hover:text-emerald-200 bg-emerald-950/60 hover:bg-emerald-900/80 border border-emerald-800/80 rounded-lg transition-colors cursor-pointer shrink-0"
+            >
+              <Power className="w-3.5 h-3.5 text-emerald-400" />
+              <span className="hidden sm:inline">Autostart Ubuntu</span>
+            </button>
+          )}
 
           {/* GitHub Update Button */}
           <button

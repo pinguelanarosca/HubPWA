@@ -29,6 +29,7 @@ import { AddEditPWAModal } from './components/AddEditPWAModal';
 import { BackupModal } from './components/BackupModal';
 import { DesktopImportModal } from './components/DesktopImportModal';
 import { GitHubUpdateModal } from './components/GitHubUpdateModal';
+import { AutostartModal } from './components/AutostartModal';
 import { FolderUp, FolderOpen, Plus } from 'lucide-react';
 
 const STORAGE_KEY = 'chrome_pwa_hub_items_empty_v1';
@@ -101,6 +102,7 @@ export default function App() {
   const [isBatchEditOpen, setIsBatchEditOpen] = useState(false);
   const [isBackupOpen, setIsBackupOpen] = useState(false);
   const [isUpdateModalOpen, setIsUpdateModalOpen] = useState(false);
+  const [isAutostartOpen, setIsAutostartOpen] = useState(false);
 
   // Ubuntu desktop file import state
   const [parsedDesktopApps, setParsedDesktopApps] = useState<ParsedDesktopApp[]>([]);
@@ -756,6 +758,7 @@ export default function App() {
         }}
         onOpenBackupModal={() => setIsBackupOpen(true)}
         onOpenUpdateModal={() => setIsUpdateModalOpen(true)}
+        onOpenAutostartModal={() => setIsAutostartOpen(true)}
         onMarkAllToday={handleMarkAllToday}
         onResetToday={handleResetToday}
         onRefreshAllIcons={handleRefreshAllIcons}
@@ -991,6 +994,12 @@ export default function App() {
       <GitHubUpdateModal
         isOpen={isUpdateModalOpen}
         onClose={() => setIsUpdateModalOpen(false)}
+      />
+
+      {/* Ubuntu Autostart Modal */}
+      <AutostartModal
+        isOpen={isAutostartOpen}
+        onClose={() => setIsAutostartOpen(false)}
       />
     </div>
   );

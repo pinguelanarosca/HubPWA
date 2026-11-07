@@ -11,6 +11,7 @@ import { spawn, exec, execSync } from 'child_process';
 import { parseDesktopFile, ParsedDesktopApp, convertParsedToPWAs } from './src/utils/desktopParser.js';
 import { deduplicateDesktopApps, DeduplicationResult, normalizeAppUrl } from './src/utils/desktopDeduplicator.js';
 import { getCleanDomain, getTodayString, isAndroidOrRedroidApp } from './src/utils/pwaLogic.js';
+import { getAutostartStatus, enableAutostartOnUbuntu, disableAutostartOnUbuntu } from './scripts/setup-autostart.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -578,6 +579,21 @@ app.post('/api/launch-pwa', (req, res) => {
   }
 
   return res.json({ success: true, launchedNative: false, fallbackUrl: url, lastAccessedDate: localTimeStr });
+});
+
+// Ubuntu Autostart Management Endpoints
+app.get('/api/autostart/status', (_req, res) => {
+  res.json(getAutostartStatus());
+});
+
+app.post('/api/autostart/enable', (_req, res) => {
+  const result = enableAutostartOnUbuntu();
+  res.json(result);
+});
+
+app.post('/api/autostart/disable', (_req, res) => {
+  const result = disableAutostartOnUbuntu();
+  res.json(result);
 });
 
 // 1. GET /api/updater/status - Check local vs remote GitHub repository
