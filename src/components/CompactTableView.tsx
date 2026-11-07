@@ -1,11 +1,11 @@
 import React from 'react';
-import { ExternalLink, Trash2, Edit2, User } from 'lucide-react';
+import { ExternalLink, Trash2, Edit2, User, Clock } from 'lucide-react';
 import { PWAItem } from '../types/pwa';
 import { PWAIcon } from './PWAIcon';
 import { StatusIndicator } from './StatusIndicator';
 import { InlineNoteInput } from './InlineNoteInput';
 import { StarRating } from './StarRating';
-import { getCleanDomain } from '../utils/pwaLogic';
+import { getCleanDomain, formatAccessDateTime } from '../utils/pwaLogic';
 
 interface CompactTableViewProps {
   items: PWAItem[];
@@ -44,10 +44,11 @@ export const CompactTableView: React.FC<CompactTableViewProps> = ({
       <table className="w-full text-left text-xs border-collapse">
         <thead>
           <tr className="border-b border-neutral-800 bg-neutral-900/60 text-neutral-400 font-medium select-none text-[11px]">
-            <th className="py-2 px-3 w-32 text-left">Classificação</th>
-            <th className="py-2 px-3 w-36">Status Hoje</th>
-            <th className="py-2 px-3 min-w-[220px]">PWA & Domínio</th>
-            <th className="py-2 px-3 min-w-[260px]">Anotações (Clique para editar)</th>
+            <th className="py-2 px-3 w-28 text-left">Classificação</th>
+            <th className="py-2 px-3 w-32">Status Hoje</th>
+            <th className="py-2 px-3 w-44">Log de Acesso (Data/Hora)</th>
+            <th className="py-2 px-3 min-w-[200px]">PWA & Domínio</th>
+            <th className="py-2 px-3 min-w-[240px]">Anotações (Clique para editar)</th>
             <th className="py-2 px-3 w-20 text-right">Ações</th>
           </tr>
         </thead>
@@ -55,6 +56,7 @@ export const CompactTableView: React.FC<CompactTableViewProps> = ({
           {items.map((item) => {
             const domain = getCleanDomain(item.url);
             const currentRating = typeof item.rating === 'number' ? item.rating : (item.pinned ? 5 : 0);
+            const accessLog = formatAccessDateTime(item.lastAccessedDate);
 
             return (
               <tr
@@ -82,6 +84,33 @@ export const CompactTableView: React.FC<CompactTableViewProps> = ({
                     compact={false}
                     showText={true}
                   />
+                </td>
+
+                {/* Log de Acesso: Data e Hora entre Indicador e Nome da PWA */}
+                <td className="py-1 px-3 whitespace-nowrap notranslate" translate="no">
+                  {accessLog.hasRecord ? (
+                    <div
+                      className="inline-flex items-center gap-1.5 font-mono text-[11px] text-neutral-300 bg-neutral-900/80 px-2 py-0.5 rounded border border-neutral-800/80"
+                      title={`Último acesso: ${accessLog.fullStr} (${item.accessCount || 1} acessos)`}
+                    >
+                      <span className="text-neutral-400 font-medium">{accessLog.dateStr}</span>
+                      {accessLog.timeStr && (
+                        <span className="inline-flex items-center gap-1 text-emerald-400 font-semibold font-mono text-[10px]">
+                          <Clock className="w-2.5 h-2.5 text-emerald-400/90" />
+                          <span>{accessLog.timeStr}</span>
+                        </span>
+                      )}
+                      {(item.accessCount || 0) > 1 && (
+                        <span className="text-[9px] text-neutral-500 font-mono">
+                          {item.accessCount}x
+                        </span>
+                      )}
+                    </div>
+                  ) : (
+                    <span className="font-mono text-[10px] text-neutral-500 italic pl-1">
+                      — Sem registro
+                    </span>
+                  )}
                 </td>
 
                 {/* PWA Icon + Name + Link (Clicável para Abrir PWA) */}

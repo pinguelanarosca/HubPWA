@@ -344,14 +344,15 @@ export default function App() {
     });
   }, [items, search, selectedCategory, statusFilter, sortBy, todayStr]);
 
-  // Today display string
+  // Today display string in full Portuguese without abbreviation ambiguities
   const todayDisplay = useMemo(() => {
     try {
-      return new Intl.DateTimeFormat('pt-BR', {
-        weekday: 'short',
+      const formatted = new Intl.DateTimeFormat('pt-BR', {
+        weekday: 'long',
         day: 'numeric',
         month: 'short',
       }).format(new Date());
+      return formatted.charAt(0).toUpperCase() + formatted.slice(1);
     } catch {
       return todayStr;
     }
@@ -647,7 +648,7 @@ export default function App() {
         ) : (
           <>
             {/* Compact Daily Status Banner & Progress Bar */}
-            <div className="mb-3 px-3.5 py-2 rounded-lg bg-neutral-900/50 border border-neutral-800/80 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div className="mb-3 px-3.5 py-2 rounded-lg bg-neutral-900/50 border border-neutral-800/80 flex flex-col sm:flex-row sm:items-center justify-between gap-2 notranslate" translate="no">
               <div className="flex items-center gap-3">
                 {/* Indicator explanation */}
                 <div className="flex items-center gap-2 text-xs">

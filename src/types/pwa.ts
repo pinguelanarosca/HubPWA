@@ -6,6 +6,7 @@ export interface PWAItem {
   category: string;
   notes: string;
   lastAccessedDate: string | null; // ISO YYYY-MM-DD or full timestamp
+  accessLogs?: string[]; // Array of recent access timestamps
   accessCount: number;
   pinned?: boolean;
   rating?: number; // 0 to 5 stars (0 = sem estrelas, 1 a 5)

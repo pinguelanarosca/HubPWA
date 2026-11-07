@@ -77,7 +77,7 @@ export const ControlToolbar: React.FC<ControlToolbarProps> = ({
         </div>
 
         {/* Status Filter Segmented Controls */}
-        <div className="inline-flex items-center p-0.5 bg-neutral-900 border border-neutral-800 rounded-lg text-xs font-medium">
+        <div className="inline-flex items-center p-0.5 bg-neutral-900 border border-neutral-800 rounded-lg text-xs font-medium notranslate" translate="no">
           <button
             type="button"
             onClick={() => onStatusFilterChange('all')}

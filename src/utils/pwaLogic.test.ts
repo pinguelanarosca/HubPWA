@@ -9,6 +9,7 @@ import {
   filterAndSortPWAs,
   importPWAsFromJson,
   exportPWAsToJson,
+  formatAccessDateTime,
 } from './pwaLogic';
 import { PWAItem } from '../types/pwa';
 
@@ -233,3 +234,29 @@ test('filterAndSortPWAs sorts by 1 to 5 star ratings descending', () => {
   assert.equal(sorted[1].name, '3 Star App');
   assert.equal(sorted[2].name, 'Unrated App');
 });
+
+test('formatAccessDateTime accurately parses and formats date and time', () => {
+  // 1. Full ISO with time
+  const res1 = formatAccessDateTime('2026-11-06T14:32:05.000Z');
+  assert.equal(res1.hasRecord, true);
+  assert.equal(res1.dateStr, '06/11/2026');
+  assert.equal(res1.timeStr, '14:32:05');
+  assert.equal(res1.fullStr, '06/11/2026 às 14:32:05');
+
+  // 2. Date only
+  const res2 = formatAccessDateTime('2026-11-06');
+  assert.equal(res2.hasRecord, true);
+  assert.equal(res2.dateStr, '06/11/2026');
+  assert.equal(res2.timeStr, '');
+  assert.equal(res2.fullStr, '06/11/2026');
+
+  // 3. Null / empty
+  const res3 = formatAccessDateTime(null);
+  assert.equal(res3.hasRecord, false);
+  assert.equal(res3.fullStr, 'Sem registro');
+
+  const res4 = formatAccessDateTime('');
+  assert.equal(res4.hasRecord, false);
+  assert.equal(res4.fullStr, 'Sem registro');
+});
+

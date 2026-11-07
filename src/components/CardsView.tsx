@@ -1,11 +1,11 @@
 import React from 'react';
-import { ExternalLink, Star, Trash2, Edit2, User } from 'lucide-react';
+import { ExternalLink, Star, Trash2, Edit2, User, Clock } from 'lucide-react';
 import { PWAItem } from '../types/pwa';
 import { PWAIcon } from './PWAIcon';
 import { StatusIndicator } from './StatusIndicator';
 import { InlineNoteInput } from './InlineNoteInput';
 import { StarRating } from './StarRating';
-import { getCleanDomain } from '../utils/pwaLogic';
+import { getCleanDomain, formatAccessDateTime } from '../utils/pwaLogic';
 
 interface CardsViewProps {
   items: PWAItem[];
@@ -44,6 +44,7 @@ export const CardsView: React.FC<CardsViewProps> = ({
       {items.map((item) => {
         const domain = getCleanDomain(item.url);
         const currentRating = typeof item.rating === 'number' ? item.rating : (item.pinned ? 5 : 0);
+        const accessLog = formatAccessDateTime(item.lastAccessedDate);
 
         return (
           <div
@@ -93,8 +94,8 @@ export const CardsView: React.FC<CardsViewProps> = ({
                       </p>
                     </div>
 
-                    {/* Status Indicator (Verde / Vermelho com texto Acessado/Pendente) */}
-                    <div className="shrink-0">
+                    {/* Status Indicator & Access Log (Date & Time) */}
+                    <div className="shrink-0 flex flex-col items-end gap-1">
                       <StatusIndicator
                         lastAccessedDate={item.lastAccessedDate}
                         todayStr={todayStr}
@@ -102,6 +103,19 @@ export const CardsView: React.FC<CardsViewProps> = ({
                         compact={false}
                         showText={true}
                       />
+                      <div className="text-[10px] font-mono text-neutral-400 notranslate" translate="no">
+                        {accessLog.hasRecord ? (
+                          <span className="inline-flex items-center gap-1 text-neutral-300" title={`Último acesso: ${accessLog.fullStr}`}>
+                            <Clock className="w-2.5 h-2.5 text-emerald-400" />
+                            <span>{accessLog.dateStr}</span>
+                            {accessLog.timeStr && (
+                              <span className="text-emerald-400 font-semibold">{accessLog.timeStr}</span>
+                            )}
+                          </span>
+                        ) : (
+                          <span className="text-neutral-500 italic">— Sem registro</span>
+                        )}
+                      </div>
                     </div>
                   </div>
 

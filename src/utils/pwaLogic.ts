@@ -54,6 +54,80 @@ export function isAccessedToday(
 }
 
 /**
+ * Formats access timestamp into human-readable date and time for access logs
+ */
+export function formatAccessDateTime(
+  dateInput: string | null | undefined
+): { dateStr: string; timeStr: string; fullStr: string; hasRecord: boolean } {
+  if (!dateInput || !dateInput.trim()) {
+    return { dateStr: '', timeStr: '', fullStr: 'Sem registro', hasRecord: false };
+  }
+
+  try {
+    const raw = dateInput.trim();
+    let y = '';
+    let m = '';
+    let d = '';
+    let hh = '';
+    let mm = '';
+    let ss = '';
+
+    if (raw.includes('T')) {
+      const [dPart, tPart] = raw.split('T');
+      if (dPart) {
+        const dPieces = dPart.split('-');
+        if (dPieces.length === 3) {
+          [y, m, d] = dPieces;
+        }
+      }
+      if (tPart) {
+        const cleanT = tPart.replace(/Z|[-+].*$/, '');
+        const tPieces = cleanT.split(':');
+        if (tPieces.length >= 2) {
+          hh = tPieces[0].padStart(2, '0');
+          mm = tPieces[1].padStart(2, '0');
+          ss = (tPieces[2] || '').split('.')[0].padStart(2, '0');
+        }
+      }
+    } else if (raw.includes('-')) {
+      const dPieces = raw.split('-');
+      if (dPieces.length === 3) {
+        [y, m, d] = dPieces;
+      }
+    }
+
+    if (!d || !m) {
+      const parsedDate = new Date(raw);
+      if (!isNaN(parsedDate.getTime())) {
+        y = String(parsedDate.getFullYear());
+        m = String(parsedDate.getMonth() + 1).padStart(2, '0');
+        d = String(parsedDate.getDate()).padStart(2, '0');
+        hh = String(parsedDate.getHours()).padStart(2, '0');
+        mm = String(parsedDate.getMinutes()).padStart(2, '0');
+        ss = String(parsedDate.getSeconds()).padStart(2, '0');
+      }
+    }
+
+    if (!d || !m) {
+      return { dateStr: raw, timeStr: '', fullStr: raw, hasRecord: true };
+    }
+
+    const dateStr = `${d}/${m}/${y || ''}`.replace(/\/$/, '');
+    const timeStr = hh && mm ? (ss ? `${hh}:${mm}:${ss}` : `${hh}:${mm}`) : '';
+    const fullStr = timeStr ? `${dateStr} às ${timeStr}` : dateStr;
+
+    return {
+      dateStr,
+      timeStr,
+      fullStr,
+      hasRecord: true,
+    };
+  } catch {
+    return { dateStr: '', timeStr: '', fullStr: 'Sem registro', hasRecord: false };
+  }
+}
+
+/**
  * Marks a PWA item as accessed today
  */
 export function markAsAccessed(
@@ -66,9 +140,13 @@ export function markAsAccessed(
   const seconds = String(now.getSeconds()).padStart(2, '0');
   const localIso = `${todayStr}T${hours}:${minutes}:${seconds}.000Z`;
 
+  const existingLogs = Array.isArray(item.accessLogs) ? item.accessLogs : [];
+  const updatedLogs = [localIso, ...existingLogs.filter((l) => l !== localIso)].slice(0, 10);
+
   return {
     ...item,
     lastAccessedDate: localIso,
+    accessLogs: updatedLogs,
     accessCount: (item.accessCount || 0) + 1,
   };
 }
@@ -94,9 +172,13 @@ export function toggleAccessedToday(
     const seconds = String(now.getSeconds()).padStart(2, '0');
     const localIso = `${todayStr}T${hours}:${minutes}:${seconds}.000Z`;
 
+    const existingLogs = Array.isArray(item.accessLogs) ? item.accessLogs : [];
+    const updatedLogs = [localIso, ...existingLogs.filter((l) => l !== localIso)].slice(0, 10);
+
     return {
       ...item,
       lastAccessedDate: localIso,
+      accessLogs: updatedLogs,
       accessCount: (item.accessCount || 0) + 1,
     };
   }

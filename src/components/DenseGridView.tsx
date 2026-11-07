@@ -1,11 +1,11 @@
 import React from 'react';
-import { ExternalLink, Trash2, Edit2, User } from 'lucide-react';
+import { ExternalLink, Trash2, Edit2, User, Clock } from 'lucide-react';
 import { PWAItem } from '../types/pwa';
 import { PWAIcon } from './PWAIcon';
 import { StatusIndicator } from './StatusIndicator';
 import { InlineNoteInput } from './InlineNoteInput';
 import { StarRating } from './StarRating';
-import { isAccessedToday, getCleanDomain } from '../utils/pwaLogic';
+import { isAccessedToday, getCleanDomain, formatAccessDateTime } from '../utils/pwaLogic';
 
 interface DenseGridViewProps {
   items: PWAItem[];
@@ -45,6 +45,7 @@ export const DenseGridView: React.FC<DenseGridViewProps> = ({
         const accessed = isAccessedToday(item.lastAccessedDate, todayStr);
         const domain = getCleanDomain(item.url);
         const currentRating = typeof item.rating === 'number' ? item.rating : (item.pinned ? 5 : 0);
+        const accessLog = formatAccessDateTime(item.lastAccessedDate);
 
         return (
           <div
@@ -129,6 +130,22 @@ export const DenseGridView: React.FC<DenseGridViewProps> = ({
                 >
                   {accessed ? '✓ Acessado' : '● Pendente'}
                 </button>
+              </div>
+
+              {/* Access log: Date & Time */}
+              <div className="flex items-center justify-between text-[10px] font-mono text-neutral-400 mb-1.5 notranslate" translate="no">
+                <span className="text-neutral-500 text-[9px]">Acesso:</span>
+                {accessLog.hasRecord ? (
+                  <span className="inline-flex items-center gap-1 text-neutral-300" title={`Registro de acesso: ${accessLog.fullStr}`}>
+                    <Clock className="w-2.5 h-2.5 text-emerald-400" />
+                    <span>{accessLog.dateStr}</span>
+                    {accessLog.timeStr && (
+                      <span className="text-emerald-400 font-semibold">{accessLog.timeStr}</span>
+                    )}
+                  </span>
+                ) : (
+                  <span className="text-neutral-500 italic text-[9px]">— Sem registro</span>
+                )}
               </div>
 
               {/* Note field */}

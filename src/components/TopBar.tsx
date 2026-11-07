@@ -72,25 +72,31 @@ export const TopBar: React.FC<TopBarProps> = ({
         </div>
 
         {/* Zone 2: Informational Stats (Clean unboxed text with typographic separators) */}
-        <div className="hidden lg:flex items-center gap-2 text-xs text-neutral-400 whitespace-nowrap shrink-0 font-mono">
-          <span className="text-neutral-300 font-sans">{todayDisplay}</span>
-          <span aria-hidden="true" className="text-neutral-400">·</span>
-          <span>
+        <div className="hidden lg:flex items-center gap-2.5 text-xs text-neutral-400 whitespace-nowrap shrink-0 font-mono notranslate" translate="no">
+          <span className="text-neutral-300 font-sans font-medium">{todayDisplay}</span>
+          <span aria-hidden="true" className="text-neutral-600">·</span>
+          <span className="inline-flex items-center gap-1.5">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0" />
             <strong className="text-emerald-400 font-semibold tabular-nums">
               {stats.accessedTodayCount}
-            </strong>{' '}
-            / {stats.total} acessadas
+            </strong>
+            <span className="text-neutral-400">de</span>
+            <strong className="text-neutral-300 font-semibold tabular-nums">
+              {stats.total}
+            </strong>
+            <span className="text-neutral-400">acessadas</span>
           </span>
-          <span aria-hidden="true" className="text-neutral-400">·</span>
-          <span>
+          <span aria-hidden="true" className="text-neutral-600">·</span>
+          <span className="inline-flex items-center gap-1.5">
+            <span className="w-1.5 h-1.5 rounded-full bg-rose-500 shrink-0" />
             <strong className="text-rose-400 font-semibold tabular-nums">
               {stats.pendingTodayCount}
-            </strong>{' '}
-            pendentes
+            </strong>
+            <span className="text-neutral-400">pendentes</span>
           </span>
-          <span aria-hidden="true" className="text-neutral-400">·</span>
+          <span aria-hidden="true" className="text-neutral-600">·</span>
           <span className="text-neutral-300 tabular-nums">
-            {stats.completionPercentage}% concluído
+            <strong className="font-semibold text-neutral-200">{stats.completionPercentage}%</strong> concluído
           </span>
         </div>
 
