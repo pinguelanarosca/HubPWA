@@ -5,7 +5,7 @@ import { InlineNoteInput } from './InlineNoteInput';
 import { StarRating } from './StarRating';
 import { isAccessedToday, formatAccessLogDash } from '../utils/pwaLogic';
 import { getGroupTheme } from '../utils/groupLogic';
-import { Check, CheckCircle2, Clock, MoreVertical, Edit2, Trash2, Folder, ExternalLink, RotateCw } from 'lucide-react';
+import { Check, CheckCircle2, Clock, MoreVertical, Edit2, Trash2, Folder, ExternalLink, RotateCw, Upload } from 'lucide-react';
 
 interface CardsViewProps {
   items: PWAItem[];
@@ -22,6 +22,7 @@ interface CardsViewProps {
   onEdit: (item: PWAItem) => void;
   onDelete: (id: string) => void;
   onRefreshIcon?: (item: PWAItem) => void;
+  onSaveCustomIcon?: (item: PWAItem, iconDataUrl: string) => void;
   groupByGroup?: boolean;
 }
 
@@ -39,6 +40,7 @@ export const CardsView: React.FC<CardsViewProps> = ({
   onEdit,
   onDelete,
   onRefreshIcon,
+  onSaveCustomIcon,
   groupByGroup = false,
 }) => {
   const [activeMenuId, setActiveMenuId] = useState<string | null>(null);
@@ -222,6 +224,37 @@ export const CardsView: React.FC<CardsViewProps> = ({
                       <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
                       <span>Alternar Status</span>
                     </button>
+                    {onSaveCustomIcon && (
+                      <>
+                        <input
+                          type="file"
+                          accept="image/*"
+                          id={`card-icon-upload-${item.id}`}
+                          className="hidden"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (file) {
+                              const reader = new FileReader();
+                              reader.onload = (event) => {
+                                if (event.target?.result) {
+                                  onSaveCustomIcon(item, String(event.target.result));
+                                }
+                              };
+                              reader.readAsDataURL(file);
+                            }
+                            e.target.value = '';
+                          }}
+                        />
+                        <label
+                          htmlFor={`card-icon-upload-${item.id}`}
+                          onClick={() => setActiveMenuId(null)}
+                          className="w-full px-3 py-1.5 text-left hover:bg-neutral-800 flex items-center gap-2 cursor-pointer text-amber-300 font-medium"
+                        >
+                          <Upload className="w-3.5 h-3.5 text-amber-400" />
+                          <span>Upload Imagem do Ícone</span>
+                        </label>
+                      </>
+                    )}
                     {onRefreshIcon && (
                       <button
                         type="button"
@@ -232,7 +265,7 @@ export const CardsView: React.FC<CardsViewProps> = ({
                         className="w-full px-3 py-1.5 text-left hover:bg-neutral-800 flex items-center gap-2 cursor-pointer text-sky-400 font-medium"
                       >
                         <RotateCw className="w-3.5 h-3.5 text-sky-400" />
-                        <span>Atualizar Ícone</span>
+                        <span>Atualizar Ícone Web</span>
                       </button>
                     )}
                     <div className="my-1 border-t border-neutral-800" />

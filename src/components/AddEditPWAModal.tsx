@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Globe, Star, RotateCw } from 'lucide-react';
+import { X, Globe, Star, RotateCw, Upload } from 'lucide-react';
 import { PWAItem } from '../types/pwa';
 import { PWAIcon } from './PWAIcon';
 import { StarRating } from './StarRating';
@@ -317,19 +317,57 @@ export const AddEditPWAModal: React.FC<AddEditPWAModalProps> = ({
             </p>
           </div>
 
-          {/* Optional Custom Icon URL */}
+          {/* Optional Custom Icon URL or Image File Upload */}
           <div>
-            <label htmlFor="pwa-custom-icon" className="block text-xs font-medium text-neutral-400 mb-1">
-              Ícone Customizado (Opcional - por padrão usa o Favicon do Chrome)
+            <label htmlFor="pwa-custom-icon" className="block text-xs font-medium text-neutral-300 mb-1">
+              Ícone da PWA (URL da Imagem ou Upload do Computador)
             </label>
-            <input
-              id="pwa-custom-icon"
-              type="text"
-              value={customIcon}
-              onChange={(e) => setCustomIcon(e.target.value)}
-              placeholder="https://exemplo.com/icon.png"
-              className="w-full bg-neutral-950 border border-neutral-800 text-neutral-400 text-xs rounded-lg px-3 py-1.5 focus:outline-none focus:border-neutral-600"
-            />
+            <div className="space-y-2">
+              <input
+                id="pwa-custom-icon"
+                type="text"
+                value={customIcon}
+                onChange={(e) => setCustomIcon(e.target.value)}
+                placeholder="https://exemplo.com/icon.png ou cole a URL da imagem"
+                className="w-full bg-neutral-950 border border-neutral-800 text-neutral-200 text-xs rounded-lg px-3 py-1.5 focus:outline-none focus:border-emerald-500 font-mono"
+              />
+              <div className="flex items-center gap-2">
+                <input
+                  type="file"
+                  accept="image/*"
+                  id="pwa-icon-file-upload"
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) {
+                      const reader = new FileReader();
+                      reader.onload = (event) => {
+                        if (event.target?.result) {
+                          setCustomIcon(String(event.target.result));
+                        }
+                      };
+                      reader.readAsDataURL(file);
+                    }
+                  }}
+                />
+                <label
+                  htmlFor="pwa-icon-file-upload"
+                  className="px-3 py-1.5 bg-neutral-900 hover:bg-neutral-800 text-xs text-emerald-400 hover:text-emerald-300 border border-neutral-700/80 rounded-lg cursor-pointer flex items-center gap-1.5 font-medium transition-colors"
+                >
+                  <Upload className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>Selecionar arquivo de imagem do computador...</span>
+                </label>
+                {customIcon && (
+                  <button
+                    type="button"
+                    onClick={() => setCustomIcon('')}
+                    className="text-[11px] text-rose-400 hover:text-rose-300 underline cursor-pointer"
+                  >
+                    Remover ícone customizado
+                  </button>
+                )}
+              </div>
+            </div>
           </div>
 
           {/* 1 to 5 Stars Classification */}

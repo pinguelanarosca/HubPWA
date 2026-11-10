@@ -970,6 +970,27 @@ export default function App() {
     });
   }, []);
 
+  // Save custom image upload for a single PWA icon
+  const handleSaveCustomIcon = useCallback((item: PWAItem, iconDataUrl: string) => {
+    setItems((prev) => {
+      const updatedList = prev.map((it) => {
+        if (it.id === item.id) {
+          return {
+            ...it,
+            icon: iconDataUrl,
+          };
+        }
+        return it;
+      });
+      fetch('/api/pwas/state', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ items: updatedList }),
+      }).catch(() => {});
+      return updatedList;
+    });
+  }, []);
+
   // Batch mark all today as accessed
   const handleMarkAllToday = useCallback(() => {
     setItems((prev) =>
@@ -1204,6 +1225,7 @@ export default function App() {
                   }}
                   onDelete={handleDelete}
                   onRefreshIcon={handleRefreshSingleIcon}
+                  onSaveCustomIcon={handleSaveCustomIcon}
                   groupByGroup={groupByGroup}
                 />
               )}
