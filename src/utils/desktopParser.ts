@@ -211,10 +211,11 @@ export function parseDesktopFile(content: string, fileName: string = ''): Parsed
   if (icon && (icon.startsWith('http') || icon.startsWith('data:'))) {
     resolvedIcon = icon;
   } else if (icon) {
+    const urlQuery = detectedUrl ? `&url=${encodeURIComponent(detectedUrl)}` : '';
     if (icon.startsWith('/')) {
-      resolvedIcon = `/api/icon?path=${encodeURIComponent(icon)}`;
+      resolvedIcon = `/api/icon?path=${encodeURIComponent(icon)}${urlQuery}`;
     } else {
-      resolvedIcon = `/api/icon?name=${encodeURIComponent(icon)}`;
+      resolvedIcon = `/api/icon?name=${encodeURIComponent(icon)}${urlQuery}`;
     }
   } else if (detectedUrl) {
     resolvedIcon = resolveFaviconAtInsertion(detectedUrl);

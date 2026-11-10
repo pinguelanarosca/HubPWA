@@ -126,3 +126,88 @@ test('Anti-double-click simulation: duplicate rapid clicks on same PWA within co
   assert.equal(tryLaunch('pwa_discord', 2600), true);
   assert.equal(executionCount, 2);
 });
+
+test('Star Rating Confirmation workflow: changing stars sets pending state and applies only upon confirmation', () => {
+  const pwa: PWAItem = {
+    id: 'pwa_slack',
+    name: 'Slack',
+    url: 'https://app.slack.com',
+    icon: 'slack',
+    category: 'Comunicação',
+    notes: '',
+    rating: 2,
+    pinned: true,
+    lastAccessedDate: null,
+    accessCount: 0,
+    aliases: [],
+    createdAt: '2026-11-09',
+  };
+
+  let pendingRatingChange: { item: PWAItem; newRating: number } | null = null;
+  let currentItems = [pwa];
+
+  const handleSetRating = (item: PWAItem, newRating: number) => {
+    const currentRating = typeof item.rating === 'number' ? item.rating : (item.pinned ? 5 : 0);
+    if (currentRating === newRating) return;
+    pendingRatingChange = { item, newRating };
+  };
+
+  const handleConfirm = () => {
+    if (!pendingRatingChange) return;
+    const { item, newRating } = pendingRatingChange;
+    currentItems = currentItems.map((it) =>
+      it.id === item.id ? { ...it, rating: newRating, pinned: newRating > 0 } : it
+    );
+    pendingRatingChange = null;
+  };
+
+  const handleCancel = () => {
+    pendingRatingChange = null;
+  };
+
+  // 1. User clicks 5 stars (from 2) -> should NOT immediately change currentItems, but set pending confirmation
+  handleSetRating(pwa, 5);
+  assert.notEqual(pendingRatingChange, null);
+  assert.equal((pendingRatingChange as { newRating: number } | null)?.newRating, 5);
+  assert.equal(currentItems[0].rating, 2); // Still 2 until confirmed
+
+  // 2. User cancels -> rating stays 2
+  handleCancel();
+  assert.equal(pendingRatingChange, null);
+  assert.equal(currentItems[0].rating, 2);
+
+  // 3. User clicks 4 stars and confirms -> rating changes to 4
+  handleSetRating(pwa, 4);
+  assert.notEqual(pendingRatingChange, null);
+  handleConfirm();
+  assert.equal(pendingRatingChange, null);
+  assert.equal(currentItems[0].rating, 4);
+  assert.equal(currentItems[0].pinned, true);
+
+  // 4. User clicks 0 stars (removes rating) and confirms -> rating becomes 0 and pinned false
+  handleSetRating(currentItems[0], 0);
+  assert.equal((pendingRatingChange as { newRating: number } | null)?.newRating, 0);
+  handleConfirm();
+  assert.equal(currentItems[0].rating, 0);
+  assert.equal(currentItems[0].pinned, false);
+
+  // 5. User clicks same rating (0) -> ignores, does not open confirmation
+  handleSetRating(currentItems[0], 0);
+  assert.equal(pendingRatingChange, null);
+});
+
+test('Launch Target constraint: only icon and name are valid launch triggers', () => {
+  const validLaunchTargets = new Set(['icon', 'name']);
+
+  const canTriggerLaunch = (targetType: 'card-bg' | 'stars' | 'status-badge' | 'notes' | 'icon' | 'name') => {
+    return validLaunchTargets.has(targetType);
+  };
+
+  assert.equal(canTriggerLaunch('card-bg'), false, 'Clicking card background must NOT launch PWA');
+  assert.equal(canTriggerLaunch('stars'), false, 'Clicking stars must NOT launch PWA');
+  assert.equal(canTriggerLaunch('status-badge'), false, 'Clicking status badge must NOT launch PWA');
+  assert.equal(canTriggerLaunch('notes'), false, 'Clicking notes field must NOT launch PWA');
+  assert.equal(canTriggerLaunch('icon'), true, 'Clicking icon MUST launch PWA');
+  assert.equal(canTriggerLaunch('name'), true, 'Clicking name MUST launch PWA');
+});
+

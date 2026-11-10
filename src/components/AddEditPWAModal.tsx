@@ -40,9 +40,14 @@ export const AddEditPWAModal: React.FC<AddEditPWAModalProps> = ({
       setUrl(editingItem.url);
       setGroup(editingItem.group || editingItem.category || 'Geral');
       setNotes(editingItem.notes || '');
-      // If icon is auto-resolved Google favicon, don't lock customIcon so changing URL dynamically updates icon
-      const isAutoFavicon = editingItem.icon?.includes('google.com/s2/favicons');
-      setCustomIcon(isAutoFavicon ? '' : (editingItem.icon || ''));
+      // Only lock customIcon if it is an actual user-entered external URL, NOT internal /api/icon or default google/duckduckgo favicon
+      const isExternalUserIcon =
+        Boolean(editingItem.icon) &&
+        (editingItem.icon!.startsWith('http://') || editingItem.icon!.startsWith('https://') || editingItem.icon!.startsWith('data:')) &&
+        !editingItem.icon!.includes('google.com/s2/favicons') &&
+        !editingItem.icon!.includes('duckduckgo.com') &&
+        !editingItem.icon!.includes('/api/icon');
+      setCustomIcon(isExternalUserIcon ? (editingItem.icon || '') : '');
       setProfileDirectory(editingItem.profileDirectory || '');
       setAliasesText(Array.isArray(editingItem.aliases) ? editingItem.aliases.join(', ') : '');
       const initialRating = typeof editingItem.rating === 'number' ? editingItem.rating : (editingItem.pinned ? 5 : 0);
@@ -102,6 +107,11 @@ export const AddEditPWAModal: React.FC<AddEditPWAModalProps> = ({
       .map((a) => a.trim())
       .filter((a) => a.length > 0);
 
+    const resolvedIcon =
+      customIcon.trim() && !customIcon.includes('/api/icon')
+        ? customIcon.trim()
+        : resolveFaviconAtInsertion(finalUrl);
+
     onSave({
       ...(editingItem ? { id: editingItem.id } : {}),
       name: name.trim(),
@@ -109,7 +119,7 @@ export const AddEditPWAModal: React.FC<AddEditPWAModalProps> = ({
       category: group.trim() || 'Geral',
       group: group.trim() || 'Geral',
       notes: notes.trim(),
-      icon: customIcon.trim() || resolveFaviconAtInsertion(finalUrl),
+      icon: resolvedIcon,
       profileDirectory: profileDirectory.trim() || undefined,
       aliases: parsedAliases.length > 0 ? parsedAliases : undefined,
       pinned: rating > 0 || pinned,
@@ -151,7 +161,12 @@ export const AddEditPWAModal: React.FC<AddEditPWAModalProps> = ({
           {/* Icon Preview */}
           <div className="flex items-center justify-between p-3 rounded-lg bg-neutral-950/60 border border-neutral-800/80 gap-3">
             <div className="flex items-center gap-3 min-w-0">
-              <PWAIcon icon={customIcon || (url ? resolveFaviconAtInsertion(url) : '')} name={name || 'P'} size="lg" />
+              <PWAIcon
+                icon={customIcon || (url ? resolveFaviconAtInsertion(url) : '')}
+                name={name || 'P'}
+                url={url}
+                size="lg"
+              />
               <div className="min-w-0">
                 <span className="text-xs font-semibold text-neutral-200 block truncate">
                   {name || 'Nome da PWA'}
@@ -164,7 +179,10 @@ export const AddEditPWAModal: React.FC<AddEditPWAModalProps> = ({
             {url && (
               <button
                 type="button"
-                onClick={() => setCustomIcon('')}
+                onClick={() => {
+                  const fresh = resolveFaviconAtInsertion(url);
+                  setCustomIcon(fresh);
+                }}
                 title="Recarregar ícone padrão a partir da URL"
                 className="shrink-0 px-2.5 py-1 text-[11px] font-medium text-emerald-400 hover:text-emerald-300 bg-emerald-950/60 hover:bg-emerald-900/80 border border-emerald-800/80 rounded-md transition-colors cursor-pointer flex items-center gap-1"
               >

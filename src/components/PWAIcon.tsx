@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Globe } from 'lucide-react';
+import { getCleanDomain } from '../utils/pwaLogic';
 
 interface PWAIconProps {
   icon?: string;
@@ -13,27 +14,50 @@ interface PWAIconProps {
 export const PWAIcon: React.FC<PWAIconProps> = ({
   icon,
   name,
+  url,
   customIcon,
   size = 'sm',
   className = '',
 }) => {
-  const [hasError, setHasError] = useState(false);
+  const [currentSourceIndex, setCurrentSourceIndex] = useState(0);
 
   const sizeClasses = {
     xs: 'w-4 h-4 text-[10px] rounded',
     sm: 'w-5 h-5 text-xs rounded',
     md: 'w-7 h-7 text-sm rounded-md',
     lg: 'w-9 h-9 text-base rounded-lg',
-    xl: 'w-14 h-14 text-xl rounded-xl', // Exactly 56x56 px for Card View protagonist
+    xl: 'w-14 h-14 text-xl rounded-xl', // Protagonist Card View (56x56 px)
   }[size];
 
-  // Use the pre-computed icon stored at insertion time
-  const iconUrl = customIcon || icon;
+  const rawCandidate = (customIcon || icon || '').trim();
+  const domain = url ? getCleanDomain(url) : '';
 
-  // Reset error state whenever the icon URL changes so new icons render properly
-  React.useEffect(() => {
-    setHasError(false);
-  }, [iconUrl]);
+  // Build ordered list of candidate icon URLs
+  const candidateSources: string[] = [];
+
+  if (rawCandidate) {
+    candidateSources.push(rawCandidate);
+  }
+
+  if (domain && domain !== 'seu-app.com') {
+    const googleS2Favicon = `https://www.google.com/s2/favicons?domain=${domain}&sz=128`;
+    if (!candidateSources.includes(googleS2Favicon)) {
+      candidateSources.push(googleS2Favicon);
+    }
+    const duckDuckGoFavicon = `https://icons.duckduckgo.com/ip3/${domain}.ico`;
+    if (!candidateSources.includes(duckDuckGoFavicon)) {
+      candidateSources.push(duckDuckGoFavicon);
+    }
+  }
+
+  // Reset fallback index when candidate inputs change
+  useEffect(() => {
+    setCurrentSourceIndex(0);
+  }, [rawCandidate, url]);
+
+  const activeSrc = candidateSources[currentSourceIndex] || null;
+  const isExhausted = !activeSrc || currentSourceIndex >= candidateSources.length;
+
   const initial = (name.trim().charAt(0) || 'P').toUpperCase();
 
   // Consistent color for fallback initial badge based on name string
@@ -53,8 +77,8 @@ export const PWAIcon: React.FC<PWAIconProps> = ({
     return hues[Math.abs(hash) % hues.length];
   };
 
-  // If no icon was stored or if the image fails, render lightweight SVG initial badge with ZERO network calls
-  if (!iconUrl || hasError) {
+  // If all image sources fail or no sources exist, render colored initial badge
+  if (isExhausted || !activeSrc) {
     return (
       <div
         className={`${sizeClasses} shrink-0 rounded flex items-center justify-center font-bold border ${getInitialBg(name)} ${className}`}
@@ -71,12 +95,13 @@ export const PWAIcon: React.FC<PWAIconProps> = ({
       className={`${sizeClasses} shrink-0 rounded bg-neutral-900/80 border border-neutral-800 p-0.5 flex items-center justify-center overflow-hidden shadow-xs ${className}`}
     >
       <img
-        src={iconUrl}
+        key={activeSrc}
+        src={activeSrc}
         alt={`Ícone de ${name}`}
         referrerPolicy="no-referrer"
         loading="lazy"
         className="w-full h-full object-contain"
-        onError={() => setHasError(true)}
+        onError={() => setCurrentSourceIndex((prev) => prev + 1)}
       />
     </div>
   );

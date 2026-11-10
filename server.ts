@@ -30,6 +30,8 @@ interface ServerPWAState {
   profileDirectory?: string;
   rating?: number;
   pinned?: boolean;
+  icon?: string;
+  group?: string;
   lastAccessedDate?: string | null;
   accessCount?: number;
   updatedAt?: string;
@@ -200,16 +202,32 @@ function findLocalIcon(iconNameOrPath: string): string | null {
   return null;
 }
 
-// Route to serve local Linux icon image files directly to browser
+// Route to serve local Linux icon image files directly to browser with automatic favicon fallback
 app.get('/api/icon', (req, res) => {
   const iconParam = String(req.query.path || req.query.name || '');
-  if (!iconParam) {
-    return res.status(404).end();
+  const urlParam = String(req.query.url || '');
+  const domainParam = String(req.query.domain || '');
+
+  let domain = domainParam;
+  if (!domain && urlParam) {
+    try {
+      const parsed = new URL(urlParam.startsWith('http') ? urlParam : `https://${urlParam}`);
+      domain = parsed.hostname.replace(/^www\./, '');
+    } catch {
+      // ignore
+    }
   }
 
-  const resolved = findLocalIcon(iconParam);
-  if (resolved && fs.existsSync(resolved)) {
-    return res.sendFile(resolved);
+  if (iconParam) {
+    const resolved = findLocalIcon(iconParam);
+    if (resolved && fs.existsSync(resolved)) {
+      return res.sendFile(resolved);
+    }
+  }
+
+  // If local icon was not found, redirect seamlessly to high-resolution web favicon
+  if (domain) {
+    return res.redirect(302, `https://www.google.com/s2/favicons?domain=${domain}&sz=128`);
   }
 
   return res.status(404).end();
@@ -337,10 +355,16 @@ app.get('/api/pwas/scan', (_req, res) => {
       .map((pwa) => {
         const stored = findStoredState(pwa, db);
         if (stored) {
+          const workingIcon =
+            stored.icon && !stored.icon.includes('/api/icon')
+              ? stored.icon
+              : pwa.icon;
           return {
             ...pwa,
             name: stored.name || pwa.name,
             category: stored.category || pwa.category,
+            group: stored.group || stored.category || pwa.category,
+            icon: workingIcon || pwa.icon,
             notes: stored.notes !== undefined ? stored.notes : pwa.notes,
             rating: typeof stored.rating === 'number' ? stored.rating : (stored.pinned ? 5 : 0),
             pinned: Boolean(stored.pinned || (stored.rating && stored.rating > 0)),

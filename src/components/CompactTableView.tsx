@@ -120,7 +120,7 @@ export const CompactTableView: React.FC<CompactTableViewProps> = ({
                   title={`Abrir ${item.name}`}
                 >
                   <div className="flex items-center gap-2 max-w-xs">
-                    <PWAIcon icon={item.icon} name={item.name} size="sm" />
+                    <PWAIcon icon={item.icon} name={item.name} url={item.url} size="sm" />
                     <div className="min-w-0 truncate">
                       <span className="font-medium text-neutral-200 group-hover:text-emerald-400 truncate block">
                         {item.name}

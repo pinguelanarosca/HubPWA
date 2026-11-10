@@ -76,8 +76,7 @@ export const CardsView: React.FC<CardsViewProps> = ({
     return (
       <div
         key={item.id}
-        onClick={() => onLaunch(item)}
-        className={`group relative p-3.5 rounded-xl border bg-[#14151a] hover:bg-[#181920] transition-all flex flex-col justify-between shadow-sm hover:shadow-md overflow-hidden hover:border-t-neutral-600 hover:border-r-neutral-600 hover:border-b-neutral-600 cursor-pointer ${
+        className={`group relative p-3.5 rounded-xl border bg-[#14151a] hover:bg-[#181920] transition-all flex flex-col justify-between shadow-sm hover:shadow-md overflow-hidden hover:border-t-neutral-600 hover:border-r-neutral-600 hover:border-b-neutral-600 ${
           isAccessed
             ? 'border-l-4 border-l-emerald-500 hover:border-l-emerald-500 border-t border-r border-b border-[#242633]'
             : 'border-l-4 border-l-rose-500 hover:border-l-rose-500 border-t border-r border-b border-[#242633]'
@@ -241,14 +240,16 @@ export const CardsView: React.FC<CardsViewProps> = ({
 
           {/* Card Middle Section: Large Icon on Left | Name, Access Log & Notes on Right */}
           <div className="flex items-start gap-3">
-            {/* Prominent Large Icon */}
+            {/* Prominent Large Icon - Clicável para abrir */}
             <div
-              className="shrink-0 transition-transform active:scale-95 group-hover:opacity-95"
+              onClick={() => onLaunch(item)}
+              className="shrink-0 transition-transform active:scale-95 group-hover:opacity-95 cursor-pointer"
               title={`Abrir ${item.name}`}
             >
               <PWAIcon
                 icon={item.icon}
                 name={item.name}
+                url={item.url}
                 size="xl"
                 className="w-14 h-14 rounded-2xl shadow-md border border-neutral-800/80 bg-neutral-900 object-cover"
               />
@@ -256,10 +257,11 @@ export const CardsView: React.FC<CardsViewProps> = ({
 
             {/* Right Information Column */}
             <div className="min-w-0 flex-1">
-              {/* 1. PWA Name */}
+              {/* 1. PWA Name - Clicável para abrir */}
               <h3
-                className="font-bold text-sm text-white group-hover:text-emerald-400 truncate transition-colors leading-snug"
-                title={`${item.name} (${grpName})`}
+                onClick={() => onLaunch(item)}
+                className="font-bold text-sm text-white hover:text-emerald-400 cursor-pointer truncate transition-colors leading-snug"
+                title={`Abrir ${item.name} (${grpName})`}
               >
                 {item.name}
               </h3>

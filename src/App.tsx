@@ -34,6 +34,7 @@ import { AutostartModal } from './components/AutostartModal';
 import { loadGroupConfigs, saveGroupConfigs, loadGroupColors, saveGroupColors } from './utils/groupLogic';
 import { extractPWAsToMarkdown } from './utils/markdownExporter';
 import { GroupManagerModal } from './components/GroupManagerModal';
+import { RatingConfirmModal } from './components/RatingConfirmModal';
 import { FolderUp, FolderOpen, Plus } from 'lucide-react';
 
 const STORAGE_KEY = 'chrome_pwa_hub_items_empty_v1';
@@ -129,6 +130,12 @@ export default function App() {
   const [isDesktopModalOpen, setIsDesktopModalOpen] = useState(false);
   const [isDraggingOver, setIsDraggingOver] = useState(false);
 
+  // Pending rating change confirmation: { item, newRating }
+  const [pendingRatingChange, setPendingRatingChange] = useState<{
+    item: PWAItem;
+    newRating: number;
+  } | null>(null);
+
   // Current day string (YYYY-MM-DD)
   const [todayStr, setTodayStr] = useState(() => getTodayString());
 
@@ -212,10 +219,17 @@ export default function App() {
             ...matches.map((m) => m.accessCount || 0)
           );
 
+          // Preserve working icon from previous state
+          const existingWorkingIcon = matches.find(
+            (m) => m.icon && !m.icon.includes('/api/icon') && m.icon.trim()
+          )?.icon;
+          const finalMergedIcon = existingWorkingIcon || scanned.icon || resolveFaviconAtInsertion(scanned.url);
+
           return {
             ...scanned,
             name: customName,
             category: customCategory,
+            icon: finalMergedIcon,
             pinned: isAnyPinned || maxRating > 0,
             rating: maxRating,
             aliases: Array.from(allAliases).filter(Boolean),
@@ -225,7 +239,10 @@ export default function App() {
           };
         }
 
-        return scanned;
+        return {
+          ...scanned,
+          icon: scanned.icon || resolveFaviconAtInsertion(scanned.url),
+        };
       });
 
       // Keep only manual items that weren't absorbed into any platform
@@ -532,8 +549,19 @@ export default function App() {
     }).catch(() => {});
   }, []);
 
-  // Set rating (0 to 5 stars) - preserves user scroll position
+  // Request confirmation before changing rating (0 to 5 stars)
   const handleSetRating = useCallback((item: PWAItem, newRating: number) => {
+    const currentRating = typeof item.rating === 'number' ? item.rating : (item.pinned ? 5 : 0);
+    if (currentRating === newRating) return;
+
+    setPendingRatingChange({ item, newRating });
+  }, []);
+
+  // Confirm and apply the pending rating change - preserves scroll position
+  const handleConfirmRatingChange = useCallback(() => {
+    if (!pendingRatingChange) return;
+
+    const { item, newRating } = pendingRatingChange;
     const scrollY = window.scrollY || document.documentElement.scrollTop;
 
     const updated = {
@@ -541,48 +569,29 @@ export default function App() {
       rating: newRating,
       pinned: newRating > 0,
     };
+
     setItems((prev) =>
       prev.map((it) => (it.id === item.id ? updated : it))
     );
+
     fetch('/api/pwas/state', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ items: [updated] }),
     }).catch(() => {});
 
+    setPendingRatingChange(null);
+
     requestAnimationFrame(() => {
       window.scrollTo({ top: scrollY, behavior: 'instant' as ScrollBehavior });
     });
-  }, []);
+  }, [pendingRatingChange]);
 
-  // Toggle pin / rating (toggles between 5 stars and 0) - preserves user scroll position
+  // Toggle pin / rating (toggles between 5 stars and 0) with confirmation
   const handleTogglePin = useCallback((item: PWAItem) => {
-    const scrollY = window.scrollY || document.documentElement.scrollTop;
-
-    setItems((prev) =>
-      prev.map((it) => {
-        if (it.id === item.id) {
-          const currentRating = typeof it.rating === 'number' ? it.rating : (it.pinned ? 5 : 0);
-          const nextRating = currentRating > 0 ? 0 : 5;
-          const updated = {
-            ...it,
-            pinned: nextRating > 0,
-            rating: nextRating,
-          };
-          fetch('/api/pwas/state', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ items: [updated] }),
-          }).catch(() => {});
-          return updated;
-        }
-        return it;
-      })
-    );
-
-    requestAnimationFrame(() => {
-      window.scrollTo({ top: scrollY, behavior: 'instant' as ScrollBehavior });
-    });
+    const currentRating = typeof item.rating === 'number' ? item.rating : (item.pinned ? 5 : 0);
+    const nextRating = currentRating > 0 ? 0 : 5;
+    setPendingRatingChange({ item, newRating: nextRating });
   }, []);
 
   // Delete item
@@ -602,13 +611,27 @@ export default function App() {
 
   // Save new or edited PWA
   const handleSavePWA = useCallback((data: Partial<PWAItem> & { name: string; url: string; category: string; group?: string; notes: string }) => {
-    const finalIcon = data.icon || resolveFaviconAtInsertion(data.url);
+    const finalIcon =
+      data.icon && !data.icon.includes('/api/icon')
+        ? data.icon
+        : resolveFaviconAtInsertion(data.url);
     const grp = data.group || data.category || 'Geral';
+
     if (data.id) {
       // Edit
-      setItems((prev) =>
-        prev.map((it) => (it.id === data.id ? { ...it, ...data, group: grp, category: grp, icon: finalIcon } : it))
-      );
+      setItems((prev) => {
+        const updatedList = prev.map((it) =>
+          it.id === data.id
+            ? { ...it, ...data, group: grp, category: grp, icon: finalIcon }
+            : it
+        );
+        fetch('/api/pwas/state', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ items: updatedList }),
+        }).catch(() => {});
+        return updatedList;
+      });
     } else {
       // Add
       const initialRating = typeof data.rating === 'number' ? data.rating : (data.pinned ? 5 : 0);
@@ -626,7 +649,15 @@ export default function App() {
         accessCount: 0,
         createdAt: new Date().toISOString(),
       };
-      setItems((prev) => [newItem, ...prev]);
+      setItems((prev) => {
+        const nextList = [newItem, ...prev];
+        fetch('/api/pwas/state', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ items: nextList }),
+        }).catch(() => {});
+        return nextList;
+      });
     }
   }, []);
 
@@ -1209,6 +1240,15 @@ export default function App() {
         onUpdateGroupColor={handleUpdateGroupColor}
         onAddGroup={handleAddGroup}
         onDeleteGroup={handleDeleteGroup}
+      />
+
+      {/* Rating Change Confirmation Modal */}
+      <RatingConfirmModal
+        isOpen={pendingRatingChange !== null}
+        item={pendingRatingChange?.item || null}
+        newRating={pendingRatingChange?.newRating ?? 0}
+        onConfirm={handleConfirmRatingChange}
+        onClose={() => setPendingRatingChange(null)}
       />
     </div>
   );

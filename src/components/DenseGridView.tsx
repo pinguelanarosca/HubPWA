@@ -65,7 +65,7 @@ export const DenseGridView: React.FC<DenseGridViewProps> = ({
                     onClick={() => onLaunch(item)}
                     title={`Abrir ${item.name} (marca como acessado hoje)`}
                   >
-                    <PWAIcon icon={item.icon} name={item.name} size="md" />
+                    <PWAIcon icon={item.icon} name={item.name} url={item.url} size="md" />
                   </div>
                   <div className="min-w-0">
                     <h3
@@ -76,9 +76,8 @@ export const DenseGridView: React.FC<DenseGridViewProps> = ({
                       {item.name}
                     </h3>
                     <p
-                      onClick={() => onLaunch(item)}
-                      className="text-[10px] text-neutral-400 hover:text-neutral-200 truncate flex items-center gap-1 cursor-pointer transition-colors"
-                      title={`Abrir ${item.url}`}
+                      className="text-[10px] text-neutral-400 truncate flex items-center gap-1"
+                      title={item.url}
                     >
                       <span className="truncate">{domain}</span>
                       {item.profileDirectory && (

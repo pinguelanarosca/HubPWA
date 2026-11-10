@@ -12,6 +12,18 @@
       "lastAccessedDate": "2026-11-10T02:32:41.000Z",
       "accessCount": 2,
       "updatedAt": "2026-11-10T02:32:41.264Z"
+    },
+    "pwa_1794303611971_2t98m": {
+      "id": "pwa_1794303611971_2t98m",
+      "name": "Linear",
+      "category": "Comunicação",
+      "url": "https://linear.app",
+      "notes": "",
+      "rating": 4,
+      "pinned": true,
+      "lastAccessedDate": null,
+      "accessCount": 0,
+      "updatedAt": "2026-11-10T09:40:49.452Z"
     }
   },
   "deletedIds": []
