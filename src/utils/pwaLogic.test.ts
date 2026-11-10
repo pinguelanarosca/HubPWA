@@ -12,6 +12,8 @@ import {
   formatAccessDateTime,
   formatAccessCompact,
   isAndroidOrRedroidApp,
+  resolveFaviconAtInsertion,
+  getCleanDomain,
 } from './pwaLogic';
 import { PWAItem } from '../types/pwa';
 
@@ -287,4 +289,30 @@ test('formatAccessCompact formats strictly as DD/MM HH:mm without seconds', () =
   assert.equal(formatAccessCompact(null), '');
   assert.equal(formatAccessCompact(''), '');
 });
+
+test('resolveFaviconAtInsertion extracts domain from url or name and returns high-res favicon', () => {
+  // Direct domain
+  assert.equal(
+    resolveFaviconAtInsertion('https://03win.com'),
+    'https://icons.duckduckgo.com/ip3/03win.com.ico'
+  );
+
+  // Name as domain when url is empty or malformed
+  assert.equal(
+    resolveFaviconAtInsertion('', undefined, '03win.com'),
+    'https://icons.duckduckgo.com/ip3/03win.com.ico'
+  );
+  assert.equal(
+    resolveFaviconAtInsertion('https://app.com', undefined, '13E.COM'),
+    'https://icons.duckduckgo.com/ip3/13e.com.ico'
+  );
+
+  // Fixes corrupted domain ending in com.com
+  assert.equal(getCleanDomain('https://03wincom.com'), '03win.com');
+  assert.equal(
+    resolveFaviconAtInsertion('https://03wincom.com'),
+    'https://icons.duckduckgo.com/ip3/03win.com.ico'
+  );
+});
+
 

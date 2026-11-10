@@ -329,17 +329,36 @@ export function toggleAccessedToday(
  * Resolves the favicon URL once at insertion time.
  * This stores the static icon URL permanently in the PWA object to prevent system overload.
  */
-export function resolveFaviconAtInsertion(url: string, customIcon?: string): string {
-  if (customIcon && customIcon.trim().length > 0) {
+export function resolveFaviconAtInsertion(url: string, customIcon?: string, name?: string): string {
+  if (customIcon && customIcon.trim().length > 0 && !customIcon.includes('/api/icon')) {
     return customIcon.trim();
   }
-  try {
-    const parsed = new URL(url.startsWith('http') ? url : `https://${url}`);
-    const domain = parsed.hostname.replace(/^www\./, '');
-    return `https://www.google.com/s2/favicons?domain=${domain}&sz=64`;
-  } catch {
-    return '';
+
+  let domain = '';
+  if (url) {
+    try {
+      const parsed = new URL(url.startsWith('http') ? url : `https://${url}`);
+      domain = parsed.hostname.replace(/^www\./, '');
+      if (domain.endsWith('com.com')) {
+        domain = domain.slice(0, -7) + '.com';
+      }
+    } catch {
+      // ignore
+    }
   }
+
+  // If no domain or placeholder domain, check if name contains a domain (e.g. 03win.com, 13E.COM)
+  if ((!domain || domain === 'app.com' || domain === 'seu-app.com') && name) {
+    const domainMatch = name.trim().match(/([a-zA-Z0-9-]+\.[a-zA-Z]{2,}(?:\.[a-zA-Z]{2,})?)/i);
+    if (domainMatch) {
+      domain = domainMatch[1].toLowerCase().replace(/^www\./, '');
+    }
+  }
+
+  if (!domain) return '';
+
+  // Use DuckDuckGo high-res icon service (tested and returns 300KB real icons for platforms like 03win.com and 13e.com)
+  return `https://icons.duckduckgo.com/ip3/${domain}.ico`;
 }
 
 /**
@@ -353,7 +372,11 @@ export const getFaviconUrl = resolveFaviconAtInsertion;
 export function getCleanDomain(url: string): string {
   try {
     const parsed = new URL(url.startsWith('http') ? url : `https://${url}`);
-    return parsed.hostname.replace(/^www\./, '');
+    let domain = parsed.hostname.replace(/^www\./, '');
+    if (domain.endsWith('com.com')) {
+      domain = domain.slice(0, -7) + '.com';
+    }
+    return domain;
   } catch {
     return url;
   }

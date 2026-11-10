@@ -155,9 +155,9 @@ export const TopBar: React.FC<TopBarProps> = ({
                 <button
                   type="button"
                   onClick={onRefreshAllIcons}
-                  className="w-full text-left px-3 py-2 text-neutral-200 hover:bg-[#1e2028] hover:text-emerald-400 flex items-center gap-2 cursor-pointer"
+                  className="w-full text-left px-3 py-2 text-neutral-200 hover:bg-[#1e2028] hover:text-sky-400 flex items-center gap-2 cursor-pointer font-medium"
                 >
-                  <RotateCw className="w-3.5 h-3.5 text-emerald-400" />
+                  <RotateCw className="w-3.5 h-3.5 text-sky-400" />
                   <span>Recarregar todos os ícones</span>
                 </button>
               )}

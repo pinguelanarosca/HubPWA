@@ -30,30 +30,59 @@ export const PWAIcon: React.FC<PWAIconProps> = ({
   }[size];
 
   const rawCandidate = (customIcon || icon || '').trim();
-  const domain = url ? getCleanDomain(url) : '';
 
-  // Build ordered list of candidate icon URLs
+  // 1. Extract domain from name if name contains a domain (e.g. "03win.com", "13E.COM", "07win.com")
+  let domain = '';
+  const nameDomainMatch = name.trim().match(/([a-zA-Z0-9-]+\.[a-zA-Z]{2,}(?:\.[a-zA-Z]{2,})?)/i);
+  if (nameDomainMatch) {
+    domain = nameDomainMatch[1].toLowerCase().replace(/^www\./, '');
+  }
+
+  // 2. If no domain from name, extract from URL
+  if (!domain && url) {
+    domain = getCleanDomain(url);
+  }
+  if (domain && domain.endsWith('com.com')) {
+    domain = domain.slice(0, -7) + '.com';
+  }
+
+  // Build candidate sources in order of priority
   const candidateSources: string[] = [];
 
-  if (rawCandidate) {
+  // If a valid custom icon or explicit external icon URL is provided (not an internal /api/icon path), try it
+  if (
+    rawCandidate &&
+    (rawCandidate.startsWith('http://') || rawCandidate.startsWith('https://') || rawCandidate.startsWith('data:')) &&
+    !rawCandidate.includes('/api/icon')
+  ) {
     candidateSources.push(rawCandidate);
   }
 
-  if (domain && domain !== 'seu-app.com') {
-    const googleS2Favicon = `https://www.google.com/s2/favicons?domain=${domain}&sz=128`;
-    if (!candidateSources.includes(googleS2Favicon)) {
-      candidateSources.push(googleS2Favicon);
-    }
+  // DuckDuckGo high-res icon service (verified to return 300KB real platform logos for 03win.com, 13e.com, 07win.com)
+  if (domain && domain !== 'app.com' && domain !== 'seu-app.com') {
     const duckDuckGoFavicon = `https://icons.duckduckgo.com/ip3/${domain}.ico`;
     if (!candidateSources.includes(duckDuckGoFavicon)) {
       candidateSources.push(duckDuckGoFavicon);
     }
+    const googleS2Favicon = `https://www.google.com/s2/favicons?domain=${domain}&sz=128`;
+    if (!candidateSources.includes(googleS2Favicon)) {
+      candidateSources.push(googleS2Favicon);
+    }
+    const googleGstatic = `https://t2.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://${domain}&size=128`;
+    if (!candidateSources.includes(googleGstatic)) {
+      candidateSources.push(googleGstatic);
+    }
+  }
+
+  // Local /api/icon endpoint fallback
+  if (rawCandidate && !candidateSources.includes(rawCandidate)) {
+    candidateSources.push(rawCandidate);
   }
 
   // Reset fallback index when candidate inputs change
   useEffect(() => {
     setCurrentSourceIndex(0);
-  }, [rawCandidate, url]);
+  }, [rawCandidate, url, name]);
 
   const activeSrc = candidateSources[currentSourceIndex] || null;
   const isExhausted = !activeSrc || currentSourceIndex >= candidateSources.length;

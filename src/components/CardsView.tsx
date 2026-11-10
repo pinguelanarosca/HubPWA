@@ -5,7 +5,7 @@ import { InlineNoteInput } from './InlineNoteInput';
 import { StarRating } from './StarRating';
 import { isAccessedToday, formatAccessLogDash } from '../utils/pwaLogic';
 import { getGroupTheme } from '../utils/groupLogic';
-import { Check, CheckCircle2, Clock, MoreVertical, Edit2, Trash2, Folder, ExternalLink } from 'lucide-react';
+import { Check, CheckCircle2, Clock, MoreVertical, Edit2, Trash2, Folder, ExternalLink, RotateCw } from 'lucide-react';
 
 interface CardsViewProps {
   items: PWAItem[];
@@ -21,6 +21,7 @@ interface CardsViewProps {
   onSetRating?: (item: PWAItem, rating: number) => void;
   onEdit: (item: PWAItem) => void;
   onDelete: (id: string) => void;
+  onRefreshIcon?: (item: PWAItem) => void;
   groupByGroup?: boolean;
 }
 
@@ -37,6 +38,7 @@ export const CardsView: React.FC<CardsViewProps> = ({
   onSetRating,
   onEdit,
   onDelete,
+  onRefreshIcon,
   groupByGroup = false,
 }) => {
   const [activeMenuId, setActiveMenuId] = useState<string | null>(null);
@@ -220,6 +222,19 @@ export const CardsView: React.FC<CardsViewProps> = ({
                       <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
                       <span>Alternar Status</span>
                     </button>
+                    {onRefreshIcon && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setActiveMenuId(null);
+                          onRefreshIcon(item);
+                        }}
+                        className="w-full px-3 py-1.5 text-left hover:bg-neutral-800 flex items-center gap-2 cursor-pointer text-sky-400 font-medium"
+                      >
+                        <RotateCw className="w-3.5 h-3.5 text-sky-400" />
+                        <span>Atualizar Ícone</span>
+                      </button>
+                    )}
                     <div className="my-1 border-t border-neutral-800" />
                     <button
                       type="button"

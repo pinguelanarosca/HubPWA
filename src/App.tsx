@@ -41,6 +41,35 @@ const STORAGE_KEY = 'chrome_pwa_hub_items_empty_v1';
 const DENSITY_STORAGE_KEY = 'chrome_pwa_hub_density';
 const GROUP_BY_STORAGE_KEY = 'chrome_pwa_hub_group_by_group';
 
+// Automatically repairs and fixes any malformed domains, missing URLs, or broken local icon references
+export function repairAndSanitizePWA(it: PWAItem): PWAItem {
+  let url = it.url || '';
+  if (it.name) {
+    const domainMatch = it.name.trim().match(/^([a-zA-Z0-9-]+\.[a-zA-Z]{2,}(?:\.[a-zA-Z]{2,})?)$/i);
+    if (domainMatch) {
+      const detectedDomain = domainMatch[1].toLowerCase();
+      if (!url || url.includes('com.com') || url.includes('app.com') || !url.includes('.')) {
+        url = `https://${detectedDomain}`;
+      }
+    }
+  }
+  if (url.endsWith('com.com')) {
+    url = url.slice(0, -7) + '.com';
+  }
+
+  // If icon is missing or is an internal /api/icon path that might fail in web preview, resolve high-res favicon
+  let icon = it.icon;
+  if (!icon || icon.includes('/api/icon')) {
+    icon = resolveFaviconAtInsertion(url, undefined, it.name);
+  }
+
+  return {
+    ...it,
+    url,
+    icon,
+  };
+}
+
 export default function App() {
   const [items, setItems] = useState<PWAItem[]>(() => {
     try {
@@ -48,7 +77,7 @@ export default function App() {
       if (stored) {
         const parsed = JSON.parse(stored);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed.filter((it: PWAItem) => !isAndroidOrRedroidApp(it));
+          return parsed.filter((it: PWAItem) => !isAndroidOrRedroidApp(it)).map(repairAndSanitizePWA);
         }
       }
       // Check legacy keys to prevent data loss across updates
@@ -63,7 +92,7 @@ export default function App() {
         if (legacy) {
           const parsed = JSON.parse(legacy);
           if (Array.isArray(parsed) && parsed.length > 0) {
-            return parsed.filter((it: PWAItem) => !isAndroidOrRedroidApp(it));
+            return parsed.filter((it: PWAItem) => !isAndroidOrRedroidApp(it)).map(repairAndSanitizePWA);
           }
         }
       }
@@ -900,14 +929,45 @@ export default function App() {
     });
   }, []);
 
-  // Batch refresh icons for all PWAs based on their URLs
+  // Batch refresh icons for all PWAs based on their URLs and names
   const handleRefreshAllIcons = useCallback(() => {
-    setItems((prev) =>
-      prev.map((it) => ({
-        ...it,
-        icon: resolveFaviconAtInsertion(it.url),
-      }))
-    );
+    setItems((prev) => {
+      const refreshed = prev.map((it) => {
+        const repaired = repairAndSanitizePWA(it);
+        return {
+          ...repaired,
+          icon: resolveFaviconAtInsertion(repaired.url, undefined, repaired.name),
+        };
+      });
+      fetch('/api/pwas/state', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ items: refreshed }),
+      }).catch(() => {});
+      return refreshed;
+    });
+  }, []);
+
+  // Refresh icon for a single PWA
+  const handleRefreshSingleIcon = useCallback((item: PWAItem) => {
+    setItems((prev) => {
+      const updatedList = prev.map((it) => {
+        if (it.id === item.id) {
+          const repaired = repairAndSanitizePWA(it);
+          return {
+            ...repaired,
+            icon: resolveFaviconAtInsertion(repaired.url, undefined, repaired.name),
+          };
+        }
+        return it;
+      });
+      fetch('/api/pwas/state', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ items: updatedList }),
+      }).catch(() => {});
+      return updatedList;
+    });
   }, []);
 
   // Batch mark all today as accessed
@@ -1143,6 +1203,7 @@ export default function App() {
                     setIsAddEditOpen(true);
                   }}
                   onDelete={handleDelete}
+                  onRefreshIcon={handleRefreshSingleIcon}
                   groupByGroup={groupByGroup}
                 />
               )}

@@ -186,6 +186,15 @@ export function parseDesktopFile(content: string, fileName: string = ''): Parsed
   let category = mapDesktopCategory(rawCategories);
   const normalizedName = name.toLowerCase().replace(/[\-_]/g, ' ').trim();
 
+  // 5. Check if name is already a valid domain (e.g. "03win.com", "13E.COM", "sub.domain.com")
+  if (!detectedUrl) {
+    const domainMatch = name.trim().match(/^[a-zA-Z0-9-]+\.[a-zA-Z0-9.-]+$/);
+    if (domainMatch) {
+      detectedUrl = `https://${name.trim().toLowerCase()}`;
+      hasExactUrl = true;
+    }
+  }
+
   if (!detectedUrl) {
     for (const [key, known] of Object.entries(COMMON_APP_URLS)) {
       if (normalizedName === key || normalizedName.startsWith(key) || normalizedName.includes(key)) {
