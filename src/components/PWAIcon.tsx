@@ -58,25 +58,35 @@ export const PWAIcon: React.FC<PWAIconProps> = ({
     candidateSources.push(rawCandidate);
   }
 
-  // DuckDuckGo high-res icon service (verified to return 300KB real platform logos for 03win.com, 13e.com, 07win.com)
+  // DuckDuckGo, Google gstatic, local server proxy, and Google S2
   if (domain && domain !== 'app.com' && domain !== 'seu-app.com') {
     const duckDuckGoFavicon = `https://icons.duckduckgo.com/ip3/${domain}.ico`;
     if (!candidateSources.includes(duckDuckGoFavicon)) {
       candidateSources.push(duckDuckGoFavicon);
     }
+    const googleGstatic = `https://t1.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://${domain}&size=128`;
+    if (!candidateSources.includes(googleGstatic)) {
+      candidateSources.push(googleGstatic);
+    }
+    const localProxyFavicon = `/api/icon?domain=${encodeURIComponent(domain)}`;
+    if (!candidateSources.includes(localProxyFavicon)) {
+      candidateSources.push(localProxyFavicon);
+    }
     const googleS2Favicon = `https://www.google.com/s2/favicons?domain=${domain}&sz=128`;
     if (!candidateSources.includes(googleS2Favicon)) {
       candidateSources.push(googleS2Favicon);
     }
-    const googleGstatic = `https://t2.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://${domain}&size=128`;
-    if (!candidateSources.includes(googleGstatic)) {
-      candidateSources.push(googleGstatic);
-    }
   }
 
-  // Local /api/icon endpoint fallback
-  if (rawCandidate && !candidateSources.includes(rawCandidate)) {
-    candidateSources.push(rawCandidate);
+  // Local /api/icon endpoint fallback with domain hint
+  if (rawCandidate) {
+    let candidateWithDomain = rawCandidate;
+    if (domain && candidateWithDomain.includes('/api/icon') && !candidateWithDomain.includes('domain=')) {
+      candidateWithDomain += `&domain=${encodeURIComponent(domain)}`;
+    }
+    if (!candidateSources.includes(candidateWithDomain)) {
+      candidateSources.push(candidateWithDomain);
+    }
   }
 
   // Reset fallback index when candidate inputs change

@@ -63,11 +63,11 @@ export const TopBar: React.FC<TopBarProps> = ({
             href="/"
             className="text-base md:text-lg font-bold tracking-tight text-white hover:text-neutral-200 transition-colors whitespace-nowrap flex items-center gap-2.5"
           >
-            <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-amber-400 via-rose-500 to-emerald-500 p-0.5 flex items-center justify-center shadow-md">
-              <div className="w-full h-full bg-[#0d0e12] rounded-[5px] flex items-center justify-center">
-                <span className="text-[10px] font-black text-white tracking-widest">PWA</span>
-              </div>
-            </div>
+            <img
+              src="/favicon.svg"
+              alt="Chrome PWA Hub Logo"
+              className="w-7 h-7 rounded-lg shadow-md shrink-0"
+            />
             <span className="font-extrabold text-white text-base md:text-lg">Chrome PWA Hub</span>
           </a>
         </div>

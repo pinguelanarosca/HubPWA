@@ -162,6 +162,9 @@ function hasCommand(cmd: string): boolean {
   }
 }
 
+// In-memory cache for web-fetched icon buffers
+const iconBufferCache = new Map<string, { buffer: Buffer; contentType: string }>();
+
 // Helper to find local icon file on Ubuntu/Linux
 function findLocalIcon(iconNameOrPath: string): string | null {
   if (!iconNameOrPath) return null;
@@ -175,13 +178,15 @@ function findLocalIcon(iconNameOrPath: string): string | null {
   const searchDirs = [
     path.join(homeDir, '.local/share/icons'),
     path.join(homeDir, '.local/share/icons/hicolor'),
+    path.join(homeDir, '.config/google-chrome'),
+    path.join(homeDir, '.config/chromium'),
     '/usr/share/icons/hicolor',
     '/usr/share/pixmaps',
     '/usr/share/icons',
   ];
 
   const extensions = ['.png', '.svg', '.xpm', ''];
-  const sizes = ['256x256', '128x128', '512x512', '64x64', '48x48', 'scalable'];
+  const sizes = ['256x256', '128x128', '512x512', '64x64', '48x48', '32x32', '16x16', 'scalable'];
 
   for (const baseDir of searchDirs) {
     if (!fs.existsSync(baseDir)) continue;
@@ -199,16 +204,66 @@ function findLocalIcon(iconNameOrPath: string): string | null {
     }
   }
 
+  // Also search Chrome Web Applications subdirectories in user config
+  try {
+    const chromeProfiles = ['Default', 'Profile 1', 'Profile 2', 'Profile 3', 'Profile 4', 'Profile 5'];
+    for (const prof of chromeProfiles) {
+      const webAppsDir = path.join(homeDir, '.config/google-chrome', prof, 'Web Applications');
+      if (fs.existsSync(webAppsDir)) {
+        const subDirs = fs.readdirSync(webAppsDir);
+        for (const sub of subDirs) {
+          const appDir = path.join(webAppsDir, sub);
+          if (fs.statSync(appDir).isDirectory()) {
+            const possibleFiles = fs.readdirSync(appDir);
+            for (const f of possibleFiles) {
+              if (f.endsWith('.png') || f.endsWith('.ico')) {
+                if (iconNameOrPath.includes(sub) || f.includes(iconNameOrPath)) {
+                  return path.join(appDir, f);
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  } catch {
+    // ignore
+  }
+
   return null;
 }
 
-// Route to serve local Linux icon image files directly to browser with automatic favicon fallback
-app.get('/api/icon', (req, res) => {
+// Serve site favicon (SVG & ICO)
+app.get(['/favicon.ico', '/favicon.svg'], (_req, res) => {
+  const faviconSvg = path.join(__dirname, 'public', 'favicon.svg');
+  if (fs.existsSync(faviconSvg)) {
+    res.setHeader('Content-Type', 'image/svg+xml');
+    res.setHeader('Cache-Control', 'public, max-age=604800');
+    return res.sendFile(faviconSvg);
+  }
+  return res.status(204).end();
+});
+
+// Route to serve local Linux icon image files or proxy high-resolution web favicons directly
+app.get('/api/icon', async (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+
   const iconParam = String(req.query.path || req.query.name || '');
   const urlParam = String(req.query.url || '');
   const domainParam = String(req.query.domain || '');
 
-  let domain = domainParam;
+  // 1. Check local Ubuntu icon files first
+  if (iconParam) {
+    const resolved = findLocalIcon(iconParam);
+    if (resolved && fs.existsSync(resolved)) {
+      res.setHeader('Cache-Control', 'public, max-age=86400');
+      return res.sendFile(resolved);
+    }
+  }
+
+  // 2. Extract domain
+  let domain = domainParam.trim().toLowerCase();
   if (!domain && urlParam) {
     try {
       const parsed = new URL(urlParam.startsWith('http') ? urlParam : `https://${urlParam}`);
@@ -217,20 +272,77 @@ app.get('/api/icon', (req, res) => {
       // ignore
     }
   }
-
-  if (iconParam) {
-    const resolved = findLocalIcon(iconParam);
-    if (resolved && fs.existsSync(resolved)) {
-      return res.sendFile(resolved);
+  if (!domain && iconParam) {
+    const match = iconParam.match(/([a-zA-Z0-9-]+\.[a-zA-Z]{2,}(?:\.[a-zA-Z]{2,})?)/i);
+    if (match) {
+      domain = match[1].toLowerCase().replace(/^www\./, '');
     }
   }
 
-  // If local icon was not found, redirect seamlessly to high-resolution web favicon
-  if (domain) {
-    return res.redirect(302, `https://www.google.com/s2/favicons?domain=${domain}&sz=128`);
+  if (domain && domain.endsWith('com.com')) {
+    domain = domain.slice(0, -7) + '.com';
   }
 
-  return res.status(404).end();
+  // 3. If domain is valid, serve from memory cache or fetch server-side
+  if (domain && domain !== 'app.com' && domain !== 'seu-app.com') {
+    if (iconBufferCache.has(domain)) {
+      const cached = iconBufferCache.get(domain)!;
+      res.setHeader('Content-Type', cached.contentType);
+      res.setHeader('Cache-Control', 'public, max-age=604800');
+      return res.send(cached.buffer);
+    }
+
+    // Try fetching DuckDuckGo high-res icon server-side
+    try {
+      const ddgUrl = `https://icons.duckduckgo.com/ip3/${domain}.ico`;
+      const response = await fetch(ddgUrl, {
+        headers: { 'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64)' },
+        signal: AbortSignal.timeout(4000),
+      });
+      if (response.ok) {
+        const arrayBuf = await response.arrayBuffer();
+        const buf = Buffer.from(arrayBuf);
+        if (buf.length > 200) {
+          const ct = response.headers.get('content-type') || 'image/png';
+          iconBufferCache.set(domain, { buffer: buf, contentType: ct });
+          res.setHeader('Content-Type', ct);
+          res.setHeader('Cache-Control', 'public, max-age=604800');
+          return res.send(buf);
+        }
+      }
+    } catch {
+      // Fallback to Google gstatic
+    }
+
+    // Try Google gstatic high-res favicon
+    try {
+      const gstaticUrl = `https://t1.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=http://${domain}&size=128`;
+      const response = await fetch(gstaticUrl, {
+        headers: { 'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64)' },
+        signal: AbortSignal.timeout(4000),
+      });
+      if (response.ok) {
+        const arrayBuf = await response.arrayBuffer();
+        const buf = Buffer.from(arrayBuf);
+        if (buf.length > 200) {
+          const ct = response.headers.get('content-type') || 'image/png';
+          iconBufferCache.set(domain, { buffer: buf, contentType: ct });
+          res.setHeader('Content-Type', ct);
+          res.setHeader('Cache-Control', 'public, max-age=604800');
+          return res.send(buf);
+        }
+      }
+    } catch {
+      // Fallback to SVG
+    }
+  }
+
+  // 4. Fallback: generate clean SVG badge
+  const initial = (domain ? domain.charAt(0) : 'P').toUpperCase();
+  const svgBadge = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64"><rect width="64" height="64" rx="14" fill="#18181b" stroke="#27272a" stroke-width="2"/><text x="32" y="42" font-family="system-ui, sans-serif" font-weight="bold" font-size="28" fill="#10b981" text-anchor="middle">${initial}</text></svg>`;
+  res.setHeader('Content-Type', 'image/svg+xml');
+  res.setHeader('Cache-Control', 'public, max-age=86400');
+  return res.send(Buffer.from(svgBadge));
 });
 
 // Helper to compute perceptual/content hash for local icon file
