@@ -76,7 +76,8 @@ export const CardsView: React.FC<CardsViewProps> = ({
     return (
       <div
         key={item.id}
-        className={`group relative p-3.5 rounded-xl border bg-[#14151a] hover:bg-[#181920] transition-all flex flex-col justify-between shadow-sm hover:shadow-md overflow-hidden hover:border-t-neutral-600 hover:border-r-neutral-600 hover:border-b-neutral-600 ${
+        onClick={() => onLaunch(item)}
+        className={`group relative p-3.5 rounded-xl border bg-[#14151a] hover:bg-[#181920] transition-all flex flex-col justify-between shadow-sm hover:shadow-md overflow-hidden hover:border-t-neutral-600 hover:border-r-neutral-600 hover:border-b-neutral-600 cursor-pointer ${
           isAccessed
             ? 'border-l-4 border-l-emerald-500 hover:border-l-emerald-500 border-t border-r border-b border-[#242633]'
             : 'border-l-4 border-l-rose-500 hover:border-l-rose-500 border-t border-r border-b border-[#242633]'
@@ -271,7 +272,7 @@ export const CardsView: React.FC<CardsViewProps> = ({
               </div>
 
               {/* 3. Personal Notes */}
-              <div className="mt-1">
+              <div className="mt-1" onClick={(e) => e.stopPropagation()}>
                 <InlineNoteInput
                   initialValue={item.notes}
                   onSave={(newNote) => onUpdateNote(item, newNote)}

@@ -28,7 +28,13 @@ export const StarRating: React.FC<StarRatingProps> = ({
 
   const handleClick = (e: React.MouseEvent, starIndex: number) => {
     e.stopPropagation();
+    e.preventDefault();
     if (readonly || !onChange) return;
+
+    if (e.currentTarget instanceof HTMLElement) {
+      e.currentTarget.blur();
+    }
+
     // Clicking the current rating resets to 0 (unrated)
     if (rating === starIndex) {
       onChange(0);

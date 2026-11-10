@@ -1,5 +1,18 @@
 {
   "version": 1,
-  "pwas": {},
+  "pwas": {
+    "pwa_1794277955882_jbu92": {
+      "id": "pwa_1794277955882_jbu92",
+      "name": "DiscordDiscord",
+      "category": "Comunicação",
+      "url": "https://discord.com/app",
+      "notes": "",
+      "rating": 0,
+      "pinned": false,
+      "lastAccessedDate": "2026-11-10T02:32:41.000Z",
+      "accessCount": 2,
+      "updatedAt": "2026-11-10T02:32:41.264Z"
+    }
+  },
   "deletedIds": []
 }

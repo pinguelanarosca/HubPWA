@@ -15,6 +15,7 @@ import {
   resolveFaviconAtInsertion,
   getCleanDomain,
   isAndroidOrRedroidApp,
+  isSameOrMatchingPWA,
 } from './utils/pwaLogic';
 import { parseDesktopFile, ParsedDesktopApp } from './utils/desktopParser';
 import { normalizeAppUrl } from './utils/desktopDeduplicator';
@@ -131,15 +132,20 @@ export default function App() {
   // Current day string (YYYY-MM-DD)
   const [todayStr, setTodayStr] = useState(() => getTodayString());
 
-  // Periodically keep todayStr in sync (in case the tab is open past midnight)
+  // Periodically keep todayStr in sync (in case the tab is open past midnight or user switches back)
   useEffect(() => {
-    const interval = setInterval(() => {
+    const syncToday = () => {
       const current = getTodayString();
       if (current !== todayStr) {
         setTodayStr(current);
       }
-    }, 60000);
-    return () => clearInterval(interval);
+    };
+    const interval = setInterval(syncToday, 30000);
+    window.addEventListener('focus', syncToday);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('focus', syncToday);
+    };
   }, [todayStr]);
 
   // Merge scanned local Ubuntu PWAs with stored user tracking state
@@ -410,15 +416,28 @@ export default function App() {
 
   // Launch PWA: opens link as a true standalone PWA window and automatically marks accessed today (GREEN indicator)
   const handleLaunch = useCallback(async (item: PWAItem) => {
-    // 1. Immediately update React state using functional updater so rapid clicks across many cards are never lost
+    // 1. Immediately update React state using resilient matching so rapid clicks or ID variations are never lost
     const now = new Date();
-    setItems((prev) =>
-      prev.map((it) => (it.id === item.id ? markAsAccessed(it, now, todayStr) : it))
-    );
+    const accessedItem = markAsAccessed(item, now, todayStr);
+
+    setItems((prev) => {
+      const updatedList = prev.map((it) => (isSameOrMatchingPWA(it, item) ? markAsAccessed(it, now, todayStr) : it));
+      // Save directly to localStorage immediately without waiting for debounce
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(updatedList));
+      } catch {}
+      return updatedList;
+    });
+
+    // 2. Persist immediately to server disk database to prevent background throttling drops
+    fetch('/api/pwas/state', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ items: [accessedItem] }),
+    }).catch(() => {});
 
     try {
-      // 2. Attempt native OS launch on Ubuntu (opens standalone Chrome App window or gtk-launch)
-      // The server in-memory database automatically records the access timestamp and persists it
+      // 3. Attempt native OS launch on Ubuntu (opens standalone Chrome App window or gtk-launch)
       const res = await fetch('/api/launch-pwa', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -435,6 +454,21 @@ export default function App() {
       });
 
       const data = await res.json();
+
+      // If server confirmed a timestamp, ensure it is recorded in React state
+      if (data.lastAccessedDate) {
+        setItems((prev) =>
+          prev.map((it) =>
+            isSameOrMatchingPWA(it, item)
+              ? {
+                  ...it,
+                  lastAccessedDate: data.lastAccessedDate,
+                  accessCount: Math.max(it.accessCount || 0, 1),
+                }
+              : it
+          )
+        );
+      }
 
       if (!data.launchedNative && item.url) {
         // Fallback: Open in a standalone App Window without browser tabs or address bar
@@ -460,7 +494,7 @@ export default function App() {
   const handleToggleStatus = useCallback((item: PWAItem) => {
     const updated = toggleAccessedToday(item, todayStr);
     setItems((prev) =>
-      prev.map((it) => (it.id === item.id ? updated : it))
+      prev.map((it) => (isSameOrMatchingPWA(it, item) ? updated : it))
     );
     fetch('/api/pwas/state', {
       method: 'POST',
@@ -482,8 +516,10 @@ export default function App() {
     }).catch(() => {});
   }, []);
 
-  // Set rating (0 to 5 stars)
+  // Set rating (0 to 5 stars) - preserves user scroll position
   const handleSetRating = useCallback((item: PWAItem, newRating: number) => {
+    const scrollY = window.scrollY || document.documentElement.scrollTop;
+
     const updated = {
       ...item,
       rating: newRating,
@@ -497,10 +533,16 @@ export default function App() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ items: [updated] }),
     }).catch(() => {});
+
+    requestAnimationFrame(() => {
+      window.scrollTo({ top: scrollY, behavior: 'instant' as ScrollBehavior });
+    });
   }, []);
 
-  // Toggle pin / rating (toggles between 5 stars and 0)
+  // Toggle pin / rating (toggles between 5 stars and 0) - preserves user scroll position
   const handleTogglePin = useCallback((item: PWAItem) => {
+    const scrollY = window.scrollY || document.documentElement.scrollTop;
+
     setItems((prev) =>
       prev.map((it) => {
         if (it.id === item.id) {
@@ -521,6 +563,10 @@ export default function App() {
         return it;
       })
     );
+
+    requestAnimationFrame(() => {
+      window.scrollTo({ top: scrollY, behavior: 'instant' as ScrollBehavior });
+    });
   }, []);
 
   // Delete item

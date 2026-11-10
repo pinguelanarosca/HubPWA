@@ -61,3 +61,33 @@ test('Multi-launch on PWAs sharing domain: does not conflate different apps shar
   assert.equal(isAccessedToday(apps.find((a) => a.id === 'pwa_drive')?.lastAccessedDate, today), false);
   assert.equal(isAccessedToday(apps.find((a) => a.id === 'pwa_keep')?.lastAccessedDate, today), false);
 });
+
+test('isSameOrMatchingPWA: correctly matches apps with divergent IDs across scan, deduplication and localStorage', async () => {
+  const { isSameOrMatchingPWA } = await import('./pwaLogic.js');
+
+  const itemA = {
+    id: 'pwa_platform_discord',
+    appId: 'agimnkijcaahngcdmfeangaknmldooml',
+    url: 'https://discord.com/app',
+    name: 'Discord',
+    rawFileName: 'chrome-agimnkijcaahngcdmfeangaknmldooml-Profile_5.desktop',
+  };
+
+  const itemB = {
+    id: 'pwa_17300000000_abc',
+    appId: 'agimnkijcaahngcdmfeangaknmldooml',
+    url: 'https://discord.com/app',
+    name: 'Discord',
+    rawFileName: 'chrome-agimnkijcaahngcdmfeangaknmldooml-Default.desktop',
+  };
+
+  const itemC = {
+    id: 'pwa_other_slack',
+    appId: 'different_id_slack',
+    url: 'https://slack.com',
+    name: 'Slack',
+  };
+
+  assert.equal(isSameOrMatchingPWA(itemA, itemB), true, 'Apps with same appId or URL must match even if IDs differ');
+  assert.equal(isSameOrMatchingPWA(itemA, itemC), false, 'Different apps must never match');
+});

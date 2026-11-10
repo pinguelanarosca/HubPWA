@@ -33,21 +33,55 @@ export function isAccessedToday(
 ): boolean {
   if (!lastAccessedDate) return false;
 
-  // 1. Direct match with today's local date prefix
-  if (lastAccessedDate.startsWith(todayStr)) {
+  const cleanLast = String(lastAccessedDate).trim();
+  if (!cleanLast || cleanLast === 'null' || cleanLast === 'undefined') return false;
+
+  const targetToday = todayStr || getTodayString();
+
+  // 1. Direct match with today's local date prefix (e.g. "2026-11-09T..." startsWith "2026-11-09")
+  if (cleanLast.startsWith(targetToday)) {
     return true;
   }
 
   // 2. Parse ISO timestamp and convert to user's local timezone date
-  const accessLocalDate = getLocalDateString(lastAccessedDate);
-  if (accessLocalDate && accessLocalDate === todayStr) {
+  const accessLocalDate = getLocalDateString(cleanLast);
+  if (accessLocalDate && accessLocalDate === targetToday) {
     return true;
   }
 
   // 3. Fallback raw slice check
-  const rawPrefix = lastAccessedDate.slice(0, 10);
-  if (rawPrefix === todayStr) {
+  const rawPrefix = cleanLast.slice(0, 10);
+  if (rawPrefix === targetToday) {
     return true;
+  }
+
+  return false;
+}
+
+/**
+ * Robustly matches whether two PWA items represent the same underlying app.
+ * Compares id, appId, rawFileName, desktopPath, normalized URL, and name.
+ */
+export function isSameOrMatchingPWA(
+  a: { id?: string; appId?: string; url?: string; rawFileName?: string; desktopPath?: string; name?: string },
+  b: { id?: string; appId?: string; url?: string; rawFileName?: string; desktopPath?: string; name?: string }
+): boolean {
+  if (!a || !b) return false;
+  if (a.id && b.id && a.id === b.id) return true;
+  if (a.appId && b.appId && a.appId.toLowerCase() === b.appId.toLowerCase()) return true;
+  if (a.rawFileName && b.rawFileName && a.rawFileName.toLowerCase() === b.rawFileName.toLowerCase()) return true;
+  if (a.desktopPath && b.desktopPath && a.desktopPath === b.desktopPath) return true;
+
+  if (a.url && b.url) {
+    const cleanA = a.url.trim().toLowerCase().replace(/\/+$/, '').replace(/^https?:\/\//, '').replace(/^www\./, '');
+    const cleanB = b.url.trim().toLowerCase().replace(/\/+$/, '').replace(/^https?:\/\//, '').replace(/^www\./, '');
+    if (cleanA && cleanB && cleanA === cleanB) return true;
+  }
+
+  if (a.name && b.name) {
+    const normNameA = a.name.trim().toLowerCase();
+    const normNameB = b.name.trim().toLowerCase();
+    if (normNameA && normNameB && normNameA === normNameB) return true;
   }
 
   return false;
