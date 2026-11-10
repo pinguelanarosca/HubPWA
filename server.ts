@@ -205,8 +205,9 @@ function findLocalIcon(iconNameOrPath: string): string | null {
 
   const homeDir = process.env.HOME || os.homedir();
   const rawKey = iconNameOrPath.trim();
-  const searchKeyClean = rawKey
-    .toLowerCase()
+  const rawKeyLower = rawKey.toLowerCase();
+
+  const searchKeyClean = rawKeyLower
     .replace(/^chrome-/, '')
     .replace(/-profile_\d+|-default/gi, '')
     .replace(/\.(png|ico|svg|xpm|desktop)$/i, '');
@@ -214,19 +215,28 @@ function findLocalIcon(iconNameOrPath: string): string | null {
   const appIdMatch = rawKey.match(/[a-f0-9]{32}|[a-p]{32}/i);
   const appId = appIdMatch ? appIdMatch[0].toLowerCase() : null;
 
+  // Include explicit Chrome PWA icon directories on Ubuntu
   const targetDirs = [
+    path.join(homeDir, '.local/share/icons/hicolor/128x128/apps'),
+    path.join(homeDir, '.local/share/icons/hicolor/256x256/apps'),
+    path.join(homeDir, '.local/share/icons/hicolor/48x48/apps'),
+    path.join(homeDir, '.local/share/icons/hicolor/512x512/apps'),
+    path.join(homeDir, '.local/share/icons/hicolor/scalable/apps'),
     path.join(homeDir, '.local/share/icons'),
     path.join(homeDir, '.local/share/applications'),
-    path.join(homeDir, 'Área de trabalho'),
-    path.join(homeDir, 'Desktop'),
     path.join(homeDir, '.config/google-chrome'),
     path.join(homeDir, '.config/chromium'),
+    path.join(homeDir, 'Área de trabalho'),
+    path.join(homeDir, 'Desktop'),
+    '/usr/share/icons/hicolor/128x128/apps',
+    '/usr/share/icons/hicolor/256x256/apps',
     '/usr/share/icons',
     '/usr/share/pixmaps',
+    '/var/lib/snapd/desktop/icons',
   ];
 
   function searchDir(dir: string, depth = 0): string | null {
-    if (depth > 3 || !fs.existsSync(dir)) return null;
+    if (depth > 6 || !fs.existsSync(dir)) return null;
     try {
       const entries = fs.readdirSync(dir, { withFileTypes: true });
       for (const entry of entries) {
@@ -242,8 +252,9 @@ function findLocalIcon(iconNameOrPath: string): string | null {
             lowerName.endsWith('.ico') ||
             lowerName.endsWith('.xpm')
           ) {
+            if (lowerName.includes(rawKeyLower)) return fullPath;
             if (appId && lowerName.includes(appId)) return fullPath;
-            if (searchKeyClean.length >= 3 && lowerName.includes(searchKeyClean)) return fullPath;
+            if (searchKeyClean.length >= 1 && lowerName.includes(searchKeyClean)) return fullPath;
           }
         }
       }
