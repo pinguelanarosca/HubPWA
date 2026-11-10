@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useEffect, useMemo, useCallback, Fragment } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef, Fragment } from 'react';
 import { PWAItem, ViewDensity, StatusFilter, StarFilter, SortOption } from './types/pwa';
 import {
   getTodayString,
@@ -414,8 +414,24 @@ export default function App() {
     }
   }, [todayStr]);
 
+  // Anti-double-click cooldown tracker to prevent duplicate window launches
+  const launchCooldownRef = useRef<Map<string, number>>(new Map());
+
   // Launch PWA: opens link as a true standalone PWA window and automatically marks accessed today (GREEN indicator)
   const handleLaunch = useCallback(async (item: PWAItem) => {
+    // Anti-double-click mechanism: reject rapid repeat clicks on the same PWA within 1500ms or global bursts within 350ms
+    const nowMs = Date.now();
+    const itemKey = item.id || item.appId || item.rawFileName || item.url || item.name;
+    const lastItemTime = launchCooldownRef.current.get(itemKey) || 0;
+    const globalLastTime = launchCooldownRef.current.get('__global__') || 0;
+
+    if ((lastItemTime > 0 && nowMs - lastItemTime < 1500) || (globalLastTime > 0 && nowMs - globalLastTime < 350)) {
+      return;
+    }
+
+    launchCooldownRef.current.set(itemKey, nowMs);
+    launchCooldownRef.current.set('__global__', nowMs);
+
     // 1. Immediately update React state using resilient matching so rapid clicks or ID variations are never lost
     const now = new Date();
     const accessedItem = markAsAccessed(item, now, todayStr);

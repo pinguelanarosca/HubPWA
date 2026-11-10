@@ -241,10 +241,9 @@ export const CardsView: React.FC<CardsViewProps> = ({
 
           {/* Card Middle Section: Large Icon on Left | Name, Access Log & Notes on Right */}
           <div className="flex items-start gap-3">
-            {/* Prominent Large Icon (Click to Launch) */}
+            {/* Prominent Large Icon */}
             <div
-              onClick={() => onLaunch(item)}
-              className="cursor-pointer shrink-0 transition-transform active:scale-95 group-hover:opacity-95"
+              className="shrink-0 transition-transform active:scale-95 group-hover:opacity-95"
               title={`Abrir ${item.name}`}
             >
               <PWAIcon
@@ -259,8 +258,7 @@ export const CardsView: React.FC<CardsViewProps> = ({
             <div className="min-w-0 flex-1">
               {/* 1. PWA Name */}
               <h3
-                onClick={() => onLaunch(item)}
-                className="font-bold text-sm text-white group-hover:text-emerald-400 truncate cursor-pointer transition-colors leading-snug"
+                className="font-bold text-sm text-white group-hover:text-emerald-400 truncate transition-colors leading-snug"
                 title={`${item.name} (${grpName})`}
               >
                 {item.name}

@@ -91,3 +91,38 @@ test('isSameOrMatchingPWA: correctly matches apps with divergent IDs across scan
   assert.equal(isSameOrMatchingPWA(itemA, itemB), true, 'Apps with same appId or URL must match even if IDs differ');
   assert.equal(isSameOrMatchingPWA(itemA, itemC), false, 'Different apps must never match');
 });
+
+test('Anti-double-click simulation: duplicate rapid clicks on same PWA within cooldown are debounced', () => {
+  const cooldownMap = new Map<string, number>();
+  let executionCount = 0;
+
+  const tryLaunch = (itemKey: string, timeMs: number) => {
+    const lastItemTime = cooldownMap.get(itemKey) || 0;
+    const globalLastTime = cooldownMap.get('__global__') || 0;
+
+    if ((lastItemTime > 0 && timeMs - lastItemTime < 1500) || (globalLastTime > 0 && timeMs - globalLastTime < 350)) {
+      return false; // Ignored as duplicate click
+    }
+
+    cooldownMap.set(itemKey, timeMs);
+    cooldownMap.set('__global__', timeMs);
+    executionCount++;
+    return true;
+  };
+
+  // 1st click at t=1000ms -> should execute
+  assert.equal(tryLaunch('pwa_discord', 1000), true);
+  assert.equal(executionCount, 1);
+
+  // 2nd click at t=1050ms (accidental double-click) -> must be blocked
+  assert.equal(tryLaunch('pwa_discord', 1050), false);
+  assert.equal(executionCount, 1);
+
+  // 3rd click at t=1200ms -> still within 1500ms cooldown -> must be blocked
+  assert.equal(tryLaunch('pwa_discord', 1200), false);
+  assert.equal(executionCount, 1);
+
+  // 4th click after 1500ms cooldown (t=2600ms) -> should execute
+  assert.equal(tryLaunch('pwa_discord', 2600), true);
+  assert.equal(executionCount, 2);
+});
