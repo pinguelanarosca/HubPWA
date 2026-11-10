@@ -643,8 +643,13 @@ export default function App() {
     const finalIcon =
       data.icon && !data.icon.includes('/api/icon')
         ? data.icon
-        : resolveFaviconAtInsertion(data.url);
+        : resolveFaviconAtInsertion(data.url, undefined, data.name);
     const grp = data.group || data.category || 'Geral';
+
+    // Trigger background icon pre-warming resolution endpoint so the server immediately fetches & caches authentic logo
+    if (data.url || data.name) {
+      fetch(`/api/icon/resolve?url=${encodeURIComponent(data.url)}&name=${encodeURIComponent(data.name)}`).catch(() => {});
+    }
 
     if (data.id) {
       // Edit

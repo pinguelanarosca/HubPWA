@@ -460,6 +460,43 @@ app.get('/api/icon', async (req, res) => {
   return res.status(404).send('Icon not found');
 });
 
+// Explicit icon resolution endpoint to pre-warm and verify authentic PWA icons upon creation/edition
+app.get('/api/icon/resolve', async (req, res) => {
+  const urlParam = String(req.query.url || '');
+  const nameParam = String(req.query.name || '');
+  let domain = String(req.query.domain || '').trim().toLowerCase();
+
+  if (!domain && urlParam) {
+    try {
+      const parsed = new URL(urlParam.startsWith('http') ? urlParam : `https://${urlParam}`);
+      domain = parsed.hostname.replace(/^www\./, '');
+    } catch {}
+  }
+  if (!domain && nameParam) {
+    const match = nameParam.match(/([a-zA-Z0-9-]+\.[a-zA-Z]{2,}(?:\.[a-zA-Z]{2,})?)/i);
+    if (match) domain = match[1].toLowerCase().replace(/^www\./, '');
+  }
+
+  if (domain && domain.endsWith('com.com')) {
+    domain = domain.slice(0, -7) + '.com';
+  }
+
+  if (!domain) {
+    return res.status(400).json({ success: false, error: 'Domain or URL required' });
+  }
+
+  // Pre-warm local search or CDN fetch
+  const local = findLocalIconCached(nameParam) || findLocalIconCached(domain);
+  const iconUrl = `/api/icon?domain=${encodeURIComponent(domain)}&name=${encodeURIComponent(nameParam)}`;
+
+  return res.json({
+    success: true,
+    domain,
+    hasLocalIcon: Boolean(local),
+    iconUrl,
+  });
+});
+
 // Helper to compute perceptual/content hash for local icon file
 function getIconHash(iconNameOrPath: string): string | null {
   if (!iconNameOrPath) return null;

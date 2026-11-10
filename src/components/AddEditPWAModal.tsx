@@ -70,9 +70,9 @@ export const AddEditPWAModal: React.FC<AddEditPWAModalProps> = ({
 
   if (!isOpen) return null;
 
-  // Auto-suggest name from URL domain if name is empty
+  // Auto-suggest name from URL domain if name is empty and pre-warm icon resolution
   const handleUrlBlur = () => {
-    if (!name.trim() && url.trim()) {
+    if (url.trim()) {
       try {
         const clean = getCleanDomain(url);
         const parts = clean.split('.');
@@ -80,6 +80,7 @@ export const AddEditPWAModal: React.FC<AddEditPWAModalProps> = ({
         if (domainName && !name.trim()) {
           setName(domainName.charAt(0).toUpperCase() + domainName.slice(1));
         }
+        fetch(`/api/icon/resolve?url=${encodeURIComponent(url)}&name=${encodeURIComponent(name || domainName)}`).catch(() => {});
       } catch {
         // ignore
       }
