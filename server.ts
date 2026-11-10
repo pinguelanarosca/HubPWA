@@ -169,65 +169,64 @@ const iconBufferCache = new Map<string, { buffer: Buffer; contentType: string }>
 function findLocalIcon(iconNameOrPath: string): string | null {
   if (!iconNameOrPath) return null;
 
-  // 1. Absolute path
+  // 1. Direct absolute path check
   if (path.isAbsolute(iconNameOrPath) && fs.existsSync(iconNameOrPath)) {
     return iconNameOrPath;
   }
 
   const homeDir = process.env.HOME || os.homedir();
-  const searchDirs = [
+  const rawKey = iconNameOrPath.trim();
+  const searchKeyClean = rawKey
+    .toLowerCase()
+    .replace(/^chrome-/, '')
+    .replace(/-profile_\d+|-default/gi, '')
+    .replace(/\.(png|ico|svg|xpm|desktop)$/i, '');
+
+  const appIdMatch = rawKey.match(/[a-f0-9]{32}|[a-p]{32}/i);
+  const appId = appIdMatch ? appIdMatch[0].toLowerCase() : null;
+
+  const targetDirs = [
     path.join(homeDir, '.local/share/icons'),
-    path.join(homeDir, '.local/share/icons/hicolor'),
+    path.join(homeDir, '.local/share/applications'),
+    path.join(homeDir, 'Área de trabalho'),
+    path.join(homeDir, 'Desktop'),
     path.join(homeDir, '.config/google-chrome'),
     path.join(homeDir, '.config/chromium'),
-    '/usr/share/icons/hicolor',
-    '/usr/share/pixmaps',
     '/usr/share/icons',
+    '/usr/share/pixmaps',
   ];
 
-  const extensions = ['.png', '.svg', '.xpm', ''];
-  const sizes = ['256x256', '128x128', '512x512', '64x64', '48x48', '32x32', '16x16', 'scalable'];
-
-  for (const baseDir of searchDirs) {
-    if (!fs.existsSync(baseDir)) continue;
-
-    for (const ext of extensions) {
-      const fileName = iconNameOrPath.endsWith(ext) ? iconNameOrPath : `${iconNameOrPath}${ext}`;
-
-      const directPath = path.join(baseDir, fileName);
-      if (fs.existsSync(directPath)) return directPath;
-
-      for (const sz of sizes) {
-        const szPath = path.join(baseDir, sz, 'apps', fileName);
-        if (fs.existsSync(szPath)) return szPath;
-      }
-    }
-  }
-
-  // Also search Chrome Web Applications subdirectories in user config
-  try {
-    const chromeProfiles = ['Default', 'Profile 1', 'Profile 2', 'Profile 3', 'Profile 4', 'Profile 5'];
-    for (const prof of chromeProfiles) {
-      const webAppsDir = path.join(homeDir, '.config/google-chrome', prof, 'Web Applications');
-      if (fs.existsSync(webAppsDir)) {
-        const subDirs = fs.readdirSync(webAppsDir);
-        for (const sub of subDirs) {
-          const appDir = path.join(webAppsDir, sub);
-          if (fs.statSync(appDir).isDirectory()) {
-            const possibleFiles = fs.readdirSync(appDir);
-            for (const f of possibleFiles) {
-              if (f.endsWith('.png') || f.endsWith('.ico')) {
-                if (iconNameOrPath.includes(sub) || f.includes(iconNameOrPath)) {
-                  return path.join(appDir, f);
-                }
-              }
-            }
+  function searchDir(dir: string, depth = 0): string | null {
+    if (depth > 4 || !fs.existsSync(dir)) return null;
+    try {
+      const entries = fs.readdirSync(dir, { withFileTypes: true });
+      for (const entry of entries) {
+        const fullPath = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          const found = searchDir(fullPath, depth + 1);
+          if (found) return found;
+        } else if (entry.isFile()) {
+          const lowerName = entry.name.toLowerCase();
+          if (
+            lowerName.endsWith('.png') ||
+            lowerName.endsWith('.svg') ||
+            lowerName.endsWith('.ico') ||
+            lowerName.endsWith('.xpm')
+          ) {
+            if (appId && lowerName.includes(appId)) return fullPath;
+            if (searchKeyClean.length >= 3 && lowerName.includes(searchKeyClean)) return fullPath;
           }
         }
       }
+    } catch {
+      // ignore
     }
-  } catch {
-    // ignore
+    return null;
+  }
+
+  for (const dir of targetDirs) {
+    const res = searchDir(dir);
+    if (res) return res;
   }
 
   return null;
@@ -254,9 +253,10 @@ app.get('/api/icon', async (req, res) => {
   const domainParam = String(req.query.domain || '');
   const nameParam = String(req.query.name || '');
 
-  // 1. Check local Ubuntu system icon files first
-  if (iconParam) {
-    const resolved = findLocalIcon(iconParam);
+  // 1. Check local Ubuntu system icon files across iconParam, nameParam, domainParam
+  const localCandidates = [iconParam, nameParam, domainParam, urlParam].filter(Boolean);
+  for (const cand of localCandidates) {
+    const resolved = findLocalIcon(cand);
     if (resolved && fs.existsSync(resolved)) {
       res.setHeader('Cache-Control', 'public, max-age=86400');
       return res.sendFile(resolved);
