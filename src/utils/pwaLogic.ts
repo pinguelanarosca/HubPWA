@@ -357,8 +357,9 @@ export function resolveFaviconAtInsertion(url: string, customIcon?: string, name
 
   if (!domain) return '';
 
-  // Use DuckDuckGo high-res icon service (tested and returns 300KB real icons for platforms like 03win.com and 13e.com)
-  return `https://icons.duckduckgo.com/ip3/${domain}.ico`;
+  // Use local smart proxy that validates image size and filters out 1478B gray placeholders
+  const nameQuery = name ? `&name=${encodeURIComponent(name)}` : '';
+  return `/api/icon?domain=${encodeURIComponent(domain)}${nameQuery}`;
 }
 
 /**

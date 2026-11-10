@@ -294,24 +294,24 @@ test('resolveFaviconAtInsertion extracts domain from url or name and returns hig
   // Direct domain
   assert.equal(
     resolveFaviconAtInsertion('https://03win.com'),
-    'https://icons.duckduckgo.com/ip3/03win.com.ico'
+    '/api/icon?domain=03win.com'
   );
 
   // Name as domain when url is empty or malformed
   assert.equal(
     resolveFaviconAtInsertion('', undefined, '03win.com'),
-    'https://icons.duckduckgo.com/ip3/03win.com.ico'
+    '/api/icon?domain=03win.com&name=03win.com'
   );
   assert.equal(
     resolveFaviconAtInsertion('https://app.com', undefined, '13E.COM'),
-    'https://icons.duckduckgo.com/ip3/13e.com.ico'
+    '/api/icon?domain=13e.com&name=13E.COM'
   );
 
   // Fixes corrupted domain ending in com.com
   assert.equal(getCleanDomain('https://03wincom.com'), '03win.com');
   assert.equal(
     resolveFaviconAtInsertion('https://03wincom.com'),
-    'https://icons.duckduckgo.com/ip3/03win.com.ico'
+    '/api/icon?domain=03win.com'
   );
 });
 

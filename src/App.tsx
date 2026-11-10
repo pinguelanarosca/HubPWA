@@ -57,9 +57,9 @@ export function repairAndSanitizePWA(it: PWAItem): PWAItem {
     url = url.slice(0, -7) + '.com';
   }
 
-  // If icon is missing or is an internal /api/icon path that might fail in web preview, resolve high-res favicon
+  // If icon is missing, points to raw DuckDuckGo URL or un-parametrized /api/icon, update to smart proxy
   let icon = it.icon;
-  if (!icon || icon.includes('/api/icon')) {
+  if (!icon || icon.includes('duckduckgo.com') || (icon.includes('/api/icon') && !icon.includes('domain='))) {
     icon = resolveFaviconAtInsertion(url, undefined, it.name);
   }
 

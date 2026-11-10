@@ -49,16 +49,26 @@ export const PWAIcon: React.FC<PWAIconProps> = ({
   // Build candidate sources in order of priority
   const candidateSources: string[] = [];
 
-  // If a valid custom icon or explicit external icon URL is provided (not an internal /api/icon path), try it
+  // 1. Server-side smart proxy first (validates icon sizes, filters 1478B gray placeholders, returns logo or SVG badge)
+  if (domain && domain !== 'app.com' && domain !== 'seu-app.com') {
+    const localProxyFavicon = `/api/icon?domain=${encodeURIComponent(domain)}&name=${encodeURIComponent(name)}`;
+    if (!candidateSources.includes(localProxyFavicon)) {
+      candidateSources.push(localProxyFavicon);
+    }
+  }
+
+  // 2. Direct external custom or explicit icon URLs
   if (
     rawCandidate &&
     (rawCandidate.startsWith('http://') || rawCandidate.startsWith('https://') || rawCandidate.startsWith('data:')) &&
     !rawCandidate.includes('/api/icon')
   ) {
-    candidateSources.push(rawCandidate);
+    if (!candidateSources.includes(rawCandidate)) {
+      candidateSources.push(rawCandidate);
+    }
   }
 
-  // DuckDuckGo, Google gstatic, local server proxy, and Google S2
+  // 3. Direct web icon services
   if (domain && domain !== 'app.com' && domain !== 'seu-app.com') {
     const duckDuckGoFavicon = `https://icons.duckduckgo.com/ip3/${domain}.ico`;
     if (!candidateSources.includes(duckDuckGoFavicon)) {
@@ -68,17 +78,9 @@ export const PWAIcon: React.FC<PWAIconProps> = ({
     if (!candidateSources.includes(googleGstatic)) {
       candidateSources.push(googleGstatic);
     }
-    const localProxyFavicon = `/api/icon?domain=${encodeURIComponent(domain)}`;
-    if (!candidateSources.includes(localProxyFavicon)) {
-      candidateSources.push(localProxyFavicon);
-    }
-    const googleS2Favicon = `https://www.google.com/s2/favicons?domain=${domain}&sz=128`;
-    if (!candidateSources.includes(googleS2Favicon)) {
-      candidateSources.push(googleS2Favicon);
-    }
   }
 
-  // Local /api/icon endpoint fallback with domain hint
+  // 4. Raw candidate with domain hint
   if (rawCandidate) {
     let candidateWithDomain = rawCandidate;
     if (domain && candidateWithDomain.includes('/api/icon') && !candidateWithDomain.includes('domain=')) {
@@ -97,7 +99,13 @@ export const PWAIcon: React.FC<PWAIconProps> = ({
   const activeSrc = candidateSources[currentSourceIndex] || null;
   const isExhausted = !activeSrc || currentSourceIndex >= candidateSources.length;
 
-  const initial = (name.trim().charAt(0) || 'P').toUpperCase();
+  // Short clean label for badge fallback (e.g. "11KK", "31M", "03W")
+  const badgeLabel = (name || domain || 'PWA')
+    .replace(/^https?:\/\//i, '')
+    .split('.')[0]
+    .replace(/[^a-zA-Z0-9]/g, '')
+    .toUpperCase()
+    .slice(0, 4) || 'PWA';
 
   // Consistent color for fallback initial badge based on name string
   const getInitialBg = (str: string) => {
@@ -120,11 +128,11 @@ export const PWAIcon: React.FC<PWAIconProps> = ({
   if (isExhausted || !activeSrc) {
     return (
       <div
-        className={`${sizeClasses} shrink-0 rounded flex items-center justify-center font-bold border ${getInitialBg(name)} ${className}`}
+        className={`${sizeClasses} shrink-0 rounded flex items-center justify-center font-black tracking-tight border ${getInitialBg(name)} ${className}`}
         title={name}
         aria-hidden="true"
       >
-        {name ? initial : <Globe className="w-3 h-3 opacity-70" />}
+        {name ? badgeLabel : <Globe className="w-3 h-3 opacity-70" />}
       </div>
     );
   }

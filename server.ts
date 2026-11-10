@@ -244,6 +244,53 @@ app.get(['/favicon.ico', '/favicon.svg'], (_req, res) => {
   return res.status(204).end();
 });
 
+// Helper to generate a vibrant, high-contrast SVG badge for domains without indexed web icons
+function generateDomainSvgBadge(domain: string, rawName?: string): Buffer {
+  const cleanLabel = (rawName || domain.split('.')[0] || domain)
+    .replace(/^https?:\/\//i, '')
+    .replace(/\.(com|net|org|xyz|io|app|br)$/i, '')
+    .replace(/[^a-zA-Z0-9]/g, '')
+    .toUpperCase()
+    .slice(0, 5) || 'PWA';
+
+  let hash = 0;
+  const str = domain || cleanLabel;
+  for (let i = 0; i < str.length; i++) {
+    hash = str.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  const themeIndex = Math.abs(hash);
+
+  const gradients = [
+    { bg1: '#0f172a', bg2: '#1e1b4b', border: '#6366f1', textGrad: ['#818cf8', '#c084fc'] },
+    { bg1: '#064e3b', bg2: '#022c22', border: '#10b981', textGrad: ['#34d399', '#059669'] },
+    { bg1: '#4c1d95', bg2: '#2e1065', border: '#a855f7', textGrad: ['#c084fc', '#e879f9'] },
+    { bg1: '#78350f', bg2: '#451a03', border: '#f59e0b', textGrad: ['#fbbf24', '#d97706'] },
+    { bg1: '#881337', bg2: '#4c0519', border: '#f43f5e', textGrad: ['#fb7185', '#e11d48'] },
+    { bg1: '#164e63', bg2: '#083344', border: '#06b6d4', textGrad: ['#22d3ee', '#0284c7'] },
+  ];
+
+  const g = gradients[themeIndex % gradients.length];
+  const fontSize = cleanLabel.length <= 2 ? 36 : cleanLabel.length <= 4 ? 26 : 20;
+
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+    <defs>
+      <linearGradient id="bg_${themeIndex}" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" stop-color="${g.bg1}" />
+        <stop offset="100%" stop-color="${g.bg2}" />
+      </linearGradient>
+      <linearGradient id="txt_${themeIndex}" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" stop-color="${g.textGrad[0]}" />
+        <stop offset="100%" stop-color="${g.textGrad[1]}" />
+      </linearGradient>
+    </defs>
+    <rect x="4" y="4" width="120" height="120" rx="28" fill="url(#bg_${themeIndex})" stroke="${g.border}" stroke-width="4" />
+    <rect x="12" y="12" width="104" height="104" rx="20" fill="none" stroke="${g.border}" stroke-opacity="0.3" stroke-width="2" />
+    <text x="64" y="${64 + fontSize / 3.2}" font-family="system-ui, -apple-system, sans-serif" font-weight="900" font-size="${fontSize}" fill="url(#txt_${themeIndex})" text-anchor="middle" letter-spacing="1">${cleanLabel}</text>
+  </svg>`;
+
+  return Buffer.from(svg);
+}
+
 // Route to serve local Linux icon image files or proxy high-resolution web favicons directly
 app.get('/api/icon', async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -252,6 +299,7 @@ app.get('/api/icon', async (req, res) => {
   const iconParam = String(req.query.path || req.query.name || '');
   const urlParam = String(req.query.url || '');
   const domainParam = String(req.query.domain || '');
+  const nameParam = String(req.query.name || '');
 
   // 1. Check local Ubuntu icon files first
   if (iconParam) {
@@ -272,8 +320,8 @@ app.get('/api/icon', async (req, res) => {
       // ignore
     }
   }
-  if (!domain && iconParam) {
-    const match = iconParam.match(/([a-zA-Z0-9-]+\.[a-zA-Z]{2,}(?:\.[a-zA-Z]{2,})?)/i);
+  if (!domain && (iconParam || nameParam)) {
+    const match = (iconParam || nameParam).match(/([a-zA-Z0-9-]+\.[a-zA-Z]{2,}(?:\.[a-zA-Z]{2,})?)/i);
     if (match) {
       domain = match[1].toLowerCase().replace(/^www\./, '');
     }
@@ -302,7 +350,8 @@ app.get('/api/icon', async (req, res) => {
       if (response.ok) {
         const arrayBuf = await response.arrayBuffer();
         const buf = Buffer.from(arrayBuf);
-        if (buf.length > 200) {
+        // DDG generic fallback icon is ~1478 bytes. Real domain logos are > 2500 bytes.
+        if (buf.length > 2500) {
           const ct = response.headers.get('content-type') || 'image/png';
           iconBufferCache.set(domain, { buffer: buf, contentType: ct });
           res.setHeader('Content-Type', ct);
@@ -324,7 +373,8 @@ app.get('/api/icon', async (req, res) => {
       if (response.ok) {
         const arrayBuf = await response.arrayBuffer();
         const buf = Buffer.from(arrayBuf);
-        if (buf.length > 200) {
+        // Google generic fallback icon is ~726 bytes. Real icons are > 1500 bytes.
+        if (buf.length > 1500) {
           const ct = response.headers.get('content-type') || 'image/png';
           iconBufferCache.set(domain, { buffer: buf, contentType: ct });
           res.setHeader('Content-Type', ct);
@@ -333,16 +383,15 @@ app.get('/api/icon', async (req, res) => {
         }
       }
     } catch {
-      // Fallback to SVG
+      // Fallback to SVG badge
     }
   }
 
-  // 4. Fallback: generate clean SVG badge
-  const initial = (domain ? domain.charAt(0) : 'P').toUpperCase();
-  const svgBadge = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64"><rect width="64" height="64" rx="14" fill="#18181b" stroke="#27272a" stroke-width="2"/><text x="32" y="42" font-family="system-ui, sans-serif" font-weight="bold" font-size="28" fill="#10b981" text-anchor="middle">${initial}</text></svg>`;
+  // 4. Fallback: generate vibrant SVG badge with domain/app label
+  const svgBadge = generateDomainSvgBadge(domain || iconParam || nameParam || 'PWA', nameParam || iconParam);
   res.setHeader('Content-Type', 'image/svg+xml');
   res.setHeader('Cache-Control', 'public, max-age=86400');
-  return res.send(Buffer.from(svgBadge));
+  return res.send(svgBadge);
 });
 
 // Helper to compute perceptual/content hash for local icon file
