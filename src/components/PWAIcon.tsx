@@ -60,11 +60,21 @@ export const PWAIcon: React.FC<PWAIconProps> = ({
     }
   }
 
-  // 2. Server-side smart proxy for domain
+  // 2. Server-side smart proxy for domain (checks local Ubuntu icons, Icon Horse, homepage scrapers)
   if (domain && domain !== 'app.com' && domain !== 'seu-app.com') {
     const localProxyFavicon = `/api/icon?domain=${encodeURIComponent(domain)}&name=${encodeURIComponent(name)}`;
     if (!candidateSources.includes(localProxyFavicon)) {
       candidateSources.push(localProxyFavicon);
+    }
+    // 3. Direct Icon Horse CDN fallback
+    const iconHorseUrl = `https://icon.horse/icon/${domain}`;
+    if (!candidateSources.includes(iconHorseUrl)) {
+      candidateSources.push(iconHorseUrl);
+    }
+    // 4. Direct Google GStatic CDN fallback
+    const gstaticUrl = `https://t1.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=http://${domain}&size=128`;
+    if (!candidateSources.includes(gstaticUrl)) {
+      candidateSources.push(gstaticUrl);
     }
   }
 
@@ -76,13 +86,13 @@ export const PWAIcon: React.FC<PWAIconProps> = ({
   const activeSrc = candidateSources[currentSourceIndex] || null;
   const isExhausted = !activeSrc || currentSourceIndex >= candidateSources.length;
 
-  // Short clean label for badge fallback (e.g. "11KK", "31M", "03W")
+  // Short clean label for badge fallback (e.g. "03WIN", "11KK", "13E", "31M")
   const badgeLabel = (name || domain || 'PWA')
     .replace(/^https?:\/\//i, '')
     .split('.')[0]
     .replace(/[^a-zA-Z0-9]/g, '')
     .toUpperCase()
-    .slice(0, 4) || 'PWA';
+    .slice(0, 5) || 'PWA';
 
   // Consistent color for fallback initial badge based on name string
   const getInitialBg = (str: string) => {

@@ -165,11 +165,40 @@ function hasCommand(cmd: string): boolean {
 // In-memory cache for web-fetched icon buffers
 const iconBufferCache = new Map<string, { buffer: Buffer; contentType: string }>();
 
+// Cache for local Ubuntu system icon path lookups
+const localIconCache = new Map<string, string | null>();
+
+// Helper to validate whether a buffer contains a true image (PNG, JPG, GIF, WEBP, ICO, SVG)
+function isValidImageBuffer(buf: Buffer, contentType?: string): boolean {
+  if (!buf || buf.length < 100) return false;
+
+  const ct = (contentType || '').toLowerCase();
+  if (ct.includes('html') || ct.includes('text') || ct.includes('json') || ct.includes('javascript')) {
+    return false;
+  }
+
+  // Filter out 1478B or 1232B DuckDuckGo gray circle placeholder PNGs
+  if (buf.length === 1478 || buf.length === 1232) {
+    const hex = buf.toString('hex');
+    if (hex.includes('4475636b') || hex.includes('6475636b')) return false;
+  }
+
+  // Header magic bytes check
+  const isPng = buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47;
+  const isJpg = buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff;
+  const isGif = buf.subarray(0, 3).toString('ascii') === 'GIF';
+  const isIco = buf[0] === 0x00 && buf[1] === 0x00 && (buf[2] === 0x01 || buf[2] === 0x02) && buf[3] === 0x00;
+  const isWebp = buf.subarray(0, 4).toString('ascii') === 'RIFF' && buf.subarray(8, 12).toString('ascii') === 'WEBP';
+  const isSvg = buf.subarray(0, 200).toString('utf-8').toLowerCase().includes('<svg');
+
+  return isPng || isJpg || isGif || isIco || isWebp || isSvg;
+}
+
 // Helper to find local icon file on Ubuntu/Linux
 function findLocalIcon(iconNameOrPath: string): string | null {
   if (!iconNameOrPath) return null;
 
-  // 1. Direct absolute path check
+  // Direct absolute path check
   if (path.isAbsolute(iconNameOrPath) && fs.existsSync(iconNameOrPath)) {
     return iconNameOrPath;
   }
@@ -197,7 +226,7 @@ function findLocalIcon(iconNameOrPath: string): string | null {
   ];
 
   function searchDir(dir: string, depth = 0): string | null {
-    if (depth > 4 || !fs.existsSync(dir)) return null;
+    if (depth > 3 || !fs.existsSync(dir)) return null;
     try {
       const entries = fs.readdirSync(dir, { withFileTypes: true });
       for (const entry of entries) {
@@ -232,6 +261,16 @@ function findLocalIcon(iconNameOrPath: string): string | null {
   return null;
 }
 
+function findLocalIconCached(iconNameOrPath: string): string | null {
+  if (!iconNameOrPath) return null;
+  if (localIconCache.has(iconNameOrPath)) {
+    return localIconCache.get(iconNameOrPath)!;
+  }
+  const result = findLocalIcon(iconNameOrPath);
+  localIconCache.set(iconNameOrPath, result);
+  return result;
+}
+
 // Serve site favicon (SVG & ICO)
 app.get(['/favicon.ico', '/favicon.svg'], (_req, res) => {
   const faviconSvg = path.join(__dirname, 'public', 'favicon.svg');
@@ -253,10 +292,10 @@ app.get('/api/icon', async (req, res) => {
   const domainParam = String(req.query.domain || '');
   const nameParam = String(req.query.name || '');
 
-  // 1. Check local Ubuntu system icon files across iconParam, nameParam, domainParam
+  // 1. Check local Ubuntu system icon files across candidates (cached)
   const localCandidates = [iconParam, nameParam, domainParam, urlParam].filter(Boolean);
   for (const cand of localCandidates) {
-    const resolved = findLocalIcon(cand);
+    const resolved = findLocalIconCached(cand);
     if (resolved && fs.existsSync(resolved)) {
       res.setHeader('Cache-Control', 'public, max-age=86400');
       return res.sendFile(resolved);
@@ -284,27 +323,31 @@ app.get('/api/icon', async (req, res) => {
     domain = domain.slice(0, -7) + '.com';
   }
 
-  // 3. Serve cached original favicon buffer if available
   if (domain && domain !== 'app.com' && domain !== 'seu-app.com') {
+    // 3. Serve cached original favicon buffer if available and valid
     if (iconBufferCache.has(domain)) {
       const cached = iconBufferCache.get(domain)!;
-      res.setHeader('Content-Type', cached.contentType);
-      res.setHeader('Cache-Control', 'public, max-age=604800');
-      return res.send(cached.buffer);
+      if (isValidImageBuffer(cached.buffer, cached.contentType)) {
+        res.setHeader('Content-Type', cached.contentType);
+        res.setHeader('Cache-Control', 'public, max-age=604800');
+        return res.send(cached.buffer);
+      } else {
+        iconBufferCache.delete(domain);
+      }
     }
 
-    // Attempt 1: Fetch DuckDuckGo high-res original favicon
+    // Attempt 1: Fetch Icon Horse CDN high-resolution original app icon
     try {
-      const ddgUrl = `https://icons.duckduckgo.com/ip3/${domain}.ico`;
-      const response = await fetch(ddgUrl, {
+      const ihUrl = `https://icon.horse/icon/${domain}`;
+      const response = await fetch(ihUrl, {
         headers: { 'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64)' },
         signal: AbortSignal.timeout(4000),
       });
       if (response.ok) {
         const arrayBuf = await response.arrayBuffer();
         const buf = Buffer.from(arrayBuf);
-        if (buf.length > 2000) {
-          const ct = response.headers.get('content-type') || 'image/png';
+        const ct = response.headers.get('content-type') || 'image/png';
+        if (isValidImageBuffer(buf, ct) && buf.length > 2000) {
           iconBufferCache.set(domain, { buffer: buf, contentType: ct });
           res.setHeader('Content-Type', ct);
           res.setHeader('Cache-Control', 'public, max-age=604800');
@@ -315,7 +358,7 @@ app.get('/api/icon', async (req, res) => {
       // ignore
     }
 
-    // Attempt 2: HTML Scrape for exact original <link rel="icon"> or <link rel="apple-touch-icon"> from platform homepage
+    // Attempt 2: HTML Scrape for exact original apple-touch-icon, og:image or icon link from platform homepage
     try {
       const pageRes = await fetch(`https://${domain}`, {
         headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
@@ -323,29 +366,45 @@ app.get('/api/icon', async (req, res) => {
       });
       if (pageRes.ok) {
         const html = await pageRes.text();
-        const iconMatch = html.match(/<link[^>]+rel=["'](?:shortcut |apple-touch-)?icon["'][^>]+href=["']([^"']+)["']/i);
-        if (iconMatch && iconMatch[1]) {
-          const rawHref = iconMatch[1].trim();
+        const candidateHrefs: string[] = [];
+
+        // Check apple-touch-icon first (highest res logo)
+        const appleMatch = html.match(/<link[^>]+rel=["']apple-touch-icon["'][^>]+href=["']([^"']+)["']/i);
+        if (appleMatch && appleMatch[1]) candidateHrefs.push(appleMatch[1].trim());
+
+        // Check og:image
+        const ogMatch = html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i);
+        if (ogMatch && ogMatch[1]) candidateHrefs.push(ogMatch[1].trim());
+
+        // Check shortcut icon / icon
+        const iconMatch = html.match(/<link[^>]+rel=["'](?:shortcut )?icon["'][^>]+href=["']([^"']+)["']/i);
+        if (iconMatch && iconMatch[1]) candidateHrefs.push(iconMatch[1].trim());
+
+        for (const rawHref of candidateHrefs) {
           const absIconUrl = rawHref.startsWith('http')
             ? rawHref
             : rawHref.startsWith('/')
             ? `https://${domain}${rawHref}`
             : `https://${domain}/${rawHref}`;
 
-          const imgRes = await fetch(absIconUrl, {
-            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
-            signal: AbortSignal.timeout(3500),
-          });
-          if (imgRes.ok) {
-            const arrayBuf = await imgRes.arrayBuffer();
-            const buf = Buffer.from(arrayBuf);
-            if (buf.length > 300) {
+          try {
+            const imgRes = await fetch(absIconUrl, {
+              headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
+              signal: AbortSignal.timeout(3000),
+            });
+            if (imgRes.ok) {
+              const arrayBuf = await imgRes.arrayBuffer();
+              const buf = Buffer.from(arrayBuf);
               const ct = imgRes.headers.get('content-type') || 'image/png';
-              iconBufferCache.set(domain, { buffer: buf, contentType: ct });
-              res.setHeader('Content-Type', ct);
-              res.setHeader('Cache-Control', 'public, max-age=604800');
-              return res.send(buf);
+              if (isValidImageBuffer(buf, ct)) {
+                iconBufferCache.set(domain, { buffer: buf, contentType: ct });
+                res.setHeader('Content-Type', ct);
+                res.setHeader('Cache-Control', 'public, max-age=604800');
+                return res.send(buf);
+              }
             }
+          } catch {
+            // try next candidate
           }
         }
       }
@@ -353,7 +412,29 @@ app.get('/api/icon', async (req, res) => {
       // ignore
     }
 
-    // Attempt 3: Fetch Google GStatic original favicon
+    // Attempt 3: Fetch DuckDuckGo high-res original favicon
+    try {
+      const ddgUrl = `https://icons.duckduckgo.com/ip3/${domain}.ico`;
+      const response = await fetch(ddgUrl, {
+        headers: { 'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64)' },
+        signal: AbortSignal.timeout(3500),
+      });
+      if (response.ok) {
+        const arrayBuf = await response.arrayBuffer();
+        const buf = Buffer.from(arrayBuf);
+        const ct = response.headers.get('content-type') || 'image/png';
+        if (isValidImageBuffer(buf, ct) && buf.length > 2000) {
+          iconBufferCache.set(domain, { buffer: buf, contentType: ct });
+          res.setHeader('Content-Type', ct);
+          res.setHeader('Cache-Control', 'public, max-age=604800');
+          return res.send(buf);
+        }
+      }
+    } catch {
+      // ignore
+    }
+
+    // Attempt 4: Fetch Google GStatic original favicon
     try {
       const gstaticUrl = `https://t1.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=http://${domain}&size=128`;
       const response = await fetch(gstaticUrl, {
@@ -363,8 +444,8 @@ app.get('/api/icon', async (req, res) => {
       if (response.ok) {
         const arrayBuf = await response.arrayBuffer();
         const buf = Buffer.from(arrayBuf);
-        if (buf.length > 1000) {
-          const ct = response.headers.get('content-type') || 'image/png';
+        const ct = response.headers.get('content-type') || 'image/png';
+        if (isValidImageBuffer(buf, ct)) {
           iconBufferCache.set(domain, { buffer: buf, contentType: ct });
           res.setHeader('Content-Type', ct);
           res.setHeader('Cache-Control', 'public, max-age=604800');
