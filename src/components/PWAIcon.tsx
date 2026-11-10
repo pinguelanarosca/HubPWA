@@ -49,45 +49,22 @@ export const PWAIcon: React.FC<PWAIconProps> = ({
   // Build candidate sources in order of priority
   const candidateSources: string[] = [];
 
-  // 1. Server-side smart proxy first (validates icon sizes, filters 1478B gray placeholders, returns logo or SVG badge)
+  // 1. Raw candidate icon path or name (from desktop file or custom entry)
+  if (rawCandidate) {
+    let candidatePath = rawCandidate;
+    if (domain && candidatePath.includes('/api/icon') && !candidatePath.includes('domain=')) {
+      candidatePath += `&domain=${encodeURIComponent(domain)}`;
+    }
+    if (!candidateSources.includes(candidatePath)) {
+      candidateSources.push(candidatePath);
+    }
+  }
+
+  // 2. Server-side smart proxy for domain
   if (domain && domain !== 'app.com' && domain !== 'seu-app.com') {
     const localProxyFavicon = `/api/icon?domain=${encodeURIComponent(domain)}&name=${encodeURIComponent(name)}`;
     if (!candidateSources.includes(localProxyFavicon)) {
       candidateSources.push(localProxyFavicon);
-    }
-  }
-
-  // 2. Direct external custom or explicit icon URLs
-  if (
-    rawCandidate &&
-    (rawCandidate.startsWith('http://') || rawCandidate.startsWith('https://') || rawCandidate.startsWith('data:')) &&
-    !rawCandidate.includes('/api/icon')
-  ) {
-    if (!candidateSources.includes(rawCandidate)) {
-      candidateSources.push(rawCandidate);
-    }
-  }
-
-  // 3. Direct web icon services
-  if (domain && domain !== 'app.com' && domain !== 'seu-app.com') {
-    const duckDuckGoFavicon = `https://icons.duckduckgo.com/ip3/${domain}.ico`;
-    if (!candidateSources.includes(duckDuckGoFavicon)) {
-      candidateSources.push(duckDuckGoFavicon);
-    }
-    const googleGstatic = `https://t1.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://${domain}&size=128`;
-    if (!candidateSources.includes(googleGstatic)) {
-      candidateSources.push(googleGstatic);
-    }
-  }
-
-  // 4. Raw candidate with domain hint
-  if (rawCandidate) {
-    let candidateWithDomain = rawCandidate;
-    if (domain && candidateWithDomain.includes('/api/icon') && !candidateWithDomain.includes('domain=')) {
-      candidateWithDomain += `&domain=${encodeURIComponent(domain)}`;
-    }
-    if (!candidateSources.includes(candidateWithDomain)) {
-      candidateSources.push(candidateWithDomain);
     }
   }
 

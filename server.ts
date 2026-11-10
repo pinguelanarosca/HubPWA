@@ -363,7 +363,7 @@ app.get('/api/icon', async (req, res) => {
       if (response.ok) {
         const arrayBuf = await response.arrayBuffer();
         const buf = Buffer.from(arrayBuf);
-        if (buf.length > 300) {
+        if (buf.length > 1000) {
           const ct = response.headers.get('content-type') || 'image/png';
           iconBufferCache.set(domain, { buffer: buf, contentType: ct });
           res.setHeader('Content-Type', ct);
@@ -374,12 +374,9 @@ app.get('/api/icon', async (req, res) => {
     } catch {
       // ignore
     }
-
-    // Redirect to original DuckDuckGo favicon endpoint
-    return res.redirect(302, `https://icons.duckduckgo.com/ip3/${domain}.ico`);
   }
 
-  return res.status(404).end();
+  return res.status(404).send('Icon not found');
 });
 
 // Helper to compute perceptual/content hash for local icon file
