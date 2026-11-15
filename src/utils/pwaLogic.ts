@@ -486,6 +486,9 @@ export function filterAndSortPWAs(
     search?: string;
     category?: string;
     group?: string;
+    folderFilter?: string;
+    folderFilterIds?: Set<string>;
+    validFolderIds?: Set<string>;
     statusFilter?: StatusFilter;
     starFilter?: string;
     sortBy?: SortOption;
@@ -497,6 +500,9 @@ export function filterAndSortPWAs(
     search = '',
     category,
     group,
+    folderFilter = 'all',
+    folderFilterIds,
+    validFolderIds,
     statusFilter = 'all',
     starFilter = 'all',
     sortBy = 'pinned',
@@ -507,6 +513,21 @@ export function filterAndSortPWAs(
 
   return safeItems
     .filter((item) => {
+      // Folder filter
+      if (folderFilter && folderFilter !== 'all') {
+        if (folderFilter === 'unfiled') {
+          if (item.folderId && (!validFolderIds || validFolderIds.has(item.folderId))) {
+            return false;
+          }
+        } else if (folderFilterIds) {
+          if (!item.folderId || !folderFilterIds.has(item.folderId)) {
+            return false;
+          }
+        } else if (item.folderId !== folderFilter) {
+          return false;
+        }
+      }
+
       // Group/Category filter
       if (targetGroup !== 'all') {
         const itemGroup = item.group || item.category || 'Geral';
@@ -615,6 +636,7 @@ export function importPWAsFromJson(rawJson: string): PWAItem[] {
         url: url.startsWith('http') ? url : `https://${url}`,
         category: String(r.group || r.category || 'Geral').trim(),
         group: String(r.group || r.category || 'Geral').trim(),
+        folderId: typeof r.folderId === 'string' && r.folderId.trim() ? r.folderId.trim() : null,
         notes: String(r.notes || r.anotacoes || r.description || '').trim(),
         icon: typeof r.icon === 'string' && r.icon.trim()
           ? r.icon.trim()

@@ -1,5 +1,7 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { CheckSquare, Square, Trash2, Edit3, CheckCircle2, X, FolderPlus, FileDown, Plus, ChevronUp } from 'lucide-react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
+import { CheckSquare, Square, Trash2, Edit3, CheckCircle2, X, FolderPlus, FileDown, Plus, ChevronUp, FolderInput } from 'lucide-react';
+import { PWAFolder } from '../types/pwa';
+import { flattenFoldersHierarchy } from '../utils/folderLogic';
 
 interface BatchActionsBarProps {
   selectedCount: number;
@@ -11,8 +13,11 @@ interface BatchActionsBarProps {
   onBatchEdit: () => void;
   onBatchDelete: () => void;
   onBatchAssignGroup?: (groupName: string) => void;
+  onBatchAssignFolder?: (folderId: string | null) => void;
+  onCreateAndAssignFolder?: (folderName: string) => void;
   onBatchExtractUrls?: () => void;
   existingGroups?: string[];
+  folders?: PWAFolder[];
 }
 
 export const BatchActionsBar: React.FC<BatchActionsBarProps> = ({
@@ -25,13 +30,23 @@ export const BatchActionsBar: React.FC<BatchActionsBarProps> = ({
   onBatchEdit,
   onBatchDelete,
   onBatchAssignGroup,
+  onBatchAssignFolder,
+  onCreateAndAssignFolder,
   onBatchExtractUrls,
   existingGroups = [],
+  folders = [],
 }) => {
   const [isGroupDropdownOpen, setIsGroupDropdownOpen] = useState(false);
   const [customGroupName, setCustomGroupName] = useState('');
   const [isCustomizing, setIsCustomizing] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
+
+  const [isFolderDropdownOpen, setIsFolderDropdownOpen] = useState(false);
+  const [customFolderName, setCustomFolderName] = useState('');
+  const [isCreatingFolder, setIsCreatingFolder] = useState(false);
+  const folderDropdownRef = useRef<HTMLDivElement>(null);
+
+  const flatFolders = useMemo(() => flattenFoldersHierarchy(folders), [folders]);
 
   // Close group dropdown when clicking outside
   useEffect(() => {
@@ -40,12 +55,16 @@ export const BatchActionsBar: React.FC<BatchActionsBarProps> = ({
         setIsGroupDropdownOpen(false);
         setIsCustomizing(false);
       }
+      if (folderDropdownRef.current && !folderDropdownRef.current.contains(e.target as Node)) {
+        setIsFolderDropdownOpen(false);
+        setIsCreatingFolder(false);
+      }
     };
-    if (isGroupDropdownOpen) {
+    if (isGroupDropdownOpen || isFolderDropdownOpen) {
       document.addEventListener('mousedown', handleClickOutside);
     }
     return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [isGroupDropdownOpen]);
+  }, [isGroupDropdownOpen, isFolderDropdownOpen]);
 
   if (selectedCount === 0) return null;
 
@@ -69,10 +88,30 @@ export const BatchActionsBar: React.FC<BatchActionsBarProps> = ({
     setIsCustomizing(false);
   };
 
+  const handleSelectFolder = (folderId: string | null) => {
+    if (onBatchAssignFolder) {
+      onBatchAssignFolder(folderId);
+    }
+    setIsFolderDropdownOpen(false);
+    setIsCreatingFolder(false);
+  };
+
+  const handleCreateFolderAndMove = (e: React.FormEvent) => {
+    e.preventDefault();
+    const trimmed = customFolderName.trim();
+    if (!trimmed) return;
+    if (onCreateAndAssignFolder) {
+      onCreateAndAssignFolder(trimmed);
+    }
+    setCustomFolderName('');
+    setIsFolderDropdownOpen(false);
+    setIsCreatingFolder(false);
+  };
+
   return (
     <aside
       aria-label="Barra de ações em lote"
-      className="fixed bottom-5 left-1/2 -translate-x-1/2 z-40 w-[95%] max-w-3xl bg-[#14151a]/95 backdrop-blur-md border border-emerald-500/50 shadow-2xl shadow-black/80 rounded-2xl px-4 py-2.5 flex items-center justify-between gap-3 text-xs animate-in slide-in-from-bottom-5 duration-200"
+      className="fixed bottom-5 left-1/2 -translate-x-1/2 z-40 w-[95%] max-w-4xl bg-[#14151a]/95 backdrop-blur-md border border-emerald-500/50 shadow-2xl shadow-black/80 rounded-2xl px-4 py-2.5 flex items-center justify-between gap-3 text-xs animate-in slide-in-from-bottom-5 duration-200"
     >
       {/* Left: Selection count & select all toggle */}
       <div className="flex items-center gap-2.5 shrink-0">
@@ -106,11 +145,103 @@ export const BatchActionsBar: React.FC<BatchActionsBarProps> = ({
           <span>Mudar Status</span>
         </button>
 
+        {/* Mover para Pasta */}
+        {onBatchAssignFolder && (
+          <div className="relative" ref={folderDropdownRef}>
+            <button
+              type="button"
+              onClick={() => {
+                setIsGroupDropdownOpen(false);
+                setIsFolderDropdownOpen((prev) => !prev);
+              }}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#1e2028] hover:bg-[#282a36] text-neutral-200 hover:text-white font-medium transition-colors cursor-pointer whitespace-nowrap border border-[#2c2e3d]"
+              title="Mover PWAs selecionadas para uma pasta"
+            >
+              <FolderInput className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Mover para Pasta</span>
+              <ChevronUp className={`w-3 h-3 text-neutral-400 transition-transform ${isFolderDropdownOpen ? 'rotate-180' : ''}`} />
+            </button>
+
+            {isFolderDropdownOpen && (
+              <div className="absolute bottom-full mb-3 left-1/2 -translate-x-1/2 sm:left-0 sm:translate-x-0 z-50 w-60 bg-[#14151a] border border-[#2c2e3d] rounded-xl shadow-2xl shadow-black py-2 text-xs text-neutral-200 animate-in fade-in zoom-in-95 duration-100">
+                <div className="px-3 py-1 border-b border-[#242633] text-[10px] uppercase font-bold text-neutral-400 tracking-wider">
+                  Mover para Pasta:
+                </div>
+
+                <div className="max-h-48 overflow-y-auto py-1">
+                  <button
+                    type="button"
+                    onClick={() => handleSelectFolder(null)}
+                    className="w-full text-left px-3 py-1.5 hover:bg-[#1f212a] text-neutral-300 hover:text-white cursor-pointer"
+                  >
+                    Sem Pasta (Raiz)
+                  </button>
+                  {flatFolders.map(({ folder, label }) => (
+                    <button
+                      key={folder.id}
+                      type="button"
+                      onClick={() => handleSelectFolder(folder.id)}
+                      className="w-full text-left px-3 py-1.5 hover:bg-[#1f212a] hover:text-white flex items-center justify-between cursor-pointer"
+                    >
+                      <span className="truncate">{label}</span>
+                    </button>
+                  ))}
+                </div>
+
+                {onCreateAndAssignFolder && (
+                  <div className="border-t border-[#242633] pt-1 px-1">
+                    {!isCreatingFolder ? (
+                      <button
+                        type="button"
+                        onClick={() => setIsCreatingFolder(true)}
+                        className="w-full text-left px-2.5 py-1.5 text-emerald-400 hover:bg-[#1f212a] rounded-lg flex items-center gap-1.5 cursor-pointer text-[11px] font-semibold"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>Criar Nova Pasta...</span>
+                      </button>
+                    ) : (
+                      <form onSubmit={handleCreateFolderAndMove} className="p-1 space-y-1">
+                        <input
+                          type="text"
+                          placeholder="Nome da nova pasta..."
+                          value={customFolderName}
+                          onChange={(e) => setCustomFolderName(e.target.value)}
+                          autoFocus
+                          className="w-full px-2 py-1 text-[11px] bg-neutral-950 border border-neutral-700 text-white rounded focus:outline-none focus:border-emerald-500"
+                        />
+                        <div className="flex justify-end gap-1">
+                          <button
+                            type="button"
+                            onClick={() => setIsCreatingFolder(false)}
+                            className="px-2 py-0.5 text-[10px] text-neutral-400 hover:text-white cursor-pointer"
+                          >
+                            Cancelar
+                          </button>
+                          <button
+                            type="submit"
+                            disabled={!customFolderName.trim()}
+                            className="px-2 py-0.5 text-[10px] font-bold text-neutral-950 bg-emerald-400 rounded hover:bg-emerald-300 disabled:opacity-50 cursor-pointer"
+                          >
+                            Criar e Mover
+                          </button>
+                        </div>
+                      </form>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Add a Grupo */}
-        <div className="relative">
+        <div className="relative" ref={dropdownRef}>
           <button
             type="button"
-            onClick={() => setIsGroupDropdownOpen((prev) => !prev)}
+            onClick={() => {
+              setIsFolderDropdownOpen(false);
+              setIsGroupDropdownOpen((prev) => !prev);
+            }}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#1e2028] hover:bg-[#282a36] text-neutral-200 hover:text-white font-medium transition-colors cursor-pointer whitespace-nowrap border border-[#2c2e3d]"
             title="Adicionar PWAs selecionadas a um grupo"
           >
@@ -122,7 +253,6 @@ export const BatchActionsBar: React.FC<BatchActionsBarProps> = ({
           {/* Quick Group Selector Dropdown Popover */}
           {isGroupDropdownOpen && (
             <div
-              ref={dropdownRef}
               className="absolute bottom-full mb-3 left-1/2 -translate-x-1/2 sm:left-0 sm:translate-x-0 z-50 w-56 bg-[#14151a] border border-[#2c2e3d] rounded-xl shadow-2xl shadow-black py-2 text-xs text-neutral-200 animate-in fade-in zoom-in-95 duration-100"
             >
               <div className="px-3 py-1 border-b border-[#242633] text-[10px] uppercase font-bold text-neutral-400 tracking-wider">

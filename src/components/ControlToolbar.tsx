@@ -1,7 +1,8 @@
-import React, { useRef, useEffect } from 'react';
-import { Search, X, List, Rows3, ArrowUpDown, Folder, Star, Compass, Settings } from 'lucide-react';
-import { SortOption, StatusFilter, StarFilter, ViewDensity } from '../types/pwa';
-import { getGroupTheme } from '../utils/groupLogic';
+import React, { useRef, useEffect, useState, useMemo } from 'react';
+import { Search, X, List, Rows3, Folder, Star, Compass, Settings, FolderOpen, FolderPlus } from 'lucide-react';
+import { PWAFolder, SortOption, StatusFilter, StarFilter, ViewDensity } from '../types/pwa';
+import { getGroupTheme, GROUP_COLOR_THEMES } from '../utils/groupLogic';
+import { flattenFoldersHierarchy } from '../utils/folderLogic';
 
 interface ControlToolbarProps {
   search: string;
@@ -12,6 +13,13 @@ interface ControlToolbarProps {
   groupConfigs?: Record<string, string>;
   groupColors?: Record<string, string>;
   onOpenGroupManager?: () => void;
+  folders?: PWAFolder[];
+  selectedFolder?: string;
+  onFolderChange?: (folderId: string) => void;
+  onOpenFolderManager?: () => void;
+  onDropPwaOnFolder?: (pwaIds: string[], targetFolderId: string | null) => void;
+  unfiledCount?: number;
+  folderItemCounts?: Record<string, number>;
   statusFilter: StatusFilter;
   onStatusFilterChange: (status: StatusFilter) => void;
   starFilter: StarFilter;
@@ -33,9 +41,15 @@ export const ControlToolbar: React.FC<ControlToolbarProps> = ({
   selectedGroup,
   onGroupChange,
   groups,
-  groupConfigs = {},
   groupColors = {},
   onOpenGroupManager,
+  folders = [],
+  selectedFolder = 'all',
+  onFolderChange,
+  onOpenFolderManager,
+  onDropPwaOnFolder,
+  unfiledCount = 0,
+  folderItemCounts = {},
   statusFilter,
   onStatusFilterChange,
   starFilter,
@@ -49,6 +63,9 @@ export const ControlToolbar: React.FC<ControlToolbarProps> = ({
   accessedCount,
 }) => {
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const [dragOverFolderId, setDragOverFolderId] = useState<string | null>(null);
+
+  const flatFolders = useMemo(() => flattenFoldersHierarchy(folders), [folders]);
 
   // Keyboard shortcut: '/' focuses search input
   useEffect(() => {
@@ -65,6 +82,15 @@ export const ControlToolbar: React.FC<ControlToolbarProps> = ({
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
+
+  const handleFolderDrop = (e: React.DragEvent, targetFolderId: string | null) => {
+    e.preventDefault();
+    setDragOverFolderId(null);
+    const pwaId = e.dataTransfer.getData('text/pwa-id');
+    if (pwaId && onDropPwaOnFolder) {
+      onDropPwaOnFolder([pwaId], targetFolderId);
+    }
+  };
 
   return (
     <div className="space-y-2.5 mb-4">
@@ -175,36 +201,146 @@ export const ControlToolbar: React.FC<ControlToolbarProps> = ({
           </div>
 
           {/* View Mode Switcher */}
-          <div className="inline-flex items-center p-1 bg-[#14151a] border border-[#242633] rounded-lg">
+          <div className="inline-flex items-center p-1 bg-[#14151a] border border-[#242633] rounded-lg gap-0.5">
+            <button
+              type="button"
+              onClick={() => onDensityChange('folders')}
+              title="Visualização por Pastas e Subpastas"
+              aria-label="Modo Pastas"
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs transition-colors cursor-pointer ${
+                density === 'folders'
+                  ? 'bg-emerald-500 text-neutral-950 font-bold shadow-xs'
+                  : 'text-neutral-400 hover:text-white'
+              }`}
+            >
+              <FolderOpen className="w-3.5 h-3.5" />
+              <span>Pastas</span>
+            </button>
             <button
               type="button"
               onClick={() => onDensityChange('cards')}
               title="Visualização em Grade de Cartões (Padrão)"
               aria-label="Grade de Cartões"
-              className={`p-1.5 rounded-md transition-colors cursor-pointer ${
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs transition-colors cursor-pointer ${
                 density === 'cards'
                   ? 'bg-emerald-500 text-neutral-950 font-bold shadow-xs'
                   : 'text-neutral-400 hover:text-white'
               }`}
             >
-              <Rows3 className="w-4 h-4" />
+              <Rows3 className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Cards</span>
             </button>
             <button
               type="button"
               onClick={() => onDensityChange('compact-table')}
               title="Visualização em Tabela Compacta"
               aria-label="Tabela Compacta"
-              className={`p-1.5 rounded-md transition-colors cursor-pointer ${
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs transition-colors cursor-pointer ${
                 density === 'compact-table'
                   ? 'bg-emerald-500 text-neutral-950 font-bold shadow-xs'
                   : 'text-neutral-400 hover:text-white'
               }`}
             >
-              <List className="w-4 h-4" />
+              <List className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Tabela</span>
             </button>
           </div>
         </div>
       </div>
+
+      {/* Pastas Filter Strip (supports drag-and-drop assignment) */}
+      {onFolderChange && (
+        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none text-xs">
+          <div className="flex items-center gap-1 text-neutral-400 shrink-0 mr-1">
+            <FolderOpen className="w-3.5 h-3.5 text-emerald-400" />
+            <span className="text-xs font-semibold text-neutral-300">Pastas:</span>
+            {onOpenFolderManager && (
+              <button
+                type="button"
+                onClick={onOpenFolderManager}
+                title="Criar ou gerenciar pastas"
+                aria-label="Gerenciar Pastas"
+                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-emerald-400 hover:text-emerald-300 hover:bg-emerald-950/60 border border-emerald-800/60 transition-colors cursor-pointer ml-0.5 text-[11px] font-semibold"
+              >
+                <FolderPlus className="w-3 h-3" />
+                <span>Nova</span>
+              </button>
+            )}
+          </div>
+
+          <button
+            type="button"
+            onClick={() => onFolderChange('all')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-colors cursor-pointer ${
+              selectedFolder === 'all'
+                ? 'bg-emerald-400 text-neutral-950 font-bold shadow-xs'
+                : 'bg-[#14151a] hover:bg-[#1f212a] text-neutral-300 hover:text-white border border-[#242633]'
+            }`}
+          >
+            Todas ({totalCount})
+          </button>
+
+          <button
+            type="button"
+            onClick={() => onFolderChange('unfiled')}
+            onDragOver={(e) => {
+              if (!onDropPwaOnFolder) return;
+              e.preventDefault();
+              setDragOverFolderId('__unfiled__');
+            }}
+            onDragLeave={() => setDragOverFolderId(null)}
+            onDrop={(e) => handleFolderDrop(e, null)}
+            className={`px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-colors cursor-pointer ${
+              dragOverFolderId === '__unfiled__'
+                ? 'bg-emerald-900/70 text-white border border-emerald-400'
+                : selectedFolder === 'unfiled'
+                ? 'bg-emerald-400 text-neutral-950 font-bold shadow-xs'
+                : 'bg-[#14151a] hover:bg-[#1f212a] text-neutral-300 hover:text-white border border-[#242633]'
+            }`}
+          >
+            Sem Pasta ({unfiledCount})
+          </button>
+
+          {flatFolders.map(({ folder, label }) => {
+            const theme = GROUP_COLOR_THEMES[folder.color || 'emerald'] || GROUP_COLOR_THEMES.emerald;
+            const count = folderItemCounts[folder.id] || 0;
+            const isActive = selectedFolder === folder.id;
+            const isDragTarget = dragOverFolderId === folder.id;
+
+            return (
+              <button
+                key={folder.id}
+                type="button"
+                onClick={() => onFolderChange(folder.id)}
+                onDragOver={(e) => {
+                  if (!onDropPwaOnFolder) return;
+                  e.preventDefault();
+                  setDragOverFolderId(folder.id);
+                }}
+                onDragLeave={() => setDragOverFolderId(null)}
+                onDrop={(e) => handleFolderDrop(e, folder.id)}
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-colors cursor-pointer ${
+                  isDragTarget
+                    ? 'bg-emerald-900/70 text-white border border-emerald-400 ring-1 ring-emerald-400'
+                    : isActive
+                    ? 'bg-emerald-400 text-neutral-950 font-bold shadow-xs'
+                    : 'bg-[#14151a] hover:bg-[#1f212a] text-neutral-300 hover:text-white border border-[#242633]'
+                }`}
+              >
+                <span className={`w-2 h-2 rounded-full ${theme.dotColor}`} />
+                <span>{label}</span>
+                <span
+                  className={`text-[10px] font-mono ${
+                    isActive ? 'text-neutral-900' : 'text-neutral-500'
+                  }`}
+                >
+                  ({count})
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       {/* Grupos Filter Strip */}
       <div className="flex items-center gap-1.5 overflow-x-auto pb-1.5 scrollbar-none text-xs">

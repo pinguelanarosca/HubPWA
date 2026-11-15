@@ -1,5 +1,7 @@
-import React, { useState } from 'react';
-import { X, Layers, Star, Tag, FileText } from 'lucide-react';
+import React, { useState, useMemo } from 'react';
+import { X, Layers, Star, Tag, FileText, FolderInput } from 'lucide-react';
+import { PWAFolder } from '../types/pwa';
+import { flattenFoldersHierarchy } from '../utils/folderLogic';
 import { StarRating } from './StarRating';
 
 interface BatchEditModalProps {
@@ -7,8 +9,10 @@ interface BatchEditModalProps {
   onClose: () => void;
   selectedCount: number;
   existingGroups: string[];
+  folders?: PWAFolder[];
   onApply: (changes: {
     group?: string;
+    folderId?: string | null;
     rating?: number;
     notes?: string;
     notesMode?: 'append' | 'replace';
@@ -20,8 +24,11 @@ export const BatchEditModal: React.FC<BatchEditModalProps> = ({
   onClose,
   selectedCount,
   existingGroups,
+  folders = [],
   onApply,
 }) => {
+  const [changeFolder, setChangeFolder] = useState(false);
+  const [folderId, setFolderId] = useState('');
   const [changeGroup, setChangeGroup] = useState(false);
   const [group, setGroup] = useState('');
   const [changeRating, setChangeRating] = useState(false);
@@ -30,11 +37,14 @@ export const BatchEditModal: React.FC<BatchEditModalProps> = ({
   const [notes, setNotes] = useState('');
   const [notesMode, setNotesMode] = useState<'append' | 'replace'>('append');
 
+  const flatFolders = useMemo(() => flattenFoldersHierarchy(folders), [folders]);
+
   if (!isOpen) return null;
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     onApply({
+      ...(changeFolder ? { folderId: folderId || null } : {}),
       ...(changeGroup ? { group: group.trim() || 'Geral' } : {}),
       ...(changeRating ? { rating } : {}),
       ...(changeNotes ? { notes: notes.trim(), notesMode } : {}),
@@ -72,6 +82,39 @@ export const BatchEditModal: React.FC<BatchEditModalProps> = ({
           <p className="text-xs text-neutral-400">
             Marque as opções que deseja alterar para todas as <strong>{selectedCount}</strong> PWAs selecionadas.
           </p>
+
+          {/* Folder */}
+          <div className="p-3 rounded-lg bg-neutral-950/60 border border-neutral-800/80 space-y-2">
+            <label className="flex items-center gap-2 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={changeFolder}
+                onChange={(e) => setChangeFolder(e.target.checked)}
+                className="w-4 h-4 rounded bg-neutral-900 border-neutral-700 text-emerald-500 focus:ring-emerald-500"
+              />
+              <span className="text-xs font-medium text-neutral-200 flex items-center gap-1.5">
+                <FolderInput className="w-3.5 h-3.5 text-emerald-400" />
+                Definir Pasta
+              </span>
+            </label>
+            {changeFolder && (
+              <div className="pt-1">
+                <select
+                  value={folderId}
+                  onChange={(e) => setFolderId(e.target.value)}
+                  aria-label="Pasta destino"
+                  className="w-full bg-neutral-900 border border-neutral-700 text-neutral-200 text-xs rounded-lg px-3 py-2 focus:outline-none focus:border-emerald-500"
+                >
+                  <option value="">Sem Pasta (Raiz)</option>
+                  {flatFolders.map(({ folder, label }) => (
+                    <option key={folder.id} value={folder.id}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+          </div>
 
           {/* Group */}
           <div className="p-3 rounded-lg bg-neutral-950/60 border border-neutral-800/80 space-y-2">
@@ -190,7 +233,7 @@ export const BatchEditModal: React.FC<BatchEditModalProps> = ({
             </button>
             <button
               type="submit"
-              disabled={!changeGroup && !changeRating && !changeNotes}
+              disabled={!changeFolder && !changeGroup && !changeRating && !changeNotes}
               className="px-4 py-1.5 rounded-lg text-xs font-semibold text-neutral-950 bg-emerald-400 hover:bg-emerald-300 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-xs cursor-pointer"
             >
               Aplicar a {selectedCount} PWAs

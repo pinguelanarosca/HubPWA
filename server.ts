@@ -19,6 +19,14 @@ const __dirname = path.dirname(__filename);
 const DATA_DIR = path.resolve(__dirname, 'data');
 const STATE_FILE = path.join(DATA_DIR, 'hubpwa_state.json');
 
+interface ServerPWAFolder {
+  id: string;
+  name: string;
+  color?: string;
+  parentId?: string | null;
+  createdAt: string;
+}
+
 interface ServerPWAState {
   id: string;
   name?: string;
@@ -32,6 +40,8 @@ interface ServerPWAState {
   pinned?: boolean;
   icon?: string;
   group?: string;
+  folderId?: string | null;
+  aliases?: string[];
   lastAccessedDate?: string | null;
   accessCount?: number;
   updatedAt?: string;
@@ -40,6 +50,7 @@ interface ServerPWAState {
 interface ServerDb {
   version: number;
   pwas: Record<string, ServerPWAState>;
+  folders: ServerPWAFolder[];
   deletedIds: string[];
 }
 
@@ -63,6 +74,7 @@ function loadServerDb(): ServerDb {
         return {
           version: data.version || 1,
           pwas: cleanPwas,
+          folders: Array.isArray(data.folders) ? data.folders : [],
           deletedIds: Array.isArray(data.deletedIds) ? data.deletedIds : [],
         };
       }
@@ -70,7 +82,7 @@ function loadServerDb(): ServerDb {
   } catch (err) {
     console.warn('Aviso ao carregar hubpwa_state.json:', err);
   }
-  return { version: 1, pwas: {}, deletedIds: [] };
+  return { version: 1, pwas: {}, folders: [], deletedIds: [] };
 }
 
 function getDb(): ServerDb {
@@ -639,6 +651,7 @@ app.get('/api/pwas/scan', (_req, res) => {
             name: stored.name || pwa.name,
             category: stored.category || pwa.category,
             group: stored.group || stored.category || pwa.category,
+            folderId: stored.folderId !== undefined ? stored.folderId : pwa.folderId,
             icon: workingIcon || pwa.icon,
             notes: stored.notes !== undefined ? stored.notes : pwa.notes,
             rating: typeof stored.rating === 'number' ? stored.rating : (stored.pinned ? 5 : 0),
@@ -689,7 +702,7 @@ app.get('/api/pwas/state', (_req, res) => {
 // POST /api/pwas/state - Save / update user state to disk
 app.post('/api/pwas/state', (req, res) => {
   try {
-    const { items, deletedIds } = req.body || {};
+    const { items, folders, deletedIds } = req.body || {};
     const db = getDb();
 
     if (Array.isArray(deletedIds)) {
@@ -700,6 +713,10 @@ app.post('/api/pwas/state', (req, res) => {
       });
     }
 
+    if (Array.isArray(folders)) {
+      db.folders = folders;
+    }
+
     if (Array.isArray(items)) {
       for (const item of items) {
         if (!item || !item.id || isAndroidOrRedroidApp(item)) continue;
@@ -707,9 +724,14 @@ app.post('/api/pwas/state', (req, res) => {
           id: item.id,
           name: item.name,
           category: item.category,
+          group: item.group || item.category,
+          folderId: item.folderId !== undefined ? item.folderId : (db.pwas[item.id]?.folderId ?? null),
+          icon: item.icon,
           url: item.url,
           rawFileName: item.rawFileName,
           appId: item.appId,
+          profileDirectory: item.profileDirectory,
+          aliases: Array.isArray(item.aliases) ? item.aliases : undefined,
           notes: item.notes || '',
           rating: typeof item.rating === 'number' ? item.rating : (item.pinned ? 5 : 0),
           pinned: Boolean(item.pinned || (item.rating && item.rating > 0)),
@@ -721,7 +743,7 @@ app.post('/api/pwas/state', (req, res) => {
     }
 
     saveServerDb(db);
-    return res.json({ success: true, count: Object.keys(db.pwas).length });
+    return res.json({ success: true, count: Object.keys(db.pwas).length, folderCount: db.folders.length });
   } catch (err) {
     console.error('Erro ao salvar estado:', err);
     return res.status(500).json({ success: false, error: (err as Error).message });

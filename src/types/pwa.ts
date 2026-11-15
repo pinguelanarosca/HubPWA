@@ -1,3 +1,11 @@
+export interface PWAFolder {
+  id: string;
+  name: string;
+  color?: string;
+  parentId?: string | null;
+  createdAt: string;
+}
+
 export interface PWAItem {
   id: string;
   name: string;
@@ -5,6 +13,7 @@ export interface PWAItem {
   icon?: string;
   category: string;
   group?: string;
+  folderId?: string | null;
   notes: string;
   lastAccessedDate: string | null; // ISO YYYY-MM-DD or full timestamp
   accessLogs?: string[]; // Array of recent access timestamps
@@ -52,7 +61,7 @@ export interface ParsedDesktopApp {
   iconHash?: string;
 }
 
-export type ViewDensity = 'compact-table' | 'dense-grid' | 'cards';
+export type ViewDensity = 'compact-table' | 'dense-grid' | 'cards' | 'folders';
 
 export type StatusFilter = 'all' | 'pending' | 'accessed';
 

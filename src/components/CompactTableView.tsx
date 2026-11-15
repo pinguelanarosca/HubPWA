@@ -1,6 +1,6 @@
-import React from 'react';
-import { ExternalLink, Trash2, Edit2, User, Clock } from 'lucide-react';
-import { PWAItem } from '../types/pwa';
+import React, { useMemo } from 'react';
+import { Trash2, Edit2, User, Clock, Folder } from 'lucide-react';
+import { PWAFolder, PWAItem } from '../types/pwa';
 import { PWAIcon } from './PWAIcon';
 import { StatusIndicator } from './StatusIndicator';
 import { InlineNoteInput } from './InlineNoteInput';
@@ -10,6 +10,7 @@ import { getCleanDomain, formatAccessDateTime } from '../utils/pwaLogic';
 interface CompactTableViewProps {
   items: PWAItem[];
   todayStr: string;
+  folders?: PWAFolder[];
   onLaunch: (item: PWAItem) => void;
   onToggleStatus: (item: PWAItem) => void;
   onUpdateNote: (item: PWAItem, newNote: string) => void;
@@ -22,6 +23,7 @@ interface CompactTableViewProps {
 export const CompactTableView: React.FC<CompactTableViewProps> = ({
   items,
   todayStr,
+  folders = [],
   onLaunch,
   onToggleStatus,
   onUpdateNote,
@@ -30,6 +32,8 @@ export const CompactTableView: React.FC<CompactTableViewProps> = ({
   onEdit,
   onDelete,
 }) => {
+  const folderMap = useMemo(() => new Map(folders.map((f) => [f.id, f])), [folders]);
+
   if (items.length === 0) {
     return (
       <div className="py-16 text-center text-neutral-400">
@@ -57,6 +61,7 @@ export const CompactTableView: React.FC<CompactTableViewProps> = ({
             const domain = getCleanDomain(item.url);
             const currentRating = typeof item.rating === 'number' ? item.rating : (item.pinned ? 5 : 0);
             const accessLog = formatAccessDateTime(item.lastAccessedDate);
+            const assignedFolder = item.folderId ? folderMap.get(item.folderId) : null;
 
             return (
               <tr
@@ -127,6 +132,12 @@ export const CompactTableView: React.FC<CompactTableViewProps> = ({
                       </span>
                       <span className="text-[10px] text-neutral-400 truncate flex items-center gap-1.5">
                         <span className="truncate">{domain}</span>
+                        {assignedFolder && (
+                          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-neutral-900 border border-neutral-700 text-emerald-300 text-[9px] font-medium shrink-0">
+                            <Folder className="w-2.5 h-2.5 text-emerald-400" />
+                            <span>{assignedFolder.name}</span>
+                          </span>
+                        )}
                         {item.profileDirectory && (
                           <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-blue-950/80 border border-blue-800/80 text-blue-300 text-[9px] font-semibold font-mono shrink-0">
                             <User className="w-2.5 h-2.5 text-blue-400" />

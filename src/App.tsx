@@ -3,20 +3,28 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useEffect, useMemo, useCallback, useRef, Fragment } from 'react';
-import { PWAItem, ViewDensity, StatusFilter, StarFilter, SortOption } from './types/pwa';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { PWAFolder, PWAItem, ViewDensity, StatusFilter, StarFilter, SortOption } from './types/pwa';
 import {
   getTodayString,
-  isAccessedToday,
   markAsAccessed,
   toggleAccessedToday,
   calculateStats,
   filterAndSortPWAs,
   resolveFaviconAtInsertion,
-  getCleanDomain,
   isAndroidOrRedroidApp,
   isSameOrMatchingPWA,
 } from './utils/pwaLogic';
+import {
+  FOLDERS_STORAGE_KEY,
+  loadFolders,
+  saveFolders,
+  createFolder,
+  renameFolder,
+  deleteFolderSafe,
+  assignPWAsToFolder,
+  getFolderDescendantIds,
+} from './utils/folderLogic';
 import { parseDesktopFile, ParsedDesktopApp } from './utils/desktopParser';
 import { normalizeAppUrl } from './utils/desktopDeduplicator';
 import { TopBar } from './components/TopBar';
@@ -24,6 +32,7 @@ import { ControlToolbar } from './components/ControlToolbar';
 import { CompactTableView } from './components/CompactTableView';
 import { DenseGridView } from './components/DenseGridView';
 import { CardsView } from './components/CardsView';
+import { FolderView } from './components/FolderView';
 import { BatchActionsBar } from './components/BatchActionsBar';
 import { BatchEditModal } from './components/BatchEditModal';
 import { AddEditPWAModal } from './components/AddEditPWAModal';
@@ -34,6 +43,8 @@ import { AutostartModal } from './components/AutostartModal';
 import { loadGroupConfigs, saveGroupConfigs, loadGroupColors, saveGroupColors } from './utils/groupLogic';
 import { extractPWAsToMarkdown } from './utils/markdownExporter';
 import { GroupManagerModal } from './components/GroupManagerModal';
+import { FolderManagerModal } from './components/FolderManagerModal';
+import { QuickAssignFolderModal } from './components/QuickAssignFolderModal';
 import { RatingConfirmModal } from './components/RatingConfirmModal';
 import { FolderUp, FolderOpen, Plus } from 'lucide-react';
 
@@ -102,10 +113,12 @@ export default function App() {
     return [];
   });
 
+  const [folders, setFolders] = useState<PWAFolder[]>(() => loadFolders());
+
   const [density, setDensity] = useState<ViewDensity>(() => {
     try {
       const saved = localStorage.getItem(DENSITY_STORAGE_KEY) as ViewDensity;
-      if (saved === 'compact-table' || saved === 'dense-grid' || saved === 'cards') {
+      if (saved === 'compact-table' || saved === 'dense-grid' || saved === 'cards' || saved === 'folders') {
         return saved;
       }
     } catch {
@@ -116,6 +129,8 @@ export default function App() {
 
   const [search, setSearch] = useState('');
   const [selectedGroup, setSelectedGroup] = useState('all');
+  const [selectedFolder, setSelectedFolder] = useState<string>('all');
+  const [currentExplorerFolderId, setCurrentExplorerFolderId] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [starFilter, setStarFilter] = useState<StarFilter>('all');
   const [sortBy, setSortBy] = useState<SortOption>('pinned');
@@ -138,12 +153,40 @@ export default function App() {
   const [isUpdateModalOpen, setIsUpdateModalOpen] = useState(false);
   const [isAutostartOpen, setIsAutostartOpen] = useState(false);
   const [isGroupManagerOpen, setIsGroupManagerOpen] = useState(false);
+  const [isFolderManagerOpen, setIsFolderManagerOpen] = useState(false);
+  const [folderManagerParentId, setFolderManagerParentId] = useState<string | null>(null);
+  const [quickAssignTargetFolderId, setQuickAssignTargetFolderId] = useState<string | null>(null);
 
   // Group Configurations (name -> symbol mapping)
   const [groupConfigs, setGroupConfigs] = useState<Record<string, string>>(() => loadGroupConfigs());
 
   // Group Color Themes (name -> colorKey mapping)
   const [groupColors, setGroupColors] = useState<Record<string, string>>(() => loadGroupColors());
+
+  // Track whether localStorage already had persisted items/folders before hydration
+  const initialHadLocalItemsRef = useRef<boolean | null>(null);
+  const initialHadLocalFoldersRef = useRef<boolean | null>(null);
+  const isHydratedRef = useRef(false);
+  if (initialHadLocalItemsRef.current === null) {
+    try {
+      initialHadLocalItemsRef.current = localStorage.getItem(STORAGE_KEY) !== null;
+    } catch {
+      initialHadLocalItemsRef.current = false;
+    }
+  }
+  if (initialHadLocalFoldersRef.current === null) {
+    try {
+      initialHadLocalFoldersRef.current = localStorage.getItem(FOLDERS_STORAGE_KEY) !== null;
+    } catch {
+      initialHadLocalFoldersRef.current = false;
+    }
+  }
+
+  // Persist folders to localStorage once hydrated
+  useEffect(() => {
+    if (!isHydratedRef.current) return;
+    saveFolders(folders);
+  }, [folders]);
 
   // Save group configs and colors whenever updated
   useEffect(() => {
@@ -248,7 +291,8 @@ export default function App() {
             ...matches.map((m) => m.accessCount || 0)
           );
 
-          // Preserve working icon from previous state
+          // Preserve folder assignment & working icon from previous state
+          const customFolderId = matches.find((m) => m.folderId)?.folderId ?? scanned.folderId ?? null;
           const existingWorkingIcon = matches.find(
             (m) => m.icon && !m.icon.includes('/api/icon') && m.icon.trim()
           )?.icon;
@@ -258,6 +302,7 @@ export default function App() {
             ...scanned,
             name: customName,
             category: customCategory,
+            folderId: customFolderId,
             icon: finalMergedIcon,
             pinned: isAnyPinned || maxRating > 0,
             rating: maxRating,
@@ -304,30 +349,69 @@ export default function App() {
     }
   }, [mergeScannedPWAs]);
 
-  // Trigger local discovery scan when app loads
+  // Trigger local discovery scan & hydrate persisted folders/state when app loads
   useEffect(() => {
-    handleRescanLocalPWAs();
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/pwas/state');
+        if (res.ok && !cancelled) {
+          const data = await res.json();
+          const serverDb = data?.db;
+          if (serverDb) {
+            // Hydrate folders if localStorage has not saved folders yet
+            if (Array.isArray(serverDb.folders) && serverDb.folders.length > 0 && !initialHadLocalFoldersRef.current) {
+              setFolders(serverDb.folders);
+              saveFolders(serverDb.folders);
+            }
+            // Hydrate items on first clean load if localStorage has never been initialized
+            const serverPwas = serverDb.pwas ? (Object.values(serverDb.pwas) as PWAItem[]) : [];
+            if (!initialHadLocalItemsRef.current && serverPwas.length > 0) {
+              const deletedSet = new Set<string>(Array.isArray(serverDb.deletedIds) ? serverDb.deletedIds : []);
+              const hydrated = serverPwas
+                .filter((it) => it && it.id && it.name && it.url && !deletedSet.has(it.id) && !isAndroidOrRedroidApp(it))
+                .map(repairAndSanitizePWA);
+              if (hydrated.length > 0) {
+                setItems(hydrated);
+                try {
+                  localStorage.setItem(STORAGE_KEY, JSON.stringify(hydrated));
+                } catch {}
+              }
+            }
+          }
+        }
+      } catch {
+        // ignore server state hydration error
+      } finally {
+        if (!cancelled) {
+          isHydratedRef.current = true;
+          handleRescanLocalPWAs();
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [handleRescanLocalPWAs]);
 
-  // Persist items to localStorage and sync to server database
+  // Persist items to localStorage and sync items + folders to server database
   useEffect(() => {
+    if (!isHydratedRef.current) return;
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
     } catch {
       // ignore
     }
 
-    if (items.length > 0) {
-      const timer = setTimeout(() => {
-        fetch('/api/pwas/state', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ items }),
-        }).catch(() => {});
-      }, 600);
-      return () => clearTimeout(timer);
-    }
-  }, [items]);
+    const timer = setTimeout(() => {
+      fetch('/api/pwas/state', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ items, folders }),
+      }).catch(() => {});
+    }, 600);
+    return () => clearTimeout(timer);
+  }, [items, folders]);
 
   // Persist density setting
   const handleDensityChange = (newDensity: ViewDensity) => {
@@ -434,17 +518,50 @@ export default function App() {
     return calculateStats(cleanItems, todayStr);
   }, [cleanItems, todayStr]);
 
+  const validFolderIds = useMemo(() => new Set(folders.map((f) => f.id)), [folders]);
+
+  const { unfiledCount, folderItemCounts } = useMemo(() => {
+    let unfiled = 0;
+    const directCounts: Record<string, number> = {};
+    for (const it of cleanItems) {
+      if (!it.folderId || !validFolderIds.has(it.folderId)) {
+        unfiled++;
+      } else {
+        directCounts[it.folderId] = (directCounts[it.folderId] || 0) + 1;
+      }
+    }
+    const recursiveCounts: Record<string, number> = {};
+    for (const f of folders) {
+      const desc = getFolderDescendantIds(folders, f.id);
+      let sum = directCounts[f.id] || 0;
+      desc.forEach((id) => {
+        sum += directCounts[id] || 0;
+      });
+      recursiveCounts[f.id] = sum;
+    }
+    return { unfiledCount: unfiled, folderItemCounts: recursiveCounts };
+  }, [cleanItems, folders, validFolderIds]);
+
   // Filtered and sorted items
   const displayedItems = useMemo(() => {
+    const activeFolderFilter = density === 'folders' ? 'all' : selectedFolder;
+    const folderFilterIds =
+      activeFolderFilter !== 'all' && activeFolderFilter !== 'unfiled'
+        ? new Set([activeFolderFilter, ...getFolderDescendantIds(folders, activeFolderFilter)])
+        : undefined;
+
     return filterAndSortPWAs(cleanItems, {
       search,
       group: selectedGroup,
+      folderFilter: activeFolderFilter,
+      folderFilterIds,
+      validFolderIds,
       statusFilter,
       starFilter,
       sortBy,
       todayStr,
     });
-  }, [cleanItems, search, selectedGroup, statusFilter, starFilter, sortBy, todayStr]);
+  }, [cleanItems, folders, validFolderIds, density, selectedFolder, search, selectedGroup, statusFilter, starFilter, sortBy, todayStr]);
 
   // Today display string in full Portuguese without abbreviation ambiguities
   const todayDisplay = useMemo(() => {
@@ -639,12 +756,13 @@ export default function App() {
   }, [items]);
 
   // Save new or edited PWA
-  const handleSavePWA = useCallback((data: Partial<PWAItem> & { name: string; url: string; category: string; group?: string; notes: string }) => {
+  const handleSavePWA = useCallback((data: Partial<PWAItem> & { name: string; url: string; category: string; group?: string; folderId?: string | null; notes: string }) => {
     const finalIcon =
       data.icon && !data.icon.includes('/api/icon')
         ? data.icon
         : resolveFaviconAtInsertion(data.url, undefined, data.name);
     const grp = data.group || data.category || 'Geral';
+    const nextFolderId = data.folderId !== undefined ? data.folderId : null;
 
     // Trigger background icon pre-warming resolution endpoint so the server immediately fetches & caches authentic logo
     if (data.url || data.name) {
@@ -656,7 +774,7 @@ export default function App() {
       setItems((prev) => {
         const updatedList = prev.map((it) =>
           it.id === data.id
-            ? { ...it, ...data, group: grp, category: grp, icon: finalIcon }
+            ? { ...it, ...data, group: grp, category: grp, folderId: nextFolderId, icon: finalIcon }
             : it
         );
         fetch('/api/pwas/state', {
@@ -675,6 +793,7 @@ export default function App() {
         url: data.url,
         category: grp,
         group: grp,
+        folderId: nextFolderId,
         notes: data.notes,
         icon: finalIcon,
         pinned: initialRating > 0,
@@ -770,6 +889,7 @@ export default function App() {
   // Batch edit apply
   const handleApplyBatchEdit = useCallback((changes: {
     group?: string;
+    folderId?: string | null;
     rating?: number;
     notes?: string;
     notesMode?: 'append' | 'replace';
@@ -796,6 +916,7 @@ export default function App() {
           ...it,
           group: grp,
           category: grp,
+          ...(changes.folderId !== undefined ? { folderId: changes.folderId } : {}),
           ...(typeof changes.rating === 'number' ? { rating: changes.rating, pinned: changes.rating > 0 } : {}),
           ...(typeof changes.notes === 'string' ? { notes: newNotes } : {}),
         };
@@ -848,6 +969,102 @@ export default function App() {
 
     setSelectedIds(new Set());
   }, [selectedIds]);
+
+  // Folder organization handlers
+  const handleMovePWAsToFolder = useCallback((pwaIds: string[], targetFolderId: string | null) => {
+    if (!pwaIds || pwaIds.length === 0) return;
+    setItems((prev) => {
+      const next = assignPWAsToFolder(prev, pwaIds, targetFolderId);
+      const changed = next.filter((it) => pwaIds.includes(it.id));
+      if (changed.length > 0) {
+        fetch('/api/pwas/state', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ items: changed }),
+        }).catch(() => {});
+      }
+      return next;
+    });
+    setSelectedIds((prev) => {
+      if (prev.size === 0) return prev;
+      const next = new Set(prev);
+      pwaIds.forEach((id) => next.delete(id));
+      return next;
+    });
+  }, []);
+
+  const handleCreateFolder = useCallback((name: string, color: string, parentId: string | null) => {
+    setFolders((prev) => {
+      const { folders: nextFolders } = createFolder(prev, { name, color, parentId });
+      saveFolders(nextFolders);
+      fetch('/api/pwas/state', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ folders: nextFolders }),
+      }).catch(() => {});
+      return nextFolders;
+    });
+  }, []);
+
+  const handleRenameFolder = useCallback((folderId: string, newName: string, newColor: string) => {
+    setFolders((prev) => {
+      const nextFolders = renameFolder(prev, folderId, newName, newColor);
+      saveFolders(nextFolders);
+      fetch('/api/pwas/state', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ folders: nextFolders }),
+      }).catch(() => {});
+      return nextFolders;
+    });
+  }, []);
+
+  const handleDeleteFolder = useCallback((folderId: string) => {
+    const deletedFolder = folders.find((f) => f.id === folderId);
+    const parentTarget = deletedFolder?.parentId || null;
+
+    const { folders: nextFolders, items: nextItems } = deleteFolderSafe(folders, items, folderId);
+    setFolders(nextFolders);
+    setItems(nextItems);
+    saveFolders(nextFolders);
+
+    if (selectedFolder === folderId) {
+      setSelectedFolder('all');
+    }
+    if (currentExplorerFolderId === folderId) {
+      setCurrentExplorerFolderId(parentTarget);
+    }
+
+    fetch('/api/pwas/state', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ folders: nextFolders, items: nextItems }),
+    }).catch(() => {});
+  }, [folders, items, selectedFolder, currentExplorerFolderId]);
+
+  const handleCreateAndAssignFolder = useCallback((folderName: string) => {
+    if (selectedIds.size === 0 || !folderName.trim()) return;
+    const parentId = density === 'folders' ? currentExplorerFolderId : null;
+    const { folders: nextFolders, folder: created } = createFolder(folders, {
+      name: folderName,
+      color: 'emerald',
+      parentId,
+    });
+    setFolders(nextFolders);
+    saveFolders(nextFolders);
+
+    const idsToMove = Array.from(selectedIds);
+    const nextItems = assignPWAsToFolder(items, idsToMove, created.id);
+    setItems(nextItems);
+    setSelectedIds(new Set());
+
+    const changedItems = nextItems.filter((it) => idsToMove.includes(it.id));
+    fetch('/api/pwas/state', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ folders: nextFolders, items: changedItems }),
+    }).catch(() => {});
+  }, [selectedIds, density, currentExplorerFolderId, folders, items]);
 
   // Batch extract URLs to Markdown (.md)
   const handleBatchExtractUrls = useCallback(() => {
@@ -1160,6 +1377,27 @@ export default function App() {
               groupConfigs={groupConfigs}
               groupColors={groupColors}
               onOpenGroupManager={() => setIsGroupManagerOpen(true)}
+              folders={folders}
+              selectedFolder={density === 'folders' ? (currentExplorerFolderId || 'all') : selectedFolder}
+              onFolderChange={(folderId) => {
+                if (density === 'folders') {
+                  if (folderId === 'unfiled') {
+                    setSelectedFolder('unfiled');
+                    handleDensityChange('cards');
+                  } else {
+                    setCurrentExplorerFolderId(folderId === 'all' ? null : folderId);
+                  }
+                } else {
+                  setSelectedFolder(folderId);
+                }
+              }}
+              onOpenFolderManager={() => {
+                setFolderManagerParentId(density === 'folders' ? currentExplorerFolderId : null);
+                setIsFolderManagerOpen(true);
+              }}
+              onDropPwaOnFolder={handleMovePWAsToFolder}
+              unfiledCount={unfiledCount}
+              folderItemCounts={folderItemCounts}
               statusFilter={statusFilter}
               onStatusFilterChange={setStatusFilter}
               starFilter={starFilter}
@@ -1177,10 +1415,46 @@ export default function App() {
 
             {/* View Render */}
             <div className="flex-1">
+              {density === 'folders' && (
+                <FolderView
+                  allItems={cleanItems}
+                  filteredItems={displayedItems}
+                  folders={folders}
+                  currentFolderId={currentExplorerFolderId}
+                  onNavigateFolder={setCurrentExplorerFolderId}
+                  todayStr={todayStr}
+                  groupConfigs={groupConfigs}
+                  groupColors={groupColors}
+                  selectedIds={selectedIds}
+                  onToggleSelect={handleToggleSelect}
+                  onLaunch={handleLaunch}
+                  onToggleStatus={handleToggleStatus}
+                  onUpdateNote={handleUpdateNote}
+                  onTogglePin={handleTogglePin}
+                  onSetRating={handleSetRating}
+                  onEdit={(item) => {
+                    setEditingItem(item);
+                    setIsAddEditOpen(true);
+                  }}
+                  onDelete={handleDelete}
+                  onRefreshIcon={handleRefreshSingleIcon}
+                  onSaveCustomIcon={handleSaveCustomIcon}
+                  onMoveToFolder={handleMovePWAsToFolder}
+                  onCreateFolder={handleCreateFolder}
+                  onDeleteFolder={handleDeleteFolder}
+                  onOpenFolderManager={(parentId) => {
+                    setFolderManagerParentId(parentId ?? null);
+                    setIsFolderManagerOpen(true);
+                  }}
+                  onOpenQuickAssign={(folderId) => setQuickAssignTargetFolderId(folderId)}
+                />
+              )}
+
               {density === 'compact-table' && (
                 <CompactTableView
                   items={displayedItems}
                   todayStr={todayStr}
+                  folders={folders}
                   onLaunch={handleLaunch}
                   onToggleStatus={handleToggleStatus}
                   onUpdateNote={handleUpdateNote}
@@ -1215,6 +1489,7 @@ export default function App() {
                 <CardsView
                   items={displayedItems}
                   todayStr={todayStr}
+                  folders={folders}
                   groupConfigs={groupConfigs}
                   groupColors={groupColors}
                   selectedIds={selectedIds}
@@ -1231,6 +1506,7 @@ export default function App() {
                   onDelete={handleDelete}
                   onRefreshIcon={handleRefreshSingleIcon}
                   onSaveCustomIcon={handleSaveCustomIcon}
+                  onMoveToFolder={handleMovePWAsToFolder}
                   groupByGroup={groupByGroup}
                 />
               )}
@@ -1258,10 +1534,13 @@ export default function App() {
         onDeselectAll={handleDeselectAll}
         onBatchToggleStatus={handleBatchToggleStatus}
         onBatchAssignGroup={handleBatchAssignGroup}
+        onBatchAssignFolder={(folderId) => handleMovePWAsToFolder(Array.from(selectedIds), folderId)}
+        onCreateAndAssignFolder={handleCreateAndAssignFolder}
         onBatchExtractUrls={handleBatchExtractUrls}
         onBatchEdit={() => setIsBatchEditOpen(true)}
         onBatchDelete={handleBatchDelete}
         existingGroups={groups}
+        folders={folders}
       />
 
       {/* Batch Edit Modal */}
@@ -1270,6 +1549,7 @@ export default function App() {
         onClose={() => setIsBatchEditOpen(false)}
         selectedCount={selectedIds.size}
         existingGroups={groups}
+        folders={folders}
         onApply={handleApplyBatchEdit}
       />
 
@@ -1283,6 +1563,14 @@ export default function App() {
         onSave={handleSavePWA}
         editingItem={editingItem}
         existingGroups={groups}
+        folders={folders}
+        defaultFolderId={
+          density === 'folders'
+            ? currentExplorerFolderId
+            : selectedFolder !== 'all' && selectedFolder !== 'unfiled'
+            ? selectedFolder
+            : null
+        }
       />
 
       {/* Ubuntu .desktop Import Review Modal */}
@@ -1328,6 +1616,30 @@ export default function App() {
         onUpdateGroupColor={handleUpdateGroupColor}
         onAddGroup={handleAddGroup}
         onDeleteGroup={handleDeleteGroup}
+      />
+
+      {/* Folder Manager Modal */}
+      <FolderManagerModal
+        isOpen={isFolderManagerOpen}
+        onClose={() => setIsFolderManagerOpen(false)}
+        folders={folders}
+        items={cleanItems}
+        todayStr={todayStr}
+        initialParentId={folderManagerParentId}
+        onCreateFolder={handleCreateFolder}
+        onRenameFolder={handleRenameFolder}
+        onDeleteFolder={handleDeleteFolder}
+        onOpenQuickAssign={(folderId) => setQuickAssignTargetFolderId(folderId)}
+      />
+
+      {/* Quick Assign PWAs to Folder Modal */}
+      <QuickAssignFolderModal
+        isOpen={quickAssignTargetFolderId !== null}
+        onClose={() => setQuickAssignTargetFolderId(null)}
+        targetFolder={folders.find((f) => f.id === quickAssignTargetFolderId) || null}
+        allFolders={folders}
+        items={cleanItems}
+        onAssignPWAs={handleMovePWAsToFolder}
       />
 
       {/* Rating Change Confirmation Modal */}

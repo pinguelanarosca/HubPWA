@@ -1,17 +1,20 @@
-import React, { useState, useEffect } from 'react';
-import { X, Globe, Star, RotateCw, Upload } from 'lucide-react';
-import { PWAItem } from '../types/pwa';
+import React, { useState, useEffect, useMemo } from 'react';
+import { X, Globe, RotateCw, Upload } from 'lucide-react';
+import { PWAFolder, PWAItem } from '../types/pwa';
 import { PWAIcon } from './PWAIcon';
 import { StarRating } from './StarRating';
 import { getCleanDomain, resolveFaviconAtInsertion } from '../utils/pwaLogic';
+import { flattenFoldersHierarchy } from '../utils/folderLogic';
 
 interface AddEditPWAModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSave: (pwaData: Partial<PWAItem> & { name: string; url: string; category: string; group?: string; notes: string }) => void;
+  onSave: (pwaData: Partial<PWAItem> & { name: string; url: string; category: string; group?: string; folderId?: string | null; notes: string }) => void;
   editingItem: PWAItem | null;
   existingGroups?: string[];
   existingCategories?: string[];
+  folders?: PWAFolder[];
+  defaultFolderId?: string | null;
 }
 
 export const AddEditPWAModal: React.FC<AddEditPWAModalProps> = ({
@@ -21,11 +24,15 @@ export const AddEditPWAModal: React.FC<AddEditPWAModalProps> = ({
   editingItem,
   existingGroups,
   existingCategories = [],
+  folders = [],
+  defaultFolderId = null,
 }) => {
   const groupsList = existingGroups || existingCategories;
+  const flatFolders = useMemo(() => flattenFoldersHierarchy(folders), [folders]);
   const [name, setName] = useState('');
   const [url, setUrl] = useState('');
   const [group, setGroup] = useState('Geral');
+  const [folderId, setFolderId] = useState('');
   const [notes, setNotes] = useState('');
   const [customIcon, setCustomIcon] = useState('');
   const [profileDirectory, setProfileDirectory] = useState('');
@@ -39,6 +46,7 @@ export const AddEditPWAModal: React.FC<AddEditPWAModalProps> = ({
       setName(editingItem.name);
       setUrl(editingItem.url);
       setGroup(editingItem.group || editingItem.category || 'Geral');
+      setFolderId(editingItem.folderId || '');
       setNotes(editingItem.notes || '');
       // Only lock customIcon if it is an actual user-entered external URL, NOT internal /api/icon or default google/duckduckgo favicon
       const isExternalUserIcon =
@@ -58,6 +66,7 @@ export const AddEditPWAModal: React.FC<AddEditPWAModalProps> = ({
       setName('');
       setUrl('');
       setGroup(groupsList[0] || 'Geral');
+      setFolderId(defaultFolderId || '');
       setNotes('');
       setCustomIcon('');
       setProfileDirectory('');
@@ -66,7 +75,7 @@ export const AddEditPWAModal: React.FC<AddEditPWAModalProps> = ({
       setPinned(false);
       setError('');
     }
-  }, [editingItem, isOpen, groupsList]);
+  }, [editingItem, isOpen, groupsList, defaultFolderId]);
 
   if (!isOpen) return null;
 
@@ -119,6 +128,7 @@ export const AddEditPWAModal: React.FC<AddEditPWAModalProps> = ({
       url: finalUrl,
       category: group.trim() || 'Geral',
       group: group.trim() || 'Geral',
+      folderId: folderId || null,
       notes: notes.trim(),
       icon: resolvedIcon,
       profileDirectory: profileDirectory.trim() || undefined,
@@ -229,18 +239,18 @@ export const AddEditPWAModal: React.FC<AddEditPWAModalProps> = ({
             />
           </div>
 
-          {/* Group Input */}
-          <div>
-            <label htmlFor="pwa-group" className="block text-xs font-medium text-neutral-300 mb-1">
-              Grupo
-            </label>
-            <div className="flex gap-2">
+          {/* Group & Folder Row */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label htmlFor="pwa-group" className="block text-xs font-medium text-neutral-300 mb-1">
+                Grupo
+              </label>
               <input
                 id="pwa-group"
                 type="text"
                 value={group}
                 onChange={(e) => setGroup(e.target.value)}
-                placeholder="Ex: Produtividade, Dev, Social..."
+                placeholder="Ex: Produtividade, Dev..."
                 list="group-suggestions"
                 className="w-full bg-neutral-950 border border-neutral-800 text-neutral-200 text-xs rounded-lg px-3 py-2 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
               />
@@ -249,6 +259,25 @@ export const AddEditPWAModal: React.FC<AddEditPWAModalProps> = ({
                   <option key={g} value={g} />
                 ))}
               </datalist>
+            </div>
+
+            <div>
+              <label htmlFor="pwa-folder" className="block text-xs font-medium text-neutral-300 mb-1">
+                Pasta
+              </label>
+              <select
+                id="pwa-folder"
+                value={folderId}
+                onChange={(e) => setFolderId(e.target.value)}
+                className="w-full bg-neutral-950 border border-neutral-800 text-neutral-200 text-xs rounded-lg px-3 py-2 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
+              >
+                <option value="">Sem Pasta (Raiz)</option>
+                {flatFolders.map(({ folder, label }) => (
+                  <option key={folder.id} value={folder.id}>
+                    {label}
+                  </option>
+                ))}
+              </select>
             </div>
           </div>
 
