@@ -41,47 +41,46 @@ export const MiniCardsView: React.FC<MiniCardsViewProps> = ({
       <div
         key={item.id}
         data-testid={`mini-card-${item.id}`}
-        className={`group relative p-2.5 rounded-xl bg-[#14151a] hover:bg-[#181920] transition-all flex flex-col justify-between ${
+        className={`group relative overflow-hidden rounded-xl bg-[#14151a] hover:bg-[#181920] transition-all flex items-stretch min-h-[96px] ${
           isAccessed
             ? 'border-2 border-emerald-500/80 hover:border-emerald-400 shadow-[0_0_16px_-6px_rgba(16,185,129,0.42)]'
             : 'border-2 border-rose-500/75 hover:border-rose-400 shadow-[0_0_16px_-6px_rgba(244,63,94,0.38)]'
         } ${isSelected ? 'ring-2 ring-emerald-400 bg-[#1a1c24]' : ''}`}
       >
-        {/* Top Row: ONLY Icon + Name */}
-        <div className="flex items-center gap-2.5 min-w-0">
-          <button
-            type="button"
-            onClick={() => onLaunch(item)}
-            className="shrink-0 transition-transform active:scale-95 group-hover:opacity-95 cursor-pointer rounded-lg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-emerald-400"
-            title={`Abrir ${item.name}`}
-            aria-label={`Abrir ${item.name}`}
-          >
-            <PWAIcon
-              icon={item.icon}
-              name={item.name}
-              url={item.url}
-              size="sm"
-              className="w-9 h-9 rounded-lg shadow-sm border border-neutral-800/80 bg-neutral-900 object-cover"
-            />
-          </button>
+        {/* Left: Full-height prominent Icon occupying top to bottom */}
+        <button
+          type="button"
+          onClick={() => onLaunch(item)}
+          className="w-[88px] sm:w-[94px] self-stretch shrink-0 p-2 bg-neutral-950/75 hover:bg-neutral-900/95 border-r border-white/[0.08] flex items-center justify-center transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-emerald-400"
+          title={`Abrir ${item.name}`}
+          aria-label={`Abrir ${item.name}`}
+        >
+          <PWAIcon
+            icon={item.icon}
+            name={item.name}
+            url={item.url}
+            size="fill"
+            className="w-full h-full rounded-lg border-0 bg-transparent p-0.5 transition-transform duration-150 group-hover:scale-[1.03] active:scale-95"
+          />
+        </button>
 
+        {/* Right: Name on top + $ Date and COM, RB, BON beside icon */}
+        <div className="flex-1 min-w-0 p-2.5 flex flex-col justify-between gap-2">
           <h3
             onClick={() => onLaunch(item)}
-            className="min-w-0 flex-1 font-bold text-sm text-white hover:text-emerald-400 cursor-pointer truncate transition-colors leading-snug"
+            className="font-bold text-sm text-white hover:text-emerald-400 cursor-pointer truncate transition-colors leading-tight"
             title={`Abrir ${item.name}`}
           >
             {item.name}
           </h3>
-        </div>
 
-        {/* Bottom Row: ONLY $ Date + COM, RB, BON */}
-        <div className="mt-2 pt-2 border-t border-white/[0.08]">
           <PWAFlagsControl
             item={item}
             todayStr={todayStr}
             onToggleFlag={onToggleFlag}
             onUpdateMoneyDate={onUpdateMoneyDate}
             compact={true}
+            layout="stacked"
           />
         </div>
       </div>

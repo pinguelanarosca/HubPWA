@@ -7,7 +7,7 @@ interface PWAIconProps {
   name: string;
   url?: string;
   customIcon?: string;
-  size?: 'xs' | 'sm' | 'md' | 'lg' | 'xl';
+  size?: 'xs' | 'sm' | 'md' | 'lg' | 'xl' | 'fill';
   className?: string;
 }
 
@@ -27,6 +27,7 @@ export const PWAIcon: React.FC<PWAIconProps> = ({
     md: 'w-7 h-7 text-sm rounded-md',
     lg: 'w-9 h-9 text-base rounded-lg',
     xl: 'w-14 h-14 text-xl rounded-xl', // Protagonist Card View (56x56 px)
+    fill: 'w-full h-full text-lg rounded-lg',
   }[size];
 
   const rawCandidate = (customIcon || icon || '').trim();

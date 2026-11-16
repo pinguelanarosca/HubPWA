@@ -116,6 +116,7 @@ interface PWAFlagsControlProps {
   onToggleFlag: (item: PWAItem, flag: DailyFlagKey) => void;
   onUpdateMoneyDate?: (item: PWAItem, moneyDate: string) => void;
   compact?: boolean;
+  layout?: 'row' | 'stacked';
 }
 
 export const PWAFlagsControl: React.FC<PWAFlagsControlProps> = ({
@@ -125,6 +126,7 @@ export const PWAFlagsControl: React.FC<PWAFlagsControlProps> = ({
   onToggleFlag,
   onUpdateMoneyDate,
   compact = false,
+  layout = 'row',
 }) => {
   const effectiveFlags = flags ?? item.flags ?? {};
   const persistedDate = effectiveFlags.moneyDate || '';
@@ -144,9 +146,15 @@ export const PWAFlagsControl: React.FC<PWAFlagsControlProps> = ({
 
   const hasDateValue = draftDate.trim().length > 0;
 
+  const isStacked = layout === 'stacked';
+
   return (
     <div
-      className={`flex items-center justify-between flex-wrap ${compact ? 'gap-1.5' : 'gap-2'}`}
+      className={
+        isStacked
+          ? 'flex flex-col gap-1.5 w-full'
+          : `flex items-center justify-between flex-wrap ${compact ? 'gap-1.5' : 'gap-2'}`
+      }
       onClick={(e) => e.stopPropagation()}
     >
       {/* Left: Prominent Green $ Icon + Persistent DD/MM Input */}
@@ -194,8 +202,14 @@ export const PWAFlagsControl: React.FC<PWAFlagsControlProps> = ({
         />
       </div>
 
-      {/* Right: Highlighted Daily Checkboxes (COM, RD, IRB — auto-reset at midnight) */}
-      <div className={`inline-flex items-center ${compact ? 'gap-1' : 'gap-1.5'} flex-wrap`}>
+      {/* Right: Highlighted Daily Checkboxes (COM, RB, BON — auto-reset at midnight) */}
+      <div
+        className={
+          isStacked
+            ? 'grid grid-cols-3 gap-1 w-full'
+            : `inline-flex items-center ${compact ? 'gap-1' : 'gap-1.5'} flex-wrap`
+        }
+      >
         {DAILY_FLAG_META.map(
           ({
             key,
@@ -222,7 +236,11 @@ export const PWAFlagsControl: React.FC<PWAFlagsControlProps> = ({
                   onToggleFlag(item, key);
                 }}
                 className={`group/flag inline-flex items-center ${
-                  compact ? 'gap-1 px-1.5 py-0.5 text-[10px]' : 'gap-1.5 px-1.5 py-0.5 text-[11px]'
+                  isStacked
+                    ? 'justify-between gap-1 px-1.5 py-0.5 text-[10px] w-full'
+                    : compact
+                    ? 'gap-1 px-1.5 py-0.5 text-[10px]'
+                    : 'gap-1.5 px-1.5 py-0.5 text-[11px]'
                 } rounded-md border font-bold tracking-wide transition-all duration-150 cursor-pointer select-none focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-emerald-400 ${
                   checked ? activeChipClass : inactiveChipClass
                 }`}
