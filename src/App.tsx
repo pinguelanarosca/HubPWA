@@ -4,7 +4,7 @@
  */
 
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { PWAFolder, PWAItem, ViewDensity, StatusFilter, StarFilter, SortOption } from './types/pwa';
+import { PWAFolder, PWAItem, ViewDensity, StatusFilter, StarFilter, SortOption, FlagFilterKey } from './types/pwa';
 import {
   getTodayString,
   markAsAccessed,
@@ -15,6 +15,10 @@ import {
   isAndroidOrRedroidApp,
   isSameOrMatchingPWA,
   extractChromeProfileDirectory,
+  togglePWAFlag,
+  countPWAFlags,
+  ChromeProfileOption,
+  clonePWAForProfile,
 } from './utils/pwaLogic';
 import {
   FOLDERS_STORAGE_KEY,
@@ -47,6 +51,7 @@ import { GroupManagerModal } from './components/GroupManagerModal';
 import { FolderManagerModal } from './components/FolderManagerModal';
 import { QuickAssignFolderModal } from './components/QuickAssignFolderModal';
 import { RatingConfirmModal } from './components/RatingConfirmModal';
+import { ClonePWAProfileModal } from './components/ClonePWAProfileModal';
 import { FolderUp, FolderOpen, Plus } from 'lucide-react';
 
 const STORAGE_KEY = 'chrome_pwa_hub_items_empty_v1';
@@ -137,6 +142,7 @@ export default function App() {
   const [currentExplorerFolderId, setCurrentExplorerFolderId] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [starFilter, setStarFilter] = useState<StarFilter>('all');
+  const [flagFilters, setFlagFilters] = useState<FlagFilterKey[]>([]);
   const [sortBy, setSortBy] = useState<SortOption>('pinned');
   const [groupByGroup, setGroupByGroup] = useState<boolean>(() => {
     try {
@@ -152,6 +158,8 @@ export default function App() {
   // Modals state
   const [isAddEditOpen, setIsAddEditOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<PWAItem | null>(null);
+  const [cloningItem, setCloningItem] = useState<PWAItem | null>(null);
+  const [discoveredChromeProfiles, setDiscoveredChromeProfiles] = useState<ChromeProfileOption[]>([]);
   const [isBatchEditOpen, setIsBatchEditOpen] = useState(false);
   const [isBackupOpen, setIsBackupOpen] = useState(false);
   const [isUpdateModalOpen, setIsUpdateModalOpen] = useState(false);
@@ -242,8 +250,9 @@ export default function App() {
       const mergedList = validScanned.map((scanned) => {
         const normScannedUrl = normalizeAppUrl(scanned.url);
 
-        // Find ALL previous entries that belong to this platform
+        // Find ALL previous entries that belong to this platform (never absorb profile clones)
         const matches = cleanPrev.filter((p) => {
+          if (p.clonedFromId || p.id.startsWith('pwa_clone_')) return false;
           if (p.id === scanned.id) return true;
           if (scanned.appId && p.appId && scanned.appId.toLowerCase() === p.appId.toLowerCase()) return true;
           if (scanned.desktopPath && p.desktopPath && (p.desktopPath === scanned.desktopPath || (scanned.alternateDesktopPaths || []).includes(p.desktopPath))) return true;
@@ -307,6 +316,8 @@ export default function App() {
             matches.find((m) => m.profileDirectory)?.profileDirectory ||
             extractChromeProfileDirectory(scanned);
 
+          const mergedFlags = matches.find((m) => m.flags)?.flags || scanned.flags;
+
           return {
             ...scanned,
             name: customName,
@@ -314,6 +325,7 @@ export default function App() {
             folderId: customFolderId,
             icon: finalMergedIcon,
             profileDirectory: finalProfileDirectory,
+            ...(mergedFlags ? { flags: mergedFlags } : {}),
             pinned: isAnyPinned || maxRating > 0,
             rating: maxRating,
             aliases: Array.from(allAliases).filter(Boolean),
@@ -401,6 +413,14 @@ export default function App() {
         }
       }
     })();
+    fetch('/api/chrome-profiles')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (!cancelled && data?.profiles && Array.isArray(data.profiles)) {
+          setDiscoveredChromeProfiles(data.profiles);
+        }
+      })
+      .catch(() => {});
     return () => {
       cancelled = true;
     };
@@ -554,6 +574,9 @@ export default function App() {
     return { unfiledCount: unfiled, folderItemCounts: recursiveCounts };
   }, [cleanItems, folders, validFolderIds]);
 
+  // Flag counts across all clean items
+  const flagCounts = useMemo(() => countPWAFlags(cleanItems), [cleanItems]);
+
   // Filtered and sorted items
   const displayedItems = useMemo(() => {
     const activeFolderFilter = density === 'folders' ? 'all' : selectedFolder;
@@ -570,10 +593,11 @@ export default function App() {
       validFolderIds,
       statusFilter,
       starFilter,
+      flagFilters,
       sortBy,
       todayStr,
     });
-  }, [cleanItems, folders, validFolderIds, density, selectedFolder, search, selectedGroup, statusFilter, starFilter, sortBy, todayStr]);
+  }, [cleanItems, folders, validFolderIds, density, selectedFolder, search, selectedGroup, statusFilter, starFilter, flagFilters, sortBy, todayStr]);
 
   // Today display string in full Portuguese without abbreviation ambiguities
   const todayDisplay = useMemo(() => {
@@ -634,6 +658,7 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           id: item.id,
+          clonedFromId: item.clonedFromId,
           url: item.url,
           rawFileName: item.rawFileName,
           appId: item.appId,
@@ -705,6 +730,33 @@ export default function App() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ items: [updated] }),
     }).catch(() => {});
+  }, []);
+
+  // Toggle custom icon flag (money, transfer, gold)
+  const handleToggleFlag = useCallback((item: PWAItem, flag: FlagFilterKey) => {
+    const updated = togglePWAFlag(item, flag);
+    setItems((prev) => {
+      const next = prev.map((it) => (isSameOrMatchingPWA(it, item) ? togglePWAFlag(it, flag) : it));
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+    fetch('/api/pwas/state', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ items: [updated] }),
+    }).catch(() => {});
+  }, []);
+
+  const handleToggleFlagFilter = useCallback((flag: FlagFilterKey) => {
+    setFlagFilters((prev) =>
+      prev.includes(flag) ? prev.filter((f) => f !== flag) : [...prev, flag]
+    );
+  }, []);
+
+  const handleClearFlagFilters = useCallback(() => {
+    setFlagFilters([]);
   }, []);
 
   // Request confirmation before changing rating (0 to 5 stars)
@@ -826,6 +878,35 @@ export default function App() {
         return nextList;
       });
     }
+  }, []);
+
+  // Clone PWA with a different Chrome browser profile
+  const handleClonePWA = useCallback((
+    source: PWAItem,
+    options: {
+      profileDirectory: string;
+      name: string;
+      copyNotesAndFlags: boolean;
+      keepFolderAndGroup: boolean;
+    }
+  ) => {
+    const cloned = clonePWAForProfile(source, options);
+    setItems((prev) => {
+      const idx = prev.findIndex((it) => it.id === source.id);
+      const nextList =
+        idx >= 0
+          ? [...prev.slice(0, idx + 1), cloned, ...prev.slice(idx + 1)]
+          : [cloned, ...prev];
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(nextList));
+      } catch {}
+      fetch('/api/pwas/state', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ items: [cloned] }),
+      }).catch(() => {});
+      return nextList;
+    });
   }, []);
 
   // Card selection handlers
@@ -1416,6 +1497,10 @@ export default function App() {
               onStatusFilterChange={setStatusFilter}
               starFilter={starFilter}
               onStarFilterChange={setStarFilter}
+              flagFilters={flagFilters}
+              flagCounts={flagCounts}
+              onToggleFlagFilter={handleToggleFlagFilter}
+              onClearFlagFilters={handleClearFlagFilters}
               density={density}
               onDensityChange={handleDensityChange}
               sortBy={sortBy}
@@ -1444,12 +1529,14 @@ export default function App() {
                   onLaunch={handleLaunch}
                   onToggleStatus={handleToggleStatus}
                   onUpdateNote={handleUpdateNote}
+                  onToggleFlag={handleToggleFlag}
                   onTogglePin={handleTogglePin}
                   onSetRating={handleSetRating}
                   onEdit={(item) => {
                     setEditingItem(item);
                     setIsAddEditOpen(true);
                   }}
+                  onClone={(item) => setCloningItem(item)}
                   onDelete={handleDelete}
                   onRefreshIcon={handleRefreshSingleIcon}
                   onSaveCustomIcon={handleSaveCustomIcon}
@@ -1472,12 +1559,14 @@ export default function App() {
                   onLaunch={handleLaunch}
                   onToggleStatus={handleToggleStatus}
                   onUpdateNote={handleUpdateNote}
+                  onToggleFlag={handleToggleFlag}
                   onTogglePin={handleTogglePin}
                   onSetRating={handleSetRating}
                   onEdit={(item) => {
                     setEditingItem(item);
                     setIsAddEditOpen(true);
                   }}
+                  onClone={(item) => setCloningItem(item)}
                   onDelete={handleDelete}
                 />
               )}
@@ -1489,12 +1578,14 @@ export default function App() {
                   onLaunch={handleLaunch}
                   onToggleStatus={handleToggleStatus}
                   onUpdateNote={handleUpdateNote}
+                  onToggleFlag={handleToggleFlag}
                   onTogglePin={handleTogglePin}
                   onSetRating={handleSetRating}
                   onEdit={(item) => {
                     setEditingItem(item);
                     setIsAddEditOpen(true);
                   }}
+                  onClone={(item) => setCloningItem(item)}
                   onDelete={handleDelete}
                 />
               )}
@@ -1511,12 +1602,14 @@ export default function App() {
                   onLaunch={handleLaunch}
                   onToggleStatus={handleToggleStatus}
                   onUpdateNote={handleUpdateNote}
+                  onToggleFlag={handleToggleFlag}
                   onTogglePin={handleTogglePin}
                   onSetRating={handleSetRating}
                   onEdit={(item) => {
                     setEditingItem(item);
                     setIsAddEditOpen(true);
                   }}
+                  onClone={(item) => setCloningItem(item)}
                   onDelete={handleDelete}
                   onRefreshIcon={handleRefreshSingleIcon}
                   onSaveCustomIcon={handleSaveCustomIcon}
@@ -1663,6 +1756,16 @@ export default function App() {
         newRating={pendingRatingChange?.newRating ?? 0}
         onConfirm={handleConfirmRatingChange}
         onClose={() => setPendingRatingChange(null)}
+      />
+
+      {/* Clone PWA with Different Chrome Profile Modal */}
+      <ClonePWAProfileModal
+        isOpen={cloningItem !== null}
+        sourceItem={cloningItem}
+        allItems={cleanItems}
+        discoveredProfiles={discoveredChromeProfiles}
+        onClose={() => setCloningItem(null)}
+        onConfirmClone={handleClonePWA}
       />
     </div>
   );

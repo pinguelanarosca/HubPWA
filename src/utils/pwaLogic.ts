@@ -1,4 +1,4 @@
-import { PWAItem, PWAStats, SortOption, StatusFilter } from '../types/pwa';
+import { FlagFilterKey, PWAFlags, PWAItem, PWAStats, SortOption, StatusFilter } from '../types/pwa';
 
 /**
  * Returns the date in YYYY-MM-DD format in the user's local timezone
@@ -63,11 +63,19 @@ export function isAccessedToday(
  * Compares id, appId, rawFileName, desktopPath, normalized URL, and name.
  */
 export function isSameOrMatchingPWA(
-  a: { id?: string; appId?: string; url?: string; rawFileName?: string; desktopPath?: string; name?: string },
-  b: { id?: string; appId?: string; url?: string; rawFileName?: string; desktopPath?: string; name?: string }
+  a: { id?: string; clonedFromId?: string; appId?: string; url?: string; rawFileName?: string; desktopPath?: string; name?: string },
+  b: { id?: string; clonedFromId?: string; appId?: string; url?: string; rawFileName?: string; desktopPath?: string; name?: string }
 ): boolean {
   if (!a || !b) return false;
   if (a.id && b.id && a.id === b.id) return true;
+  if (
+    a.clonedFromId ||
+    b.clonedFromId ||
+    a.id?.startsWith('pwa_clone_') ||
+    b.id?.startsWith('pwa_clone_')
+  ) {
+    return false;
+  }
   if (a.appId && b.appId && a.appId.toLowerCase() === b.appId.toLowerCase()) return true;
   if (a.rawFileName && b.rawFileName && a.rawFileName.toLowerCase() === b.rawFileName.toLowerCase()) return true;
   if (a.desktopPath && b.desktopPath && a.desktopPath === b.desktopPath) return true;
@@ -491,6 +499,7 @@ export function filterAndSortPWAs(
     validFolderIds?: Set<string>;
     statusFilter?: StatusFilter;
     starFilter?: string;
+    flagFilters?: FlagFilterKey[];
     sortBy?: SortOption;
     todayStr?: string;
   }
@@ -505,6 +514,7 @@ export function filterAndSortPWAs(
     validFolderIds,
     statusFilter = 'all',
     starFilter = 'all',
+    flagFilters = [],
     sortBy = 'pinned',
     todayStr = getTodayString(),
   } = options;
@@ -550,6 +560,15 @@ export function filterAndSortPWAs(
         if (starFilter === '4' && rating < 4) return false;
         if (starFilter === '3' && rating < 3) return false;
         if (starFilter === 'unrated' && rating > 0) return false;
+      }
+
+      // Custom icon flag filters (money, transfer arrows, gold bar)
+      if (Array.isArray(flagFilters) && flagFilters.length > 0) {
+        const flags = item.flags || {};
+        const matchesAllSelectedFlags = flagFilters.every((flagKey) => Boolean(flags[flagKey]));
+        if (!matchesAllSelectedFlags) {
+          return false;
+        }
       }
 
       // Intelligent multi-field search
@@ -644,6 +663,14 @@ export function importPWAsFromJson(rawJson: string): PWAItem[] {
         lastAccessedDate: typeof r.lastAccessedDate === 'string' ? r.lastAccessedDate : null,
         accessCount: typeof r.accessCount === 'number' ? r.accessCount : 0,
         pinned: Boolean(r.pinned),
+        flags:
+          typeof r.flags === 'object' && r.flags !== null
+            ? {
+                money: Boolean((r.flags as PWAFlags).money),
+                transfer: Boolean((r.flags as PWAFlags).transfer),
+                gold: Boolean((r.flags as PWAFlags).gold),
+              }
+            : undefined,
         createdAt: typeof r.createdAt === 'string' ? r.createdAt : new Date().toISOString(),
       };
     })
@@ -751,3 +778,174 @@ export function formatChromeProfileDisplay(item: {
   };
 }
 
+/**
+ * Toggles a specific boolean flag (money, transfer, gold) on a PWA item immutably.
+ */
+export function togglePWAFlag(item: PWAItem, flag: FlagFilterKey): PWAItem {
+  const currentFlags = item.flags || {};
+  const nextFlags: PWAFlags = {
+    ...currentFlags,
+    [flag]: !Boolean(currentFlags[flag]),
+  };
+  return {
+    ...item,
+    flags: nextFlags,
+  };
+}
+
+/**
+ * Counts how many PWAs have each flag enabled.
+ */
+export function countPWAFlags(items: PWAItem[]): Record<FlagFilterKey, number> {
+  const counts: Record<FlagFilterKey, number> = {
+    money: 0,
+    transfer: 0,
+    gold: 0,
+  };
+  for (const it of items) {
+    if (!it || !it.flags) continue;
+    if (it.flags.money) counts.money++;
+    if (it.flags.transfer) counts.transfer++;
+    if (it.flags.gold) counts.gold++;
+  }
+  return counts;
+}
+
+export interface ChromeProfileOption {
+  directory: string;
+  displayName?: string;
+}
+
+/**
+ * Normalizes a user-supplied Chrome profile input into Chrome's `--profile-directory` format.
+ * Examples:
+ * - "5" -> "Profile 5"
+ * - "perfil 3" -> "Profile 3"
+ * - "default" -> "Default"
+ * - "Profile 2" -> "Profile 2"
+ */
+export function normalizeChromeProfileInput(rawInput: string): string {
+  const trimmed = (rawInput || '').trim();
+  if (!trimmed) return '';
+  if (/^(default|padr[aã]o)$/i.test(trimmed)) return 'Default';
+  const numOnly = trimmed.match(/^(?:(?:profile|perfil)[_\s-]*)?(\d+)$/i);
+  if (numOnly) {
+    return `Profile ${numOnly[1]}`;
+  }
+  return trimmed;
+}
+
+/**
+ * Strips any trailing profile suffix like " (Perfil 2)" or " (Default)" from a PWA name
+ * so repeated clones don't stack suffixes.
+ */
+export function stripProfileSuffixFromName(name: string): string {
+  return (name || '').replace(/\s*\((?:Perfil\s+\d+|Default|Profile\s+\d+)\)\s*$/i, '').trim();
+}
+
+/**
+ * Creates an independent clone of a PWA item bound to a target Chrome profile directory.
+ * Clears `.desktop`-hardcoded paths (`rawFileName`, `desktopPath`, `execLine`, `appId`)
+ * so launches open directly with `--profile-directory="<target>" --app="<url>"`.
+ */
+export function clonePWAForProfile(
+  source: PWAItem,
+  options: {
+    profileDirectory: string;
+    name?: string;
+    copyNotesAndFlags?: boolean;
+    keepFolderAndGroup?: boolean;
+    now?: Date;
+  }
+): PWAItem {
+  const normalizedProfile = normalizeChromeProfileInput(options.profileDirectory);
+  if (!normalizedProfile) {
+    throw new Error('Perfil do navegador inválido para clonagem.');
+  }
+
+  const now = options.now || new Date();
+  const display = formatChromeProfileDisplay({ profileDirectory: normalizedProfile });
+  const baseName = stripProfileSuffixFromName(source.name) || source.name;
+  const targetName =
+    options.name && options.name.trim()
+      ? options.name.trim()
+      : `${baseName} (${display?.badgeText || normalizedProfile})`;
+
+  const copyNotesAndFlags = options.copyNotesAndFlags !== false;
+  const keepFolderAndGroup = options.keepFolderAndGroup !== false;
+  const groupName = keepFolderAndGroup ? (source.group || source.category || 'Geral') : 'Geral';
+
+  return {
+    id: `pwa_clone_${now.getTime()}_${Math.random().toString(36).substring(2, 7)}`,
+    clonedFromId: source.id,
+    name: targetName,
+    url: source.url,
+    icon: source.icon || resolveFaviconAtInsertion(source.url, undefined, baseName),
+    category: groupName,
+    group: groupName,
+    folderId: keepFolderAndGroup ? (source.folderId ?? null) : null,
+    notes: copyNotesAndFlags ? (source.notes || '') : '',
+    flags: copyNotesAndFlags && source.flags ? { ...source.flags } : undefined,
+    rating: typeof source.rating === 'number' ? source.rating : (source.pinned ? 5 : 0),
+    pinned: Boolean(source.pinned || (source.rating && source.rating > 0)),
+    profileDirectory: normalizedProfile,
+    aliases: Array.isArray(source.aliases) ? [...source.aliases] : undefined,
+    lastAccessedDate: null,
+    accessLogs: [],
+    accessCount: 0,
+    createdAt: now.toISOString(),
+  };
+}
+
+/**
+ * Builds a deduplicated, naturally sorted list of Chrome profile choices from:
+ * - Local OS discovered Chrome profiles
+ * - Profiles already detected in the user's PWAs
+ * - Standard Chrome profile slots (Default, Profile 1..8)
+ */
+export function buildAvailableChromeProfiles(
+  items: PWAItem[],
+  discovered: ChromeProfileOption[] = []
+): ChromeProfileOption[] {
+  const map = new Map<string, ChromeProfileOption>();
+
+  const upsert = (directory: string, displayName?: string) => {
+    const normalized = normalizeChromeProfileInput(directory);
+    if (!normalized) return;
+    const key = normalized.toLowerCase();
+    const existing = map.get(key);
+    if (!existing) {
+      map.set(key, { directory: normalized, displayName: displayName?.trim() || undefined });
+    } else if (displayName?.trim() && !existing.displayName) {
+      map.set(key, { directory: existing.directory, displayName: displayName.trim() });
+    }
+  };
+
+  for (const prof of discovered) {
+    if (prof?.directory) upsert(prof.directory, prof.displayName);
+  }
+
+  for (const item of items) {
+    const dir = extractChromeProfileDirectory(item);
+    if (dir) upsert(dir);
+  }
+
+  const defaults = ['Default', 'Profile 1', 'Profile 2', 'Profile 3', 'Profile 4', 'Profile 5', 'Profile 6', 'Profile 7', 'Profile 8'];
+  for (const def of defaults) {
+    upsert(def);
+  }
+
+  return Array.from(map.values()).sort((a, b) => {
+    const aDef = a.directory.toLowerCase() === 'default';
+    const bDef = b.directory.toLowerCase() === 'default';
+    if (aDef !== bDef) return aDef ? -1 : 1;
+
+    const aNum = a.directory.match(/^profile\s+(\d+)$/i);
+    const bNum = b.directory.match(/^profile\s+(\d+)$/i);
+    if (aNum && bNum) return Number(aNum[1]) - Number(bNum[1]);
+    if (aNum) return -1;
+    if (bNum) return 1;
+
+    return a.directory.localeCompare(b.directory, 'pt-BR', { sensitivity: 'base' });
+  });
+}

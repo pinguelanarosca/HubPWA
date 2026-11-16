@@ -1,8 +1,9 @@
 import React, { useRef, useEffect, useState, useMemo } from 'react';
-import { Search, X, List, Rows3, Folder, Star, Compass, Settings, FolderOpen, FolderPlus } from 'lucide-react';
-import { PWAFolder, SortOption, StatusFilter, StarFilter, ViewDensity } from '../types/pwa';
+import { Search, X, List, Rows3, Folder, Star, Compass, Settings, FolderOpen, FolderPlus, Tag } from 'lucide-react';
+import { FlagFilterKey, PWAFolder, SortOption, StatusFilter, StarFilter, ViewDensity } from '../types/pwa';
 import { getGroupTheme, GROUP_COLOR_THEMES } from '../utils/groupLogic';
 import { flattenFoldersHierarchy } from '../utils/folderLogic';
+import { FLAG_META, renderFlagIcon } from './PWAFlagsControl';
 
 interface ControlToolbarProps {
   search: string;
@@ -24,6 +25,10 @@ interface ControlToolbarProps {
   onStatusFilterChange: (status: StatusFilter) => void;
   starFilter: StarFilter;
   onStarFilterChange: (star: StarFilter) => void;
+  flagFilters?: FlagFilterKey[];
+  flagCounts?: Record<FlagFilterKey, number>;
+  onToggleFlagFilter?: (flag: FlagFilterKey) => void;
+  onClearFlagFilters?: () => void;
   density: ViewDensity;
   onDensityChange: (mode: ViewDensity) => void;
   sortBy: SortOption;
@@ -54,6 +59,10 @@ export const ControlToolbar: React.FC<ControlToolbarProps> = ({
   onStatusFilterChange,
   starFilter,
   onStarFilterChange,
+  flagFilters = [],
+  flagCounts = { money: 0, transfer: 0, gold: 0 },
+  onToggleFlagFilter,
+  onClearFlagFilters,
   density,
   onDensityChange,
   sortBy,
@@ -247,6 +256,74 @@ export const ControlToolbar: React.FC<ControlToolbarProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Marcações Filter Strip (Dinheiro, Vai e Volta, Barra de Ouro) */}
+      {onToggleFlagFilter && (
+        <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 scrollbar-none text-xs">
+          <div className="flex items-center gap-1 text-neutral-400 shrink-0 mr-1">
+            <Tag className="w-3.5 h-3.5 text-amber-400" />
+            <span className="text-xs font-semibold text-neutral-300">Marcações:</span>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => onClearFlagFilters && onClearFlagFilters()}
+            aria-pressed={flagFilters.length === 0}
+            className={`px-2.5 py-1 rounded-lg text-xs font-medium whitespace-nowrap transition-colors cursor-pointer ${
+              flagFilters.length === 0
+                ? 'bg-neutral-200 text-neutral-950 font-bold shadow-xs'
+                : 'bg-[#14151a] hover:bg-[#1f212a] text-neutral-300 hover:text-white border border-[#242633]'
+            }`}
+          >
+            Todas
+          </button>
+
+          {FLAG_META.map(({ key, label, filterActiveClass, iconColorClass }) => {
+            const isActive = flagFilters.includes(key);
+            const count = flagCounts[key] || 0;
+            return (
+              <button
+                key={key}
+                type="button"
+                onClick={() => onToggleFlagFilter(key)}
+                aria-pressed={isActive}
+                aria-label={`Filtrar por ${label}`}
+                data-testid={`filter-flag-${key}`}
+                title={`Filtrar PWAs com ${label} marcado`}
+                className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium whitespace-nowrap border transition-all cursor-pointer ${
+                  isActive
+                    ? `${filterActiveClass} font-semibold`
+                    : 'bg-[#14151a] hover:bg-[#1b1d26] text-neutral-300 hover:text-white border-[#242633]'
+                }`}
+              >
+                <span className={`inline-flex items-center ${iconColorClass}`}>
+                  {renderFlagIcon(
+                    key,
+                    key === 'gold' ? 'w-[17px] h-[12px]' : 'w-3.5 h-3.5',
+                    true
+                  )}
+                </span>
+                <span>{label}</span>
+                <span className={`text-[11px] font-mono tabular-nums ${isActive ? 'opacity-95' : 'text-neutral-500'}`}>
+                  ({count})
+                </span>
+              </button>
+            );
+          })}
+
+          {flagFilters.length > 0 && onClearFlagFilters && (
+            <button
+              type="button"
+              onClick={onClearFlagFilters}
+              className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] text-neutral-400 hover:text-white hover:bg-[#1f212a] cursor-pointer"
+              title="Limpar filtros de marcações"
+            >
+              <X className="w-3 h-3" />
+              <span>Limpar</span>
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Pastas Filter Strip (supports drag-and-drop assignment) */}
       {onFolderChange && (

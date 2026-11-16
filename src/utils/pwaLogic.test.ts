@@ -16,6 +16,13 @@ import {
   getCleanDomain,
   extractChromeProfileDirectory,
   formatChromeProfileDisplay,
+  togglePWAFlag,
+  countPWAFlags,
+  normalizeChromeProfileInput,
+  stripProfileSuffixFromName,
+  clonePWAForProfile,
+  buildAvailableChromeProfiles,
+  isSameOrMatchingPWA,
 } from './pwaLogic';
 import { PWAItem } from '../types/pwa';
 
@@ -353,4 +360,138 @@ test('extractChromeProfileDirectory and formatChromeProfileDisplay normalize Chr
   // Empty/missing profile returns null
   assert.equal(formatChromeProfileDisplay({}), null);
   assert.equal(formatChromeProfileDisplay({ profileDirectory: '   ' }), null);
+});
+
+test('togglePWAFlag, countPWAFlags, and filterAndSortPWAs handle money, transfer, and gold flags', () => {
+  const baseA: PWAItem = {
+    id: 'a',
+    name: 'App A',
+    url: 'https://a.com',
+    category: 'Geral',
+    notes: '',
+    lastAccessedDate: null,
+    accessCount: 0,
+    createdAt: '2026-11-01',
+  };
+  const baseB: PWAItem = {
+    id: 'b',
+    name: 'App B',
+    url: 'https://b.com',
+    category: 'Geral',
+    notes: '',
+    lastAccessedDate: null,
+    accessCount: 0,
+    flags: { money: false, transfer: true, gold: false },
+    createdAt: '2026-11-01',
+  };
+  const baseC: PWAItem = {
+    id: 'c',
+    name: 'App C',
+    url: 'https://c.com',
+    category: 'Geral',
+    notes: '',
+    lastAccessedDate: null,
+    accessCount: 0,
+    flags: { money: true, transfer: true, gold: true },
+    createdAt: '2026-11-01',
+  };
+
+  // Toggle money and gold on A
+  const aWithMoney = togglePWAFlag(baseA, 'money');
+  assert.equal(aWithMoney.flags?.money, true);
+  assert.equal(Boolean(aWithMoney.flags?.gold), false);
+
+  const aUnchecked = togglePWAFlag(aWithMoney, 'money');
+  assert.equal(aUnchecked.flags?.money, false);
+
+  const items = [aWithMoney, baseB, baseC];
+  const counts = countPWAFlags(items);
+  assert.deepEqual(counts, { money: 2, transfer: 2, gold: 1 });
+
+  // No flag filters -> all items
+  assert.equal(filterAndSortPWAs(items, { flagFilters: [] }).length, 3);
+
+  // Single flag filter -> money
+  const moneyOnly = filterAndSortPWAs(items, { flagFilters: ['money'] });
+  assert.deepEqual(
+    moneyOnly.map((i) => i.id).sort(),
+    ['a', 'c']
+  );
+
+  // Multiple active flag filters -> money + transfer -> only C
+  const moneyAndTransfer = filterAndSortPWAs(items, { flagFilters: ['money', 'transfer'] });
+  assert.deepEqual(
+    moneyAndTransfer.map((i) => i.id),
+    ['c']
+  );
+
+  // Gold filter -> only C
+  const goldOnly = filterAndSortPWAs(items, { flagFilters: ['gold'] });
+  assert.deepEqual(
+    goldOnly.map((i) => i.id),
+    ['c']
+  );
+});
+
+test('clonePWAForProfile creates independent PWA bound to target Chrome profile without colliding with source', () => {
+  const source: PWAItem = {
+    id: 'pwa_linear_1',
+    name: 'Linear (Perfil 1)',
+    url: 'https://linear.app',
+    icon: '/api/icon?domain=linear.app',
+    category: 'Dev & Código',
+    group: 'Dev & Código',
+    folderId: 'folder_work',
+    notes: 'Board principal',
+    flags: { money: true, transfer: false, gold: true },
+    rating: 4,
+    pinned: true,
+    profileDirectory: 'Profile 1',
+    rawFileName: 'chrome-abc-Profile_1.desktop',
+    desktopPath: '/home/user/.local/share/applications/chrome-abc-Profile_1.desktop',
+    execLine: 'google-chrome --profile-directory="Profile 1" --app-id=abc',
+    appId: 'abc',
+    lastAccessedDate: '2026-11-15T10:00:00.000Z',
+    accessCount: 12,
+    createdAt: '2026-11-01T00:00:00.000Z',
+  };
+
+  assert.equal(normalizeChromeProfileInput('5'), 'Profile 5');
+  assert.equal(normalizeChromeProfileInput('perfil 3'), 'Profile 3');
+  assert.equal(normalizeChromeProfileInput('default'), 'Default');
+  assert.equal(stripProfileSuffixFromName('Linear (Perfil 1)'), 'Linear');
+
+  const clone = clonePWAForProfile(source, {
+    profileDirectory: '5',
+    now: new Date('2026-11-16T08:00:00.000Z'),
+  });
+
+  assert.ok(clone.id.startsWith('pwa_clone_'));
+  assert.notEqual(clone.id, source.id);
+  assert.equal(clone.clonedFromId, source.id);
+  assert.equal(clone.profileDirectory, 'Profile 5');
+  assert.equal(clone.name, 'Linear (Perfil 5)');
+  assert.equal(clone.url, source.url);
+  assert.equal(clone.folderId, 'folder_work');
+  assert.equal(clone.notes, 'Board principal');
+  assert.deepEqual(clone.flags, { money: true, transfer: false, gold: true });
+  assert.equal(clone.lastAccessedDate, null);
+  assert.equal(clone.accessCount, 0);
+  // Source .desktop bindings must be stripped so launch uses target profile
+  assert.equal(clone.rawFileName, undefined);
+  assert.equal(clone.desktopPath, undefined);
+  assert.equal(clone.execLine, undefined);
+  assert.equal(clone.appId, undefined);
+
+  // Clone and source must NOT collide in isSameOrMatchingPWA even though URL matches
+  assert.equal(isSameOrMatchingPWA(source, clone), false);
+  assert.equal(isSameOrMatchingPWA(clone, clone), true);
+
+  // Build available profiles merges discovered names + item profiles + defaults sorted cleanly
+  const available = buildAvailableChromeProfiles([source, clone], [
+    { directory: 'Profile 2', displayName: 'Trabalho' },
+  ]);
+  assert.equal(available[0].directory, 'Default');
+  const p2 = available.find((p) => p.directory === 'Profile 2');
+  assert.equal(p2?.displayName, 'Trabalho');
 });

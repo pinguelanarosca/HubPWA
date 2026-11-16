@@ -1,12 +1,13 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { PWAFolder, PWAItem } from '../types/pwa';
+import { FlagFilterKey, PWAFolder, PWAItem } from '../types/pwa';
 import { PWAIcon } from './PWAIcon';
 import { InlineNoteInput } from './InlineNoteInput';
 import { StarRating } from './StarRating';
+import { PWAFlagsControl } from './PWAFlagsControl';
 import { isAccessedToday, formatAccessLogDash, formatChromeProfileDisplay } from '../utils/pwaLogic';
 import { getGroupTheme } from '../utils/groupLogic';
 import { flattenFoldersHierarchy } from '../utils/folderLogic';
-import { Check, CheckCircle2, Clock, MoreVertical, Edit2, Trash2, Folder, ExternalLink, RotateCw, Upload, FolderInput, ChevronRight, User } from 'lucide-react';
+import { Check, CheckCircle2, Clock, MoreVertical, Edit2, Trash2, Folder, ExternalLink, RotateCw, Upload, FolderInput, ChevronRight, User, Copy } from 'lucide-react';
 
 interface CardsViewProps {
   items: PWAItem[];
@@ -19,9 +20,11 @@ interface CardsViewProps {
   onLaunch: (item: PWAItem) => void;
   onToggleStatus: (item: PWAItem) => void;
   onUpdateNote: (item: PWAItem, newNote: string) => void;
+  onToggleFlag?: (item: PWAItem, flag: FlagFilterKey) => void;
   onTogglePin?: (item: PWAItem) => void;
   onSetRating?: (item: PWAItem, rating: number) => void;
   onEdit: (item: PWAItem) => void;
+  onClone?: (item: PWAItem) => void;
   onDelete: (id: string) => void;
   onRefreshIcon?: (item: PWAItem) => void;
   onSaveCustomIcon?: (item: PWAItem, iconDataUrl: string) => void;
@@ -40,8 +43,10 @@ export const CardsView: React.FC<CardsViewProps> = ({
   onLaunch,
   onToggleStatus,
   onUpdateNote,
+  onToggleFlag,
   onSetRating,
   onEdit,
+  onClone,
   onDelete,
   onRefreshIcon,
   onSaveCustomIcon,
@@ -96,16 +101,16 @@ export const CardsView: React.FC<CardsViewProps> = ({
           e.dataTransfer.setData('text/pwa-id', item.id);
           e.dataTransfer.effectAllowed = 'move';
         }}
-        className={`group relative p-3.5 rounded-xl border bg-[#14151a] hover:bg-[#181920] transition-all flex flex-col justify-between shadow-sm hover:shadow-md hover:border-t-neutral-600 hover:border-r-neutral-600 hover:border-b-neutral-600 ${
+        className={`group relative p-3.5 rounded-xl bg-[#14151a] hover:bg-[#181920] transition-all flex flex-col justify-between ${
           activeMenuId === item.id ? 'z-30' : ''
         } ${
           isAccessed
-            ? 'border-l-4 border-l-emerald-500 hover:border-l-emerald-500 border-t border-r border-b border-[#242633]'
-            : 'border-l-4 border-l-rose-500 hover:border-l-rose-500 border-t border-r border-b border-[#242633]'
-        } ${isSelected ? 'ring-2 ring-emerald-500/80 bg-[#1a1c24]' : ''}`}
+            ? 'border-2 border-emerald-500/80 hover:border-emerald-400 shadow-[0_0_18px_-6px_rgba(16,185,129,0.45),inset_0_0_16px_-12px_rgba(16,185,129,0.28)]'
+            : 'border-2 border-rose-500/75 hover:border-rose-400 shadow-[0_0_18px_-6px_rgba(244,63,94,0.42),inset_0_0_16px_-12px_rgba(244,63,94,0.24)]'
+        } ${isSelected ? 'ring-2 ring-emerald-400 bg-[#1a1c24]' : ''}`}
       >
         {/* Inner Clipped Wrapper for Ambient Background Glows */}
-        <div className="absolute inset-0 overflow-hidden rounded-xl pointer-events-none">
+        <div className="absolute inset-0 overflow-hidden rounded-[10px] pointer-events-none">
           {/* Translucent Top Edge Accent Bar for Group Identification */}
           <div
             className={`absolute top-0 left-0 right-0 h-0.5 ${groupTheme.accentBar} opacity-80 group-hover:opacity-100 transition-opacity`}
@@ -249,6 +254,20 @@ export const CardsView: React.FC<CardsViewProps> = ({
                       <Edit2 className="w-3.5 h-3.5 text-neutral-400" />
                       <span>Editar PWA</span>
                     </button>
+                    {onClone && (
+                      <button
+                        type="button"
+                        data-testid={`clone-pwa-menu-btn-${item.id}`}
+                        onClick={() => {
+                          setActiveMenuId(null);
+                          onClone(item);
+                        }}
+                        className="w-full px-3 py-1.5 text-left hover:bg-neutral-800 flex items-center gap-2 cursor-pointer text-sky-300 font-medium"
+                      >
+                        <Copy className="w-3.5 h-3.5 text-sky-400" />
+                        <span>Clonar para outro Perfil</span>
+                      </button>
+                    )}
                     <button
                       type="button"
                       onClick={() => {
@@ -427,6 +446,13 @@ export const CardsView: React.FC<CardsViewProps> = ({
                   compact={false}
                 />
               </div>
+
+              {/* 4. Checkable Icons Below Notes (Money, Going/Returning Arrows, Gold Bar) */}
+              {onToggleFlag && (
+                <div className="mt-2.5">
+                  <PWAFlagsControl item={item} onToggleFlag={onToggleFlag} />
+                </div>
+              )}
             </div>
           </div>
         </div>

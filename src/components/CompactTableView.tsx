@@ -1,11 +1,12 @@
 import React, { useMemo } from 'react';
-import { Trash2, Edit2, User, Clock, Folder } from 'lucide-react';
-import { PWAFolder, PWAItem } from '../types/pwa';
+import { Trash2, Edit2, User, Clock, Folder, Copy } from 'lucide-react';
+import { FlagFilterKey, PWAFolder, PWAItem } from '../types/pwa';
 import { PWAIcon } from './PWAIcon';
 import { StatusIndicator } from './StatusIndicator';
 import { InlineNoteInput } from './InlineNoteInput';
 import { StarRating } from './StarRating';
-import { getCleanDomain, formatAccessDateTime, formatChromeProfileDisplay } from '../utils/pwaLogic';
+import { PWAFlagsControl } from './PWAFlagsControl';
+import { getCleanDomain, formatAccessDateTime, formatChromeProfileDisplay, isAccessedToday } from '../utils/pwaLogic';
 
 interface CompactTableViewProps {
   items: PWAItem[];
@@ -14,9 +15,11 @@ interface CompactTableViewProps {
   onLaunch: (item: PWAItem) => void;
   onToggleStatus: (item: PWAItem) => void;
   onUpdateNote: (item: PWAItem, newNote: string) => void;
+  onToggleFlag?: (item: PWAItem, flag: FlagFilterKey) => void;
   onTogglePin: (item: PWAItem) => void;
   onSetRating?: (item: PWAItem, rating: number) => void;
   onEdit: (item: PWAItem) => void;
+  onClone?: (item: PWAItem) => void;
   onDelete: (id: string) => void;
 }
 
@@ -27,9 +30,11 @@ export const CompactTableView: React.FC<CompactTableViewProps> = ({
   onLaunch,
   onToggleStatus,
   onUpdateNote,
+  onToggleFlag,
   onTogglePin,
   onSetRating,
   onEdit,
+  onClone,
   onDelete,
 }) => {
   const folderMap = useMemo(() => new Map(folders.map((f) => [f.id, f])), [folders]);
@@ -52,7 +57,8 @@ export const CompactTableView: React.FC<CompactTableViewProps> = ({
             <th className="py-2 px-3 w-32">Status Hoje</th>
             <th className="py-2 px-3 w-44">Log de Acesso (Data/Hora)</th>
             <th className="py-2 px-3 min-w-[200px]">PWA & Domínio</th>
-            <th className="py-2 px-3 min-w-[240px]">Anotações (Clique para editar)</th>
+            <th className="py-2 px-3 min-w-[200px]">Anotações (Clique para editar)</th>
+            {onToggleFlag && <th className="py-2 px-3 w-48">Marcações</th>}
             <th className="py-2 px-3 w-20 text-right">Ações</th>
           </tr>
         </thead>
@@ -63,11 +69,14 @@ export const CompactTableView: React.FC<CompactTableViewProps> = ({
             const accessLog = formatAccessDateTime(item.lastAccessedDate);
             const assignedFolder = item.folderId ? folderMap.get(item.folderId) : null;
             const chromeProfile = formatChromeProfileDisplay(item);
+            const accessed = isAccessedToday(item.lastAccessedDate, todayStr);
 
             return (
               <tr
                 key={item.id}
-                className="group hover:bg-neutral-900/50 transition-colors h-9"
+                className={`group hover:bg-neutral-900/50 transition-colors h-9 border-l-[3px] ${
+                  accessed ? 'border-l-emerald-500' : 'border-l-rose-500'
+                }`}
               >
                 {/* 1 to 5 Star Rating + Chrome Profile */}
                 <td className="py-1 px-3 whitespace-nowrap">
@@ -179,9 +188,27 @@ export const CompactTableView: React.FC<CompactTableViewProps> = ({
                   />
                 </td>
 
-                {/* Ações: Editar e Excluir */}
+                {/* Checkable Flag Icons */}
+                {onToggleFlag && (
+                  <td className="py-1 px-3 whitespace-nowrap">
+                    <PWAFlagsControl item={item} onToggleFlag={onToggleFlag} compact={true} />
+                  </td>
+                )}
+
+                {/* Ações: Clonar, Editar e Excluir */}
                 <td className="py-1 px-3 text-right whitespace-nowrap">
                   <div className="flex items-center justify-end gap-1 opacity-80 group-hover:opacity-100 transition-opacity">
+                    {onClone && (
+                      <button
+                        type="button"
+                        onClick={() => onClone(item)}
+                        title={`Clonar ${item.name} para outro Perfil`}
+                        aria-label={`Clonar ${item.name} para outro Perfil`}
+                        className="p-1 rounded text-neutral-400 hover:text-sky-300 hover:bg-sky-950/40 transition-colors cursor-pointer"
+                      >
+                        <Copy className="w-3.5 h-3.5" />
+                      </button>
+                    )}
                     <button
                       type="button"
                       onClick={() => onEdit(item)}

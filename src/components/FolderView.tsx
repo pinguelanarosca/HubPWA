@@ -13,7 +13,7 @@ import {
   CheckCircle2,
   Clock,
 } from 'lucide-react';
-import { PWAFolder, PWAItem } from '../types/pwa';
+import { FlagFilterKey, PWAFolder, PWAItem } from '../types/pwa';
 import { PWAIcon } from './PWAIcon';
 import { CardsView } from './CardsView';
 import { GROUP_COLOR_THEMES } from '../utils/groupLogic';
@@ -33,9 +33,11 @@ interface FolderViewProps {
   onLaunch: (item: PWAItem) => void;
   onToggleStatus: (item: PWAItem) => void;
   onUpdateNote: (item: PWAItem, newNote: string) => void;
+  onToggleFlag?: (item: PWAItem, flag: FlagFilterKey) => void;
   onTogglePin?: (item: PWAItem) => void;
   onSetRating?: (item: PWAItem, rating: number) => void;
   onEdit: (item: PWAItem) => void;
+  onClone?: (item: PWAItem) => void;
   onDelete: (id: string) => void;
   onRefreshIcon?: (item: PWAItem) => void;
   onSaveCustomIcon?: (item: PWAItem, iconDataUrl: string) => void;
@@ -60,9 +62,11 @@ export const FolderView: React.FC<FolderViewProps> = ({
   onLaunch,
   onToggleStatus,
   onUpdateNote,
+  onToggleFlag,
   onTogglePin,
   onSetRating,
   onEdit,
+  onClone,
   onDelete,
   onRefreshIcon,
   onSaveCustomIcon,
@@ -503,9 +507,11 @@ export const FolderView: React.FC<FolderViewProps> = ({
             onLaunch={onLaunch}
             onToggleStatus={onToggleStatus}
             onUpdateNote={onUpdateNote}
+            onToggleFlag={onToggleFlag}
             onTogglePin={onTogglePin}
             onSetRating={onSetRating}
             onEdit={onEdit}
+            onClone={onClone}
             onDelete={onDelete}
             onRefreshIcon={onRefreshIcon}
             onSaveCustomIcon={onSaveCustomIcon}

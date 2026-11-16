@@ -1,10 +1,11 @@
 import React from 'react';
-import { ExternalLink, Trash2, Edit2, User, Clock } from 'lucide-react';
-import { PWAItem } from '../types/pwa';
+import { ExternalLink, Trash2, Edit2, User, Clock, Copy } from 'lucide-react';
+import { FlagFilterKey, PWAItem } from '../types/pwa';
 import { PWAIcon } from './PWAIcon';
 import { StatusIndicator } from './StatusIndicator';
 import { InlineNoteInput } from './InlineNoteInput';
 import { StarRating } from './StarRating';
+import { PWAFlagsControl } from './PWAFlagsControl';
 import { isAccessedToday, getCleanDomain, formatAccessDateTime, formatChromeProfileDisplay } from '../utils/pwaLogic';
 
 interface DenseGridViewProps {
@@ -13,9 +14,11 @@ interface DenseGridViewProps {
   onLaunch: (item: PWAItem) => void;
   onToggleStatus: (item: PWAItem) => void;
   onUpdateNote: (item: PWAItem, newNote: string) => void;
+  onToggleFlag?: (item: PWAItem, flag: FlagFilterKey) => void;
   onTogglePin: (item: PWAItem) => void;
   onSetRating?: (item: PWAItem, rating: number) => void;
   onEdit: (item: PWAItem) => void;
+  onClone?: (item: PWAItem) => void;
   onDelete: (id: string) => void;
 }
 
@@ -25,9 +28,11 @@ export const DenseGridView: React.FC<DenseGridViewProps> = ({
   onLaunch,
   onToggleStatus,
   onUpdateNote,
+  onToggleFlag,
   onTogglePin,
   onSetRating,
   onEdit,
+  onClone,
   onDelete,
 }) => {
   if (items.length === 0) {
@@ -51,10 +56,10 @@ export const DenseGridView: React.FC<DenseGridViewProps> = ({
         return (
           <div
             key={item.id}
-            className={`group relative flex flex-col justify-between p-2.5 rounded-lg border bg-neutral-900/40 hover:bg-neutral-900/80 transition-all ${
+            className={`group relative flex flex-col justify-between p-2.5 rounded-lg border-2 bg-neutral-900/40 hover:bg-neutral-900/80 transition-all ${
               accessed
-                ? 'border-neutral-800/80 hover:border-emerald-700/50'
-                : 'border-neutral-800/80 hover:border-rose-700/50'
+                ? 'border-emerald-500/80 hover:border-emerald-400 shadow-[0_0_14px_-5px_rgba(16,185,129,0.35)]'
+                : 'border-rose-500/75 hover:border-rose-400 shadow-[0_0_14px_-5px_rgba(244,63,94,0.32)]'
             }`}
           >
             {/* Header: Icon, Name, Pin/Rating, Status */}
@@ -167,11 +172,29 @@ export const DenseGridView: React.FC<DenseGridViewProps> = ({
                   compact={false}
                 />
               </div>
+
+              {onToggleFlag && (
+                <div className="mb-1.5">
+                  <PWAFlagsControl item={item} onToggleFlag={onToggleFlag} compact={true} />
+                </div>
+              )}
             </div>
 
             {/* Bottom Actions: Editar, Excluir, Abrir */}
             <div className="flex items-center justify-between pt-1 border-t border-neutral-800/60 mt-1 gap-1">
               <div className="flex items-center gap-1">
+                {onClone && (
+                  <button
+                    type="button"
+                    onClick={() => onClone(item)}
+                    title={`Clonar ${item.name} para outro Perfil`}
+                    aria-label={`Clonar ${item.name} para outro Perfil`}
+                    className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-neutral-400 hover:text-sky-300 hover:bg-sky-950/40 text-[10px] font-medium transition-colors cursor-pointer"
+                  >
+                    <Copy className="w-3 h-3" />
+                    <span>Clonar</span>
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => onEdit(item)}

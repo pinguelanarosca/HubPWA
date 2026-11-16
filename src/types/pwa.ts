@@ -6,6 +6,14 @@ export interface PWAFolder {
   createdAt: string;
 }
 
+export interface PWAFlags {
+  money?: boolean;
+  transfer?: boolean;
+  gold?: boolean;
+}
+
+export type FlagFilterKey = 'money' | 'transfer' | 'gold';
+
 export interface PWAItem {
   id: string;
   name: string;
@@ -20,6 +28,8 @@ export interface PWAItem {
   accessCount: number;
   pinned?: boolean;
   rating?: number; // 0 to 5 stars (0 = sem estrelas, 1 a 5)
+  flags?: PWAFlags;
+  clonedFromId?: string;
   createdAt: string;
   rawFileName?: string;
   appId?: string;

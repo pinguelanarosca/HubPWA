@@ -42,6 +42,12 @@ interface ServerPWAState {
   group?: string;
   folderId?: string | null;
   aliases?: string[];
+  flags?: {
+    money?: boolean;
+    transfer?: boolean;
+    gold?: boolean;
+  };
+  clonedFromId?: string;
   lastAccessedDate?: string | null;
   accessCount?: number;
   updatedAt?: string;
@@ -106,7 +112,7 @@ function saveServerDb(db: ServerDb) {
 }
 
 function findStoredState(
-  item: { id?: string; appId?: string; url?: string; rawFileName?: string; name?: string },
+  item: { id?: string; clonedFromId?: string; appId?: string; url?: string; rawFileName?: string; name?: string },
   db: ServerDb
 ): ServerPWAState | null {
   if (!db || !db.pwas) return null;
@@ -114,6 +120,11 @@ function findStoredState(
   // 1. Direct ID match
   if (item.id && db.pwas[item.id]) {
     return db.pwas[item.id];
+  }
+
+  // Cloned profile PWAs share URL with the original PWA, so never fall back to url/appId
+  if (item.clonedFromId || item.id?.startsWith('pwa_clone_')) {
+    return null;
   }
 
   // 2. Exact appId match
@@ -732,6 +743,15 @@ app.post('/api/pwas/state', (req, res) => {
           appId: item.appId,
           profileDirectory: item.profileDirectory,
           aliases: Array.isArray(item.aliases) ? item.aliases : undefined,
+          flags:
+            item.flags && typeof item.flags === 'object'
+              ? {
+                  money: Boolean(item.flags.money),
+                  transfer: Boolean(item.flags.transfer),
+                  gold: Boolean(item.flags.gold),
+                }
+              : db.pwas[item.id]?.flags,
+          clonedFromId: item.clonedFromId || db.pwas[item.id]?.clonedFromId,
           notes: item.notes || '',
           rating: typeof item.rating === 'number' ? item.rating : (item.pinned ? 5 : 0),
           pinned: Boolean(item.pinned || (item.rating && item.rating > 0)),
@@ -806,7 +826,7 @@ app.post('/api/launch-pwa', (req, res) => {
     const seconds = String(now.getSeconds()).padStart(2, '0');
     localTimeStr = `${effectiveToday}T${hours}:${minutes}:${seconds}.000Z`;
 
-    const matched = findStoredState({ id, appId, url, rawFileName }, db);
+    const matched = findStoredState({ id, clonedFromId: req.body?.clonedFromId, appId, url, rawFileName }, db);
     const key = id || (matched ? matched.id : `pwa_${(appId || (rawFileName ? rawFileName.replace(/\.desktop$/i, '') : Date.now().toString())).toLowerCase().replace(/[^a-z0-9]/g, '_')}`);
 
     db.pwas[key] = {
@@ -815,6 +835,7 @@ app.post('/api/launch-pwa', (req, res) => {
       url: url || (matched ? matched.url : ''),
       appId: appId || (matched ? matched.appId : undefined),
       rawFileName: rawFileName || (matched ? matched.rawFileName : undefined),
+      profileDirectory: profileDirectory || (matched ? matched.profileDirectory : undefined),
       lastAccessedDate: localTimeStr,
       accessCount: ((matched && matched.accessCount) || 0) + 1,
       updatedAt: now.toISOString(),
@@ -915,6 +936,67 @@ app.post('/api/autostart/enable', (_req, res) => {
 app.post('/api/autostart/disable', (_req, res) => {
   const result = disableAutostartOnUbuntu();
   res.json(result);
+});
+
+// GET /api/chrome-profiles - Discover Chrome/Chromium profile directories and display names on Linux/Ubuntu
+app.get('/api/chrome-profiles', (_req, res) => {
+  try {
+    const discovered = new Map<string, { directory: string; displayName?: string }>();
+    if (process.platform === 'linux') {
+      const homeDir = process.env.HOME || os.homedir();
+      const configRoots = [
+        path.join(homeDir, '.config/google-chrome'),
+        path.join(homeDir, '.config/google-chrome-beta'),
+        path.join(homeDir, '.config/chromium'),
+      ];
+
+      for (const root of configRoots) {
+        if (!fs.existsSync(root)) continue;
+        const localStatePath = path.join(root, 'Local State');
+        if (fs.existsSync(localStatePath)) {
+          try {
+            const stateJson = JSON.parse(fs.readFileSync(localStatePath, 'utf-8'));
+            const infoCache = stateJson?.profile?.info_cache;
+            if (infoCache && typeof infoCache === 'object') {
+              for (const [dirName, meta] of Object.entries(infoCache)) {
+                const m = meta as { name?: string; gaia_name?: string; user_name?: string } | null;
+                const label = m?.name || m?.gaia_name || m?.user_name || '';
+                if (dirName && !discovered.has(dirName)) {
+                  discovered.set(dirName, {
+                    directory: dirName,
+                    displayName: label ? String(label).trim() : undefined,
+                  });
+                }
+              }
+            }
+          } catch {
+            // ignore malformed Local State
+          }
+        }
+
+        try {
+          const entries = fs.readdirSync(root, { withFileTypes: true });
+          for (const entry of entries) {
+            if (!entry.isDirectory()) continue;
+            if (entry.name === 'Default' || /^Profile\s+\d+$/i.test(entry.name)) {
+              if (!discovered.has(entry.name)) {
+                discovered.set(entry.name, { directory: entry.name });
+              }
+            }
+          }
+        } catch {
+          // ignore unreadable dir
+        }
+      }
+    }
+
+    return res.json({
+      success: true,
+      profiles: Array.from(discovered.values()),
+    });
+  } catch (err) {
+    return res.json({ success: false, profiles: [], error: (err as Error).message });
+  }
 });
 
 // 1. GET /api/updater/status - Check local vs remote GitHub repository
