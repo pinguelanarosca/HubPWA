@@ -74,7 +74,7 @@ export interface ParsedDesktopApp {
   iconHash?: string;
 }
 
-export type ViewDensity = 'compact-table' | 'dense-grid' | 'cards' | 'folders';
+export type ViewDensity = 'compact-table' | 'dense-grid' | 'cards' | 'mini-cards' | 'folders';
 
 export type StatusFilter = 'all' | 'pending' | 'accessed';
 

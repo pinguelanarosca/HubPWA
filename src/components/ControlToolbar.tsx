@@ -23,6 +23,7 @@ import {
   Trash2,
   Eraser,
   Check,
+  LayoutGrid,
 } from 'lucide-react';
 import { DailyFlagKey, FlagFilterKey, PWAFolder, SortOption, StatusFilter, StarFilter, ViewDensity } from '../types/pwa';
 import { getGroupTheme, GROUP_COLOR_THEMES } from '../utils/groupLogic';
@@ -300,6 +301,21 @@ export const ControlToolbar: React.FC<ControlToolbarProps> = ({
             >
               <Rows3 className="w-3.5 h-3.5" />
               <span className="hidden sm:inline">Cards</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => onDensityChange('mini-cards')}
+              data-testid="view-mode-mini-cards"
+              title="Visualização em Mini Card (Ícone, Nome e Marcações)"
+              aria-label="Mini Card"
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs transition-colors cursor-pointer whitespace-nowrap ${
+                density === 'mini-cards'
+                  ? 'bg-emerald-500 text-neutral-950 font-bold shadow-xs'
+                  : 'text-neutral-400 hover:text-white'
+              }`}
+            >
+              <LayoutGrid className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Mini Card</span>
             </button>
             <button
               type="button"

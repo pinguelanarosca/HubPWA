@@ -45,6 +45,7 @@ import { ControlToolbar } from './components/ControlToolbar';
 import { CompactTableView } from './components/CompactTableView';
 import { DenseGridView } from './components/DenseGridView';
 import { CardsView } from './components/CardsView';
+import { MiniCardsView } from './components/MiniCardsView';
 import { FolderView } from './components/FolderView';
 import { BatchActionsBar } from './components/BatchActionsBar';
 import { BatchEditModal } from './components/BatchEditModal';
@@ -137,7 +138,7 @@ export default function App() {
   const [density, setDensity] = useState<ViewDensity>(() => {
     try {
       const saved = localStorage.getItem(DENSITY_STORAGE_KEY) as ViewDensity;
-      if (saved === 'compact-table' || saved === 'dense-grid' || saved === 'cards' || saved === 'folders') {
+      if (saved === 'compact-table' || saved === 'dense-grid' || saved === 'cards' || saved === 'mini-cards' || saved === 'folders') {
         return saved;
       }
     } catch {
@@ -1766,6 +1767,18 @@ export default function App() {
                   }}
                   onClone={(item) => setCloningItem(item)}
                   onDelete={handleDelete}
+                />
+              )}
+
+              {density === 'mini-cards' && (
+                <MiniCardsView
+                  items={displayedItems}
+                  todayStr={todayStr}
+                  selectedIds={selectedIds}
+                  onLaunch={handleLaunch}
+                  onToggleFlag={handleToggleFlag}
+                  onUpdateMoneyDate={handleUpdateMoneyDate}
+                  groupByGroup={groupByGroup}
                 />
               )}
 

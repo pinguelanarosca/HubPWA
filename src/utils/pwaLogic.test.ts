@@ -517,13 +517,20 @@ test('getScopedSelectableItems selects only cards in current folder or only unfi
   });
   assert.deepEqual(atRoot.map((i) => i.id), ['u1', 'u2']);
 
-  // In 'cards' view -> returns all displayedItems (already filtered by selectedFolder)
+  // In 'cards' or 'mini-cards' view -> returns all displayedItems (already filtered by selectedFolder)
   const inCards = getScopedSelectableItems(allDisplayed, {
     density: 'cards',
     folders,
     currentFolderId: 'f_games',
   });
   assert.equal(inCards.length, 5);
+
+  const inMiniCards = getScopedSelectableItems(allDisplayed, {
+    density: 'mini-cards',
+    folders,
+    currentFolderId: 'f_games',
+  });
+  assert.equal(inMiniCards.length, 5);
 });
 
 test('clonePWAForProfile creates independent PWA bound to target Chrome profile without colliding with source', () => {
