@@ -17,7 +17,18 @@ import {
   extractChromeProfileDirectory,
   formatChromeProfileDisplay,
   togglePWAFlag,
+  updatePWAMoneyDate,
+  isPWAFlagActive,
   countPWAFlags,
+  sanitizeDayMonthTyping,
+  normalizeDayMonthOnBlur,
+  getMsUntilNextMidnight,
+  getScopedSelectableItems,
+  migratePWAFlags,
+  batchSetRating,
+  batchSetStatus,
+  batchSetDailyFlag,
+  batchClearFlags,
   normalizeChromeProfileInput,
   stripProfileSuffixFromName,
   clonePWAForProfile,
@@ -362,7 +373,22 @@ test('extractChromeProfileDirectory and formatChromeProfileDisplay normalize Chr
   assert.equal(formatChromeProfileDisplay({ profileDirectory: '   ' }), null);
 });
 
-test('togglePWAFlag, countPWAFlags, and filterAndSortPWAs handle money, transfer, and gold flags', () => {
+test('moneyDate persists across midnight while COM, RB, and BON selections reset automatically on day rollover', () => {
+  const today = '2026-11-16';
+  const tomorrow = '2026-11-17';
+
+  // Day/month typing & blur normalization
+  assert.equal(sanitizeDayMonthTyping('1611'), '16/11');
+  assert.equal(sanitizeDayMonthTyping('16/'), '16/');
+  assert.equal(normalizeDayMonthOnBlur('5/9'), '05/09');
+  assert.equal(normalizeDayMonthOnBlur('35/15'), '31/12');
+
+  // Legacy rdDate/irbDate migration to rbDate/bonDate
+  assert.deepEqual(
+    migratePWAFlags({ moneyDate: '5/9', comDate: today, rdDate: today, irbDate: null }),
+    { moneyDate: '05/09', comDate: today, rbDate: today, bonDate: null }
+  );
+
   const baseA: PWAItem = {
     id: 'a',
     name: 'App A',
@@ -381,7 +407,7 @@ test('togglePWAFlag, countPWAFlags, and filterAndSortPWAs handle money, transfer
     notes: '',
     lastAccessedDate: null,
     accessCount: 0,
-    flags: { money: false, transfer: true, gold: false },
+    flags: { moneyDate: '04/11', comDate: today, rbDate: null, bonDate: null },
     createdAt: '2026-11-01',
   };
   const baseC: PWAItem = {
@@ -392,45 +418,112 @@ test('togglePWAFlag, countPWAFlags, and filterAndSortPWAs handle money, transfer
     notes: '',
     lastAccessedDate: null,
     accessCount: 0,
-    flags: { money: true, transfer: true, gold: true },
+    flags: { comDate: today, rbDate: today, bonDate: today },
     createdAt: '2026-11-01',
   };
 
-  // Toggle money and gold on A
-  const aWithMoney = togglePWAFlag(baseA, 'money');
-  assert.equal(aWithMoney.flags?.money, true);
-  assert.equal(Boolean(aWithMoney.flags?.gold), false);
+  // Update persistent DD/MM date and toggle COM / BON on App A for today
+  const aDated = updatePWAMoneyDate(baseA, '16/11');
+  const aWithCom = togglePWAFlag(aDated, 'com', today);
+  const aWithComBon = togglePWAFlag(aWithCom, 'bon', today);
 
-  const aUnchecked = togglePWAFlag(aWithMoney, 'money');
-  assert.equal(aUnchecked.flags?.money, false);
+  assert.equal(aWithComBon.flags?.moneyDate, '16/11');
+  assert.equal(aWithComBon.flags?.comDate, today);
+  assert.equal(aWithComBon.flags?.bonDate, today);
+  assert.equal(isPWAFlagActive(aWithComBon, 'com', today), true);
+  assert.equal(isPWAFlagActive(aWithComBon, 'rb', today), false);
+  assert.equal(isPWAFlagActive(aWithComBon, 'bon', today), true);
+  assert.equal(isPWAFlagActive(aWithComBon, 'moneyDate', today), true);
 
-  const items = [aWithMoney, baseB, baseC];
-  const counts = countPWAFlags(items);
-  assert.deepEqual(counts, { money: 2, transfer: 2, gold: 1 });
+  // Untoggle COM -> clears today's selection
+  const aWithoutCom = togglePWAFlag(aWithComBon, 'com', today);
+  assert.equal(aWithoutCom.flags?.comDate, null);
+  assert.equal(isPWAFlagActive(aWithoutCom, 'com', today), false);
 
-  // No flag filters -> all items
-  assert.equal(filterAndSortPWAs(items, { flagFilters: [] }).length, 3);
+  const items = [aWithComBon, baseB, baseC];
+  assert.deepEqual(countPWAFlags(items, today), {
+    moneyDate: 2,
+    com: 3,
+    rb: 1,
+    bon: 2,
+  });
 
-  // Single flag filter -> money
-  const moneyOnly = filterAndSortPWAs(items, { flagFilters: ['money'] });
+  // Filtering on today
   assert.deepEqual(
-    moneyOnly.map((i) => i.id).sort(),
-    ['a', 'c']
+    filterAndSortPWAs(items, { flagFilters: ['moneyDate'], todayStr: today }).map((i) => i.id).sort(),
+    ['a', 'b']
   );
-
-  // Multiple active flag filters -> money + transfer -> only C
-  const moneyAndTransfer = filterAndSortPWAs(items, { flagFilters: ['money', 'transfer'] });
   assert.deepEqual(
-    moneyAndTransfer.map((i) => i.id),
+    filterAndSortPWAs(items, { flagFilters: ['com', 'rb'], todayStr: today }).map((i) => i.id),
     ['c']
   );
 
-  // Gold filter -> only C
-  const goldOnly = filterAndSortPWAs(items, { flagFilters: ['gold'] });
-  assert.deepEqual(
-    goldOnly.map((i) => i.id),
-    ['c']
-  );
+  // Midnight rollover to tomorrow: COM, RB, BON selections vanish automatically, moneyDate stays!
+  assert.equal(isPWAFlagActive(aWithComBon, 'com', tomorrow), false);
+  assert.equal(isPWAFlagActive(aWithComBon, 'bon', tomorrow), false);
+  assert.equal(isPWAFlagActive(aWithComBon, 'moneyDate', tomorrow), true);
+  assert.equal(aWithComBon.flags?.moneyDate, '16/11');
+  assert.deepEqual(countPWAFlags(items, tomorrow), {
+    moneyDate: 2,
+    com: 0,
+    rb: 0,
+    bon: 0,
+  });
+  assert.equal(filterAndSortPWAs(items, { flagFilters: ['com'], todayStr: tomorrow }).length, 0);
+  assert.equal(filterAndSortPWAs(items, { flagFilters: ['moneyDate'], todayStr: tomorrow }).length, 2);
+});
+
+test('getMsUntilNextMidnight calculates positive duration to local midnight', () => {
+  const beforeMidnight = new Date(2026, 10, 16, 23, 59, 30, 0);
+  const ms = getMsUntilNextMidnight(beforeMidnight);
+  assert.equal(ms, 30100);
+});
+
+test('getScopedSelectableItems selects only cards in current folder or only unfiled cards at root', () => {
+  const mkItem = (id: string, folderId: string | null): PWAItem => ({
+    id,
+    name: `App ${id}`,
+    url: `https://${id}.com`,
+    category: 'Geral',
+    folderId,
+    notes: '',
+    lastAccessedDate: null,
+    accessCount: 0,
+    createdAt: '2026-11-01',
+  });
+
+  const folders = [{ id: 'f_games' }, { id: 'f_work' }];
+  const allDisplayed = [
+    mkItem('u1', null),
+    mkItem('u2', 'deleted_folder'),
+    mkItem('g1', 'f_games'),
+    mkItem('g2', 'f_games'),
+    mkItem('w1', 'f_work'),
+  ];
+
+  // Inside folder f_games in 'folders' view -> ONLY g1, g2
+  const inGamesFolder = getScopedSelectableItems(allDisplayed, {
+    density: 'folders',
+    folders,
+    currentFolderId: 'f_games',
+  });
+  assert.deepEqual(inGamesFolder.map((i) => i.id), ['g1', 'g2']);
+
+  // At root in 'folders' view (PWAs sem pasta) -> ONLY u1, u2 (not g1, g2, w1 inside folders)
+  const atRoot = getScopedSelectableItems(allDisplayed, {
+    density: 'folders',
+    folders,
+    currentFolderId: null,
+  });
+  assert.deepEqual(atRoot.map((i) => i.id), ['u1', 'u2']);
+
+  // In 'cards' view -> returns all displayedItems (already filtered by selectedFolder)
+  const inCards = getScopedSelectableItems(allDisplayed, {
+    density: 'cards',
+    folders,
+    currentFolderId: 'f_games',
+  });
+  assert.equal(inCards.length, 5);
 });
 
 test('clonePWAForProfile creates independent PWA bound to target Chrome profile without colliding with source', () => {
@@ -443,7 +536,7 @@ test('clonePWAForProfile creates independent PWA bound to target Chrome profile 
     group: 'Dev & Código',
     folderId: 'folder_work',
     notes: 'Board principal',
-    flags: { money: true, transfer: false, gold: true },
+    flags: { moneyDate: '16/11', comDate: '2026-11-16', rbDate: null, bonDate: '2026-11-16' },
     rating: 4,
     pinned: true,
     profileDirectory: 'Profile 1',
@@ -474,7 +567,12 @@ test('clonePWAForProfile creates independent PWA bound to target Chrome profile 
   assert.equal(clone.url, source.url);
   assert.equal(clone.folderId, 'folder_work');
   assert.equal(clone.notes, 'Board principal');
-  assert.deepEqual(clone.flags, { money: true, transfer: false, gold: true });
+  assert.deepEqual(clone.flags, {
+    moneyDate: '16/11',
+    comDate: '2026-11-16',
+    rbDate: null,
+    bonDate: '2026-11-16',
+  });
   assert.equal(clone.lastAccessedDate, null);
   assert.equal(clone.accessCount, 0);
   // Source .desktop bindings must be stripped so launch uses target profile
@@ -494,4 +592,88 @@ test('clonePWAForProfile creates independent PWA bound to target Chrome profile 
   assert.equal(available[0].directory, 'Default');
   const p2 = available.find((p) => p.directory === 'Profile 2');
   assert.equal(p2?.displayName, 'Trabalho');
+});
+
+test('bulk actions add/remove stars, update status, and set/clear daily COM/RB/BON flags cleanly on targeted IDs only', () => {
+  const today = '2026-11-16';
+  const now = new Date('2026-11-16T12:00:00.000Z');
+  const pwas: PWAItem[] = [
+    {
+      id: 'p1',
+      name: 'App 1',
+      url: 'https://1.com',
+      category: 'Geral',
+      notes: '',
+      rating: 4,
+      pinned: true,
+      flags: { moneyDate: '05/11', comDate: today },
+      lastAccessedDate: null,
+      accessCount: 0,
+      createdAt: '2026-11-01',
+    },
+    {
+      id: 'p2',
+      name: 'App 2',
+      url: 'https://2.com',
+      category: 'Geral',
+      notes: '',
+      rating: 0,
+      pinned: false,
+      lastAccessedDate: null,
+      accessCount: 0,
+      createdAt: '2026-11-01',
+    },
+    {
+      id: 'p3',
+      name: 'Outside Scope',
+      url: 'https://3.com',
+      category: 'Geral',
+      notes: '',
+      rating: 5,
+      pinned: true,
+      lastAccessedDate: null,
+      accessCount: 2,
+      createdAt: '2026-11-01',
+    },
+  ];
+
+  const targets = new Set(['p1', 'p2']);
+
+  // Bulk set 5 stars
+  const starred = batchSetRating(pwas, targets, 5);
+  assert.equal(starred[0].rating, 5);
+  assert.equal(starred[1].rating, 5);
+  assert.equal(starred[1].pinned, true);
+  assert.equal(starred[2].rating, 5);
+
+  // Bulk remove all stars (0) only on targets
+  const clearedStars = batchSetRating(starred, targets, 0);
+  assert.equal(clearedStars[0].rating, 0);
+  assert.equal(clearedStars[0].pinned, false);
+  assert.equal(clearedStars[1].rating, 0);
+  assert.equal(clearedStars[1].pinned, false);
+  assert.equal(clearedStars[2].rating, 5); // Outside target untouched
+
+  // Bulk mark accessed then pending
+  const accessed = batchSetStatus(clearedStars, targets, 'accessed', now, today);
+  assert.equal(isAccessedToday(accessed[0].lastAccessedDate, today), true);
+  assert.equal(isAccessedToday(accessed[1].lastAccessedDate, today), true);
+  assert.equal(isAccessedToday(accessed[2].lastAccessedDate, today), false);
+
+  const pending = batchSetStatus(accessed, targets, 'pending', now, today);
+  assert.equal(pending[0].lastAccessedDate, null);
+  assert.equal(pending[1].lastAccessedDate, null);
+
+  // Bulk set daily RB & BON flags, then clear daily flags (moneyDate preserved)
+  const withRb = batchSetDailyFlag(pending, targets, 'rb', true, today);
+  const withBon = batchSetDailyFlag(withRb, targets, 'bon', true, today);
+  assert.equal(withBon[0].flags?.rbDate, today);
+  assert.equal(withBon[1].flags?.bonDate, today);
+  assert.equal(withBon[2].flags, undefined);
+
+  const clearedDaily = batchClearFlags(withBon, targets, { clearDaily: true, clearMoneyDate: false });
+  assert.equal(clearedDaily[0].flags?.comDate, null);
+  assert.equal(clearedDaily[0].flags?.rbDate, null);
+  assert.equal(clearedDaily[0].flags?.bonDate, null);
+  assert.equal(clearedDaily[0].flags?.moneyDate, '05/11'); // permanent preserved!
 });

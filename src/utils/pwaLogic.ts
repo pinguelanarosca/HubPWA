@@ -1,4 +1,4 @@
-import { FlagFilterKey, PWAFlags, PWAItem, PWAStats, SortOption, StatusFilter } from '../types/pwa';
+import { DailyFlagKey, FlagFilterKey, PWAFlags, PWAItem, PWAStats, SortOption, StatusFilter } from '../types/pwa';
 
 /**
  * Returns the date in YYYY-MM-DD format in the user's local timezone
@@ -562,10 +562,11 @@ export function filterAndSortPWAs(
         if (starFilter === 'unrated' && rating > 0) return false;
       }
 
-      // Custom icon flag filters (money, transfer arrows, gold bar)
+      // Custom bottom markings filter ($ Date, COM, RD, IRB)
       if (Array.isArray(flagFilters) && flagFilters.length > 0) {
-        const flags = item.flags || {};
-        const matchesAllSelectedFlags = flagFilters.every((flagKey) => Boolean(flags[flagKey]));
+        const matchesAllSelectedFlags = flagFilters.every((flagKey) =>
+          isPWAFlagActive(item, flagKey, todayStr)
+        );
         if (!matchesAllSelectedFlags) {
           return false;
         }
@@ -665,11 +666,7 @@ export function importPWAsFromJson(rawJson: string): PWAItem[] {
         pinned: Boolean(r.pinned),
         flags:
           typeof r.flags === 'object' && r.flags !== null
-            ? {
-                money: Boolean((r.flags as PWAFlags).money),
-                transfer: Boolean((r.flags as PWAFlags).transfer),
-                gold: Boolean((r.flags as PWAFlags).gold),
-              }
+            ? migratePWAFlags(r.flags as Record<string, unknown>)
             : undefined,
         createdAt: typeof r.createdAt === 'string' ? r.createdAt : new Date().toISOString(),
       };
@@ -779,13 +776,136 @@ export function formatChromeProfileDisplay(item: {
 }
 
 /**
- * Toggles a specific boolean flag (money, transfer, gold) on a PWA item immutably.
+ * Sanitizes live typing inside a DD/MM day/month field without fighting backspace.
+ * Auto-inserts "/" after 2 digits when typing a 3rd digit (e.g. "1611" -> "16/11").
  */
-export function togglePWAFlag(item: PWAItem, flag: FlagFilterKey): PWAItem {
+export function sanitizeDayMonthTyping(raw: string): string {
+  const cleaned = (raw || '').replace(/[^\d/]/g, '');
+  if (!cleaned) return '';
+
+  const slashIdx = cleaned.indexOf('/');
+  if (slashIdx === -1) {
+    const digits = cleaned.slice(0, 4);
+    if (digits.length >= 3) {
+      return `${digits.slice(0, 2)}/${digits.slice(2, 4)}`;
+    }
+    return digits;
+  }
+
+  const dayPart = cleaned.slice(0, slashIdx).replace(/\//g, '').slice(0, 2);
+  const monthPart = cleaned.slice(slashIdx + 1).replace(/\//g, '').slice(0, 2);
+  return `${dayPart}/${monthPart}`;
+}
+
+/**
+ * Normalizes and clamps a DD/MM string on blur (e.g. "5/9" -> "05/09", "35/15" -> "31/12").
+ */
+export function normalizeDayMonthOnBlur(raw: string): string {
+  const sanitized = sanitizeDayMonthTyping(raw).trim();
+  if (!sanitized) return '';
+
+  let dayStr = '';
+  let monthStr = '';
+
+  if (sanitized.includes('/')) {
+    const [d, m] = sanitized.split('/');
+    dayStr = d || '';
+    monthStr = m || '';
+  } else if (sanitized.length === 4) {
+    dayStr = sanitized.slice(0, 2);
+    monthStr = sanitized.slice(2, 4);
+  } else {
+    dayStr = sanitized.slice(0, 2);
+  }
+
+  if (dayStr) {
+    let dNum = parseInt(dayStr, 10);
+    if (!isNaN(dNum)) {
+      if (dNum < 1) dNum = 1;
+      if (dNum > 31) dNum = 31;
+      dayStr = monthStr ? String(dNum).padStart(2, '0') : dayStr.length === 2 ? String(dNum).padStart(2, '0') : dayStr;
+    }
+  }
+
+  if (monthStr) {
+    let mNum = parseInt(monthStr, 10);
+    if (!isNaN(mNum)) {
+      if (mNum < 1) mNum = 1;
+      if (mNum > 12) mNum = 12;
+      monthStr = String(mNum).padStart(2, '0');
+    }
+    return `${(dayStr || '01').padStart(2, '0')}/${monthStr}`;
+  }
+
+  return dayStr;
+}
+
+const DAILY_FLAG_FIELD_MAP: Record<DailyFlagKey, 'comDate' | 'rbDate' | 'bonDate'> = {
+  com: 'comDate',
+  rb: 'rbDate',
+  bon: 'bonDate',
+};
+
+/**
+ * Normalizes and migrates legacy rdDate/irbDate fields to rbDate/bonDate cleanly.
+ */
+export function migratePWAFlags(rawFlags?: Record<string, unknown> | null): PWAFlags | undefined {
+  if (!rawFlags || typeof rawFlags !== 'object') return undefined;
+  const f = rawFlags as Record<string, unknown>;
+  const result: PWAFlags = {};
+
+  if (typeof f.moneyDate === 'string' && f.moneyDate.trim()) {
+    result.moneyDate = normalizeDayMonthOnBlur(f.moneyDate);
+  }
+  if (f.comDate !== undefined) {
+    result.comDate = f.comDate ? String(f.comDate) : null;
+  }
+  const rbRaw = f.rbDate !== undefined ? f.rbDate : f.rdDate;
+  if (rbRaw !== undefined) {
+    result.rbDate = rbRaw ? String(rbRaw) : null;
+  }
+  const bonRaw = f.bonDate !== undefined ? f.bonDate : f.irbDate;
+  if (bonRaw !== undefined) {
+    result.bonDate = bonRaw ? String(bonRaw) : null;
+  }
+
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
+/**
+ * Checks whether a PWA flag or DD/MM date marking is active for the given local day (`todayStr`).
+ * - `moneyDate`: active whenever a non-empty DD/MM date is filled (never resets at midnight).
+ * - `com`, `rb`, `bon`: active ONLY when their stored YYYY-MM-DD equals `todayStr` (resets at midnight).
+ */
+export function isPWAFlagActive(
+  item: Pick<PWAItem, 'flags'> | undefined,
+  flag: FlagFilterKey,
+  todayStr: string = getTodayString()
+): boolean {
+  const flags = item?.flags;
+  if (!flags) return false;
+  if (flag === 'moneyDate') {
+    return Boolean(flags.moneyDate && flags.moneyDate.trim().length > 0);
+  }
+  const field = DAILY_FLAG_FIELD_MAP[flag];
+  const storedDate = flags[field];
+  return Boolean(storedDate && storedDate.trim() === todayStr);
+}
+
+/**
+ * Toggles a daily-resetting selection (`com`, `rb`, `bon`) for `todayStr`.
+ */
+export function togglePWAFlag(
+  item: PWAItem,
+  flag: DailyFlagKey,
+  todayStr: string = getTodayString()
+): PWAItem {
+  const field = DAILY_FLAG_FIELD_MAP[flag];
   const currentFlags = item.flags || {};
+  const currentlyActive = isPWAFlagActive(item, flag, todayStr);
   const nextFlags: PWAFlags = {
     ...currentFlags,
-    [flag]: !Boolean(currentFlags[flag]),
+    [field]: currentlyActive ? null : todayStr,
   };
   return {
     ...item,
@@ -794,21 +914,172 @@ export function togglePWAFlag(item: PWAItem, flag: FlagFilterKey): PWAItem {
 }
 
 /**
- * Counts how many PWAs have each flag enabled.
+ * Updates the persistent DD/MM date field next to the green dollar icon.
  */
-export function countPWAFlags(items: PWAItem[]): Record<FlagFilterKey, number> {
+export function updatePWAMoneyDate(item: PWAItem, moneyDate: string): PWAItem {
+  const currentFlags = item.flags || {};
+  return {
+    ...item,
+    flags: {
+      ...currentFlags,
+      moneyDate,
+    },
+  };
+}
+
+/**
+ * Counts active markings across PWAs for the given local day (`todayStr`).
+ */
+export function countPWAFlags(
+  items: PWAItem[],
+  todayStr: string = getTodayString()
+): Record<FlagFilterKey, number> {
   const counts: Record<FlagFilterKey, number> = {
-    money: 0,
-    transfer: 0,
-    gold: 0,
+    moneyDate: 0,
+    com: 0,
+    rb: 0,
+    bon: 0,
   };
   for (const it of items) {
     if (!it || !it.flags) continue;
-    if (it.flags.money) counts.money++;
-    if (it.flags.transfer) counts.transfer++;
-    if (it.flags.gold) counts.gold++;
+    if (isPWAFlagActive(it, 'moneyDate', todayStr)) counts.moneyDate++;
+    if (isPWAFlagActive(it, 'com', todayStr)) counts.com++;
+    if (isPWAFlagActive(it, 'rb', todayStr)) counts.rb++;
+    if (isPWAFlagActive(it, 'bon', todayStr)) counts.bon++;
   }
   return counts;
+}
+
+/**
+ * Computes milliseconds remaining until the next local midnight (+100ms buffer).
+ */
+export function getMsUntilNextMidnight(now: Date = new Date()): number {
+  const nextMidnight = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate() + 1,
+    0,
+    0,
+    0,
+    100
+  );
+  return Math.max(1000, nextMidnight.getTime() - now.getTime());
+}
+
+/**
+ * Returns the list of PWAs eligible for "Selecionar todas" in the active context:
+ * - In 'folders' mode inside a folder: ONLY PWAs directly inside that folder.
+ * - In 'folders' mode at root: ONLY unfiled PWAs ("PWAs sem pasta").
+ * - In other modes ('cards', 'compact-table', 'dense-grid'): the currently filtered displayedItems.
+ */
+export function getScopedSelectableItems(
+  displayedItems: PWAItem[],
+  options: {
+    density: string;
+    folders: Array<{ id: string }>;
+    currentFolderId: string | null;
+  }
+): PWAItem[] {
+  if (options.density !== 'folders') {
+    return displayedItems;
+  }
+  const validFolderIds = new Set(options.folders.map((f) => f.id));
+  if (options.currentFolderId && validFolderIds.has(options.currentFolderId)) {
+    return displayedItems.filter((it) => it.folderId === options.currentFolderId);
+  }
+  return displayedItems.filter((it) => !it.folderId || !validFolderIds.has(it.folderId));
+}
+
+/**
+ * Bulk sets star rating (0..5) on target PWA IDs. Rating 0 clears stars and pinned flag.
+ */
+export function batchSetRating(
+  items: PWAItem[],
+  targetIds: Set<string>,
+  rating: number
+): PWAItem[] {
+  const clamped = Math.max(0, Math.min(5, Math.round(rating)));
+  return items.map((it) => {
+    if (!targetIds.has(it.id)) return it;
+    return {
+      ...it,
+      rating: clamped,
+      pinned: clamped > 0,
+    };
+  });
+}
+
+/**
+ * Bulk sets daily status ('accessed', 'pending', or 'toggle') on target PWA IDs.
+ */
+export function batchSetStatus(
+  items: PWAItem[],
+  targetIds: Set<string>,
+  mode: 'accessed' | 'pending' | 'toggle',
+  now: Date = new Date(),
+  todayStr: string = getTodayString(now)
+): PWAItem[] {
+  return items.map((it) => {
+    if (!targetIds.has(it.id)) return it;
+    if (mode === 'toggle') {
+      return toggleAccessedToday(it, todayStr);
+    }
+    if (mode === 'accessed') {
+      return isAccessedToday(it.lastAccessedDate, todayStr)
+        ? it
+        : markAsAccessed(it, now, todayStr);
+    }
+    // mode === 'pending'
+    return {
+      ...it,
+      lastAccessedDate: null,
+    };
+  });
+}
+
+/**
+ * Bulk sets or clears a daily flag ('com', 'rb', 'bon') on target PWA IDs.
+ */
+export function batchSetDailyFlag(
+  items: PWAItem[],
+  targetIds: Set<string>,
+  flag: DailyFlagKey,
+  active: boolean,
+  todayStr: string = getTodayString()
+): PWAItem[] {
+  const field = DAILY_FLAG_FIELD_MAP[flag];
+  return items.map((it) => {
+    if (!targetIds.has(it.id)) return it;
+    return {
+      ...it,
+      flags: {
+        ...(it.flags || {}),
+        [field]: active ? todayStr : null,
+      },
+    };
+  });
+}
+
+/**
+ * Bulk clears daily selections (COM, RB, BON) and/or permanent moneyDate on target PWA IDs.
+ */
+export function batchClearFlags(
+  items: PWAItem[],
+  targetIds: Set<string>,
+  options: { clearDaily?: boolean; clearMoneyDate?: boolean } = { clearDaily: true, clearMoneyDate: false }
+): PWAItem[] {
+  return items.map((it) => {
+    if (!targetIds.has(it.id)) return it;
+    const prev = it.flags || {};
+    return {
+      ...it,
+      flags: {
+        ...prev,
+        ...(options.clearDaily ? { comDate: null, rbDate: null, bonDate: null } : {}),
+        ...(options.clearMoneyDate ? { moneyDate: '' } : {}),
+      },
+    };
+  });
 }
 
 export interface ChromeProfileOption {

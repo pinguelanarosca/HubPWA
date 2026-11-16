@@ -1,9 +1,33 @@
 import React, { useRef, useEffect, useState, useMemo } from 'react';
-import { Search, X, List, Rows3, Folder, Star, Compass, Settings, FolderOpen, FolderPlus, Tag } from 'lucide-react';
-import { FlagFilterKey, PWAFolder, SortOption, StatusFilter, StarFilter, ViewDensity } from '../types/pwa';
+import {
+  Search,
+  X,
+  List,
+  Rows3,
+  Folder,
+  Star,
+  StarOff,
+  Compass,
+  Settings,
+  FolderOpen,
+  FolderPlus,
+  Tag,
+  CheckSquare,
+  Square,
+  Layers,
+  ChevronDown,
+  CheckCircle2,
+  Clock,
+  Image as ImageIcon,
+  Edit3,
+  Trash2,
+  Eraser,
+  Check,
+} from 'lucide-react';
+import { DailyFlagKey, FlagFilterKey, PWAFolder, SortOption, StatusFilter, StarFilter, ViewDensity } from '../types/pwa';
 import { getGroupTheme, GROUP_COLOR_THEMES } from '../utils/groupLogic';
 import { flattenFoldersHierarchy } from '../utils/folderLogic';
-import { FLAG_META, renderFlagIcon } from './PWAFlagsControl';
+import { DAILY_FLAG_META, FILTER_FLAG_META, MoneySymbolIcon } from './PWAFlagsControl';
 
 interface ControlToolbarProps {
   search: string;
@@ -38,6 +62,18 @@ interface ControlToolbarProps {
   accessedCount: number;
   groupByGroup?: boolean;
   onToggleGroupByGroup?: () => void;
+  selectableCount?: number;
+  selectedCount?: number;
+  allSelected?: boolean;
+  onToggleSelectAll?: () => void;
+  onDeselectAll?: () => void;
+  onBulkSetRating?: (rating: number) => void;
+  onBulkSetStatus?: (mode: 'accessed' | 'pending') => void;
+  onBulkSetDailyFlag?: (flag: DailyFlagKey, active: boolean) => void;
+  onBulkClearFlags?: () => void;
+  onBulkRefreshIcons?: () => void;
+  onBulkOpenEdit?: () => void;
+  onBulkDelete?: () => void;
 }
 
 export const ControlToolbar: React.FC<ControlToolbarProps> = ({
@@ -60,7 +96,7 @@ export const ControlToolbar: React.FC<ControlToolbarProps> = ({
   starFilter,
   onStarFilterChange,
   flagFilters = [],
-  flagCounts = { money: 0, transfer: 0, gold: 0 },
+  flagCounts = { moneyDate: 0, com: 0, rb: 0, bon: 0 },
   onToggleFlagFilter,
   onClearFlagFilters,
   density,
@@ -70,11 +106,37 @@ export const ControlToolbar: React.FC<ControlToolbarProps> = ({
   totalCount,
   pendingCount,
   accessedCount,
+  selectableCount = 0,
+  selectedCount = 0,
+  allSelected = false,
+  onToggleSelectAll,
+  onDeselectAll,
+  onBulkSetRating,
+  onBulkSetStatus,
+  onBulkSetDailyFlag,
+  onBulkClearFlags,
+  onBulkRefreshIcons,
+  onBulkOpenEdit,
+  onBulkDelete,
 }) => {
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const bulkMenuRef = useRef<HTMLDivElement>(null);
   const [dragOverFolderId, setDragOverFolderId] = useState<string | null>(null);
+  const [isBulkMenuOpen, setIsBulkMenuOpen] = useState(false);
 
   const flatFolders = useMemo(() => flattenFoldersHierarchy(folders), [folders]);
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (bulkMenuRef.current && !bulkMenuRef.current.contains(e.target as Node)) {
+        setIsBulkMenuOpen(false);
+      }
+    };
+    if (isBulkMenuOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [isBulkMenuOpen]);
 
   // Keyboard shortcut: '/' focuses search input
   useEffect(() => {
@@ -254,10 +316,263 @@ export const ControlToolbar: React.FC<ControlToolbarProps> = ({
               <span className="hidden sm:inline">Tabela</span>
             </button>
           </div>
+
+          {selectableCount > 0 && onToggleSelectAll && (
+            <button
+              type="button"
+              onClick={onToggleSelectAll}
+              data-testid="toolbar-select-all-btn"
+              aria-pressed={allSelected}
+              title={
+                allSelected
+                  ? 'Desmarcar todas as PWAs visíveis neste escopo'
+                  : 'Selecionar todas as PWAs visíveis neste escopo'
+              }
+              className={`inline-flex items-center gap-1.5 px-2.5 py-2 rounded-lg text-xs font-semibold border transition-colors cursor-pointer whitespace-nowrap ${
+                allSelected
+                  ? 'bg-emerald-500/20 border-emerald-400/75 text-emerald-200'
+                  : 'bg-[#14151a] hover:bg-[#1f212a] border-[#242633] text-neutral-200 hover:text-white'
+              }`}
+            >
+              {allSelected ? (
+                <CheckSquare className="w-3.5 h-3.5 text-emerald-400" />
+              ) : (
+                <Square className="w-3.5 h-3.5 text-neutral-400" />
+              )}
+              <span>
+                {allSelected ? `Desmarcar (${selectableCount})` : `Selecionar todas (${selectableCount})`}
+              </span>
+            </button>
+          )}
+
+          {selectableCount > 0 && onBulkSetRating && (
+            <div className="relative" ref={bulkMenuRef}>
+              <button
+                type="button"
+                onClick={() => setIsBulkMenuOpen((prev) => !prev)}
+                data-testid="toolbar-bulk-actions-btn"
+                aria-expanded={isBulkMenuOpen}
+                title="Executar ações em massa (adicionar/remover estrelas, status, marcações, ícones)"
+                className={`inline-flex items-center gap-1.5 px-2.5 py-2 rounded-lg text-xs font-semibold border transition-colors cursor-pointer whitespace-nowrap ${
+                  isBulkMenuOpen
+                    ? 'bg-amber-500/20 border-amber-400/75 text-amber-200'
+                    : 'bg-[#14151a] hover:bg-[#1f212a] border-[#242633] text-neutral-200 hover:text-white'
+                }`}
+              >
+                <Layers className="w-3.5 h-3.5 text-amber-400" />
+                <span>Ações em Massa</span>
+                <ChevronDown className={`w-3 h-3 text-neutral-400 transition-transform ${isBulkMenuOpen ? 'rotate-180' : ''}`} />
+              </button>
+
+              {isBulkMenuOpen && (
+                <div
+                  data-testid="toolbar-bulk-actions-menu"
+                  className="absolute right-0 top-full mt-2 z-50 w-80 bg-[#14151a] border border-[#2c2e3d] rounded-xl shadow-2xl shadow-black p-2.5 text-xs text-neutral-200 space-y-2.5 animate-in fade-in zoom-in-95 duration-100"
+                >
+                  {/* Scope Indicator */}
+                  <div className="px-2 py-1.5 rounded-lg bg-neutral-950/90 border border-neutral-800/90 text-[11px] flex items-center justify-between">
+                    <span className="text-neutral-400">Escopo:</span>
+                    <span className="font-bold text-emerald-300">
+                      {selectedCount > 0
+                        ? `${selectedCount} selecionada${selectedCount > 1 ? 's' : ''}`
+                        : `Todas as ${selectableCount} visíveis`}
+                    </span>
+                  </div>
+
+                  {/* Selection shortcuts */}
+                  {onToggleSelectAll && (
+                    <div className="grid grid-cols-2 gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (!allSelected) onToggleSelectAll();
+                          setIsBulkMenuOpen(false);
+                        }}
+                        className="inline-flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-lg bg-[#1e2028] hover:bg-[#282a36] border border-[#2c2e3d] text-neutral-200 hover:text-white text-[11px] font-medium whitespace-nowrap cursor-pointer"
+                      >
+                        <CheckSquare className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                        <span>Selecionar todas</span>
+                      </button>
+                      <button
+                        type="button"
+                        disabled={selectedCount === 0}
+                        onClick={() => {
+                          onDeselectAll?.();
+                          setIsBulkMenuOpen(false);
+                        }}
+                        className="inline-flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-lg bg-[#1e2028] hover:bg-[#282a36] border border-[#2c2e3d] text-neutral-300 hover:text-white disabled:opacity-40 text-[11px] font-medium whitespace-nowrap cursor-pointer"
+                      >
+                        <Square className="w-3.5 h-3.5 text-neutral-400 shrink-0" />
+                        <span>Desmarcar</span>
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Stars Bulk Section */}
+                  <div className="pt-1.5 border-t border-[#242633] space-y-1.5">
+                    <div className="text-[10px] uppercase font-bold text-neutral-400 tracking-wider px-0.5 flex items-center gap-1.5">
+                      <Star className="w-3 h-3 text-amber-400 fill-amber-400" />
+                      <span>Estrelas (Adicionar / Remover)</span>
+                    </div>
+                    <div className="grid grid-cols-5 gap-1">
+                      {[1, 2, 3, 4, 5].map((starCount) => (
+                        <button
+                          key={starCount}
+                          type="button"
+                          data-testid={`bulk-menu-stars-${starCount}`}
+                          onClick={() => {
+                            onBulkSetRating(starCount);
+                            setIsBulkMenuOpen(false);
+                          }}
+                          title={`Definir ${starCount} estrela${starCount > 1 ? 's' : ''}`}
+                          className="flex flex-col items-center justify-center gap-0.5 py-1.5 rounded-lg bg-[#1e2028] hover:bg-amber-500/20 border border-[#2c2e3d] hover:border-amber-400/70 text-amber-300 font-bold cursor-pointer transition-colors"
+                        >
+                          <Star className="w-3.5 h-3.5 fill-amber-400 text-amber-400" />
+                          <span className="text-[11px]">{starCount}★</span>
+                        </button>
+                      ))}
+                    </div>
+                    <button
+                      type="button"
+                      data-testid="bulk-menu-clear-stars"
+                      onClick={() => {
+                        onBulkSetRating(0);
+                        setIsBulkMenuOpen(false);
+                      }}
+                      className="w-full px-2.5 py-1.5 rounded-lg bg-rose-950/50 hover:bg-rose-900/60 border border-rose-800/60 text-rose-200 hover:text-white flex items-center gap-2 font-semibold cursor-pointer transition-colors"
+                    >
+                      <StarOff className="w-3.5 h-3.5 text-rose-400" />
+                      <span>Remover todas as estrelas</span>
+                    </button>
+                  </div>
+
+                  {/* Daily Status Bulk Section */}
+                  {onBulkSetStatus && (
+                    <div className="pt-1.5 border-t border-[#242633] space-y-1">
+                      <div className="text-[10px] uppercase font-bold text-neutral-400 tracking-wider px-0.5">
+                        Status de Hoje
+                      </div>
+                      <div className="grid grid-cols-2 gap-1.5">
+                        <button
+                          type="button"
+                          data-testid="bulk-menu-mark-accessed"
+                          onClick={() => {
+                            onBulkSetStatus('accessed');
+                            setIsBulkMenuOpen(false);
+                          }}
+                          className="inline-flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-lg bg-emerald-950/50 hover:bg-emerald-900/60 border border-emerald-700/60 text-emerald-200 font-semibold cursor-pointer"
+                        >
+                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                          <span>Acessadas</span>
+                        </button>
+                        <button
+                          type="button"
+                          data-testid="bulk-menu-mark-pending"
+                          onClick={() => {
+                            onBulkSetStatus('pending');
+                            setIsBulkMenuOpen(false);
+                          }}
+                          className="inline-flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-lg bg-rose-950/50 hover:bg-rose-900/60 border border-rose-700/60 text-rose-200 font-semibold cursor-pointer"
+                        >
+                          <Clock className="w-3.5 h-3.5 text-rose-400" />
+                          <span>Pendentes</span>
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Daily Flags Bulk Section (COM, RB, BON) */}
+                  {onBulkSetDailyFlag && (
+                    <div className="pt-1.5 border-t border-[#242633] space-y-1.5">
+                      <div className="text-[10px] uppercase font-bold text-neutral-400 tracking-wider px-0.5">
+                        Marcar Hoje (COM / RB / BON)
+                      </div>
+                      <div className="grid grid-cols-3 gap-1">
+                        {DAILY_FLAG_META.map(({ key, label, badgeColorClass }) => (
+                          <button
+                            key={key}
+                            type="button"
+                            data-testid={`bulk-menu-flag-${key}`}
+                            onClick={() => {
+                              onBulkSetDailyFlag(key, true);
+                              setIsBulkMenuOpen(false);
+                            }}
+                            className="inline-flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg bg-[#1e2028] hover:bg-[#282a36] border border-[#2c2e3d] font-bold cursor-pointer"
+                          >
+                            <Check className="w-3 h-3 text-emerald-400" />
+                            <span className={badgeColorClass}>{label}</span>
+                          </button>
+                        ))}
+                      </div>
+                      {onBulkClearFlags && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            onBulkClearFlags();
+                            setIsBulkMenuOpen(false);
+                          }}
+                          className="w-full px-2.5 py-1 rounded-lg hover:bg-[#1f212a] text-neutral-300 hover:text-white flex items-center gap-2 text-[11px] cursor-pointer"
+                        >
+                          <Eraser className="w-3.5 h-3.5 text-amber-400" />
+                          <span>Limpar marcações do dia</span>
+                        </button>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Icons, Edit & Delete Bulk Section */}
+                  <div className="pt-1.5 border-t border-[#242633] space-y-1">
+                    {onBulkRefreshIcons && (
+                      <button
+                        type="button"
+                        data-testid="bulk-menu-refresh-icons"
+                        onClick={() => {
+                          onBulkRefreshIcons();
+                          setIsBulkMenuOpen(false);
+                        }}
+                        className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-[#1f212a] flex items-center gap-2 text-cyan-300 font-medium cursor-pointer"
+                      >
+                        <ImageIcon className="w-3.5 h-3.5 text-cyan-400" />
+                        <span>Atualizar ícones pertinentes</span>
+                      </button>
+                    )}
+                    {onBulkOpenEdit && (
+                      <button
+                        type="button"
+                        data-testid="bulk-menu-edit"
+                        onClick={() => {
+                          setIsBulkMenuOpen(false);
+                          onBulkOpenEdit();
+                        }}
+                        className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-[#1f212a] flex items-center gap-2 text-blue-300 font-medium cursor-pointer"
+                      >
+                        <Edit3 className="w-3.5 h-3.5 text-blue-400" />
+                        <span>Editar Pasta / Grupo / Notas...</span>
+                      </button>
+                    )}
+                    {onBulkDelete && (
+                      <button
+                        type="button"
+                        data-testid="bulk-menu-delete"
+                        onClick={() => {
+                          setIsBulkMenuOpen(false);
+                          onBulkDelete();
+                        }}
+                        className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-rose-950/60 flex items-center gap-2 text-rose-300 font-medium cursor-pointer"
+                      >
+                        <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+                        <span>Excluir PWAs...</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
-      {/* Marcações Filter Strip (Dinheiro, Vai e Volta, Barra de Ouro) */}
+      {/* Marcações Filter Strip ($ Data, COM, RB, BON) */}
       {onToggleFlagFilter && (
         <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 scrollbar-none text-xs">
           <div className="flex items-center gap-1 text-neutral-400 shrink-0 mr-1">
@@ -278,7 +593,7 @@ export const ControlToolbar: React.FC<ControlToolbarProps> = ({
             Todas
           </button>
 
-          {FLAG_META.map(({ key, label, filterActiveClass, iconColorClass }) => {
+          {FILTER_FLAG_META.map(({ key, label, filterActiveClass, badgeColorClass }) => {
             const isActive = flagFilters.includes(key);
             const count = flagCounts[key] || 0;
             return (
@@ -289,22 +604,24 @@ export const ControlToolbar: React.FC<ControlToolbarProps> = ({
                 aria-pressed={isActive}
                 aria-label={`Filtrar por ${label}`}
                 data-testid={`filter-flag-${key}`}
-                title={`Filtrar PWAs com ${label} marcado`}
-                className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium whitespace-nowrap border transition-all cursor-pointer ${
+                title={
+                  key === 'moneyDate'
+                    ? 'Filtrar PWAs com data (DD/MM) preenchida'
+                    : `Filtrar PWAs com ${label} marcado hoje`
+                }
+                className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold whitespace-nowrap border transition-all cursor-pointer ${
                   isActive
-                    ? `${filterActiveClass} font-semibold`
-                    : 'bg-[#14151a] hover:bg-[#1b1d26] text-neutral-300 hover:text-white border-[#242633]'
+                    ? filterActiveClass
+                    : 'bg-[#14151a] hover:bg-[#1b1d26] text-neutral-200 hover:text-white border-[#242633]'
                 }`}
               >
-                <span className={`inline-flex items-center ${iconColorClass}`}>
-                  {renderFlagIcon(
-                    key,
-                    key === 'gold' ? 'w-[17px] h-[12px]' : 'w-3.5 h-3.5',
-                    true
-                  )}
-                </span>
-                <span>{label}</span>
-                <span className={`text-[11px] font-mono tabular-nums ${isActive ? 'opacity-95' : 'text-neutral-500'}`}>
+                {key === 'moneyDate' ? (
+                  <span className="inline-flex items-center">
+                    <MoneySymbolIcon className="w-3.5 h-3.5" />
+                  </span>
+                ) : null}
+                <span className={isActive ? '' : badgeColorClass}>{label}</span>
+                <span className={`text-[11px] font-mono tabular-nums ${isActive ? 'opacity-95' : 'text-neutral-400'}`}>
                   ({count})
                 </span>
               </button>

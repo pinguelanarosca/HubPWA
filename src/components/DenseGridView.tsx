@@ -1,6 +1,6 @@
 import React from 'react';
 import { ExternalLink, Trash2, Edit2, User, Clock, Copy } from 'lucide-react';
-import { FlagFilterKey, PWAItem } from '../types/pwa';
+import { DailyFlagKey, PWAItem } from '../types/pwa';
 import { PWAIcon } from './PWAIcon';
 import { StatusIndicator } from './StatusIndicator';
 import { InlineNoteInput } from './InlineNoteInput';
@@ -14,7 +14,8 @@ interface DenseGridViewProps {
   onLaunch: (item: PWAItem) => void;
   onToggleStatus: (item: PWAItem) => void;
   onUpdateNote: (item: PWAItem, newNote: string) => void;
-  onToggleFlag?: (item: PWAItem, flag: FlagFilterKey) => void;
+  onToggleFlag?: (item: PWAItem, flag: DailyFlagKey) => void;
+  onUpdateMoneyDate?: (item: PWAItem, moneyDate: string) => void;
   onTogglePin: (item: PWAItem) => void;
   onSetRating?: (item: PWAItem, rating: number) => void;
   onEdit: (item: PWAItem) => void;
@@ -29,6 +30,7 @@ export const DenseGridView: React.FC<DenseGridViewProps> = ({
   onToggleStatus,
   onUpdateNote,
   onToggleFlag,
+  onUpdateMoneyDate,
   onTogglePin,
   onSetRating,
   onEdit,
@@ -174,8 +176,14 @@ export const DenseGridView: React.FC<DenseGridViewProps> = ({
               </div>
 
               {onToggleFlag && (
-                <div className="mb-1.5">
-                  <PWAFlagsControl item={item} onToggleFlag={onToggleFlag} compact={true} />
+                <div className="mb-1.5 pt-2 border-t border-white/[0.06]">
+                  <PWAFlagsControl
+                    item={item}
+                    todayStr={todayStr}
+                    onToggleFlag={onToggleFlag}
+                    onUpdateMoneyDate={onUpdateMoneyDate}
+                    compact={true}
+                  />
                 </div>
               )}
             </div>

@@ -7,12 +7,15 @@ export interface PWAFolder {
 }
 
 export interface PWAFlags {
-  money?: boolean;
-  transfer?: boolean;
-  gold?: boolean;
+  moneyDate?: string; // Persistent DD/MM date beside green $ icon (never resets at midnight)
+  comDate?: string | null; // YYYY-MM-DD when COM was selected (resets daily at midnight)
+  rbDate?: string | null; // YYYY-MM-DD when RB was selected (resets daily at midnight)
+  bonDate?: string | null; // YYYY-MM-DD when BON was selected (resets daily at midnight)
 }
 
-export type FlagFilterKey = 'money' | 'transfer' | 'gold';
+export type DailyFlagKey = 'com' | 'rb' | 'bon';
+
+export type FlagFilterKey = 'moneyDate' | DailyFlagKey;
 
 export interface PWAItem {
   id: string;

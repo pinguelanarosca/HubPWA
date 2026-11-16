@@ -1,254 +1,249 @@
-import React, { useId } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Check } from 'lucide-react';
-import { FlagFilterKey, PWAFlags, PWAItem } from '../types/pwa';
-
-export const GoldBarIcon: React.FC<{ className?: string; active?: boolean }> = ({
-  className = 'w-[19px] h-[14px]',
-  active = true,
-}) => {
-  const uid = useId().replace(/:/g, '');
-  const topGradId = `gold-top-${uid}`;
-  const frontGradId = `gold-front-${uid}`;
-  const sideGradId = `gold-side-${uid}`;
-
-  return (
-    <svg
-      viewBox="0 0 28 20"
-      fill="none"
-      xmlns="http://www.w3.org/2000/svg"
-      className={`${className} transition-all duration-150 ${
-        active
-          ? 'opacity-100 drop-shadow-[0_1px_5px_rgba(251,191,36,0.42)]'
-          : 'opacity-70 saturate-75 group-hover/flag:opacity-100 group-hover/flag:saturate-100'
-      }`}
-      aria-hidden="true"
-    >
-      <defs>
-        <linearGradient id={topGradId} x1="4" y1="3" x2="24" y2="11" gradientUnits="userSpaceOnUse">
-          <stop offset="0%" stopColor="#FEF9C3" />
-          <stop offset="48%" stopColor="#FACC15" />
-          <stop offset="100%" stopColor="#EAB308" />
-        </linearGradient>
-        <linearGradient id={frontGradId} x1="2" y1="11" x2="22" y2="17" gradientUnits="userSpaceOnUse">
-          <stop offset="0%" stopColor="#F59E0B" />
-          <stop offset="100%" stopColor="#B45309" />
-        </linearGradient>
-        <linearGradient id={sideGradId} x1="21" y1="6" x2="26" y2="16" gradientUnits="userSpaceOnUse">
-          <stop offset="0%" stopColor="#D97706" />
-          <stop offset="100%" stopColor="#78350F" />
-        </linearGradient>
-      </defs>
-      {/* Top bright metallic face */}
-      <path
-        d="M7.5 3.5H22.5L19.8 10.8H3.2L7.5 3.5Z"
-        fill={`url(#${topGradId})`}
-      />
-      {/* Front beveled face */}
-      <path
-        d="M3.2 10.8H19.8L21.4 16.5H1.8L3.2 10.8Z"
-        fill={`url(#${frontGradId})`}
-      />
-      {/* Right 3D angled side face */}
-      <path
-        d="M22.5 3.5L26 9.2L21.4 16.5L19.8 10.8L22.5 3.5Z"
-        fill={`url(#${sideGradId})`}
-      />
-      {/* Subtle engraved top inner edge & metallic specular gleam */}
-      <path
-        d="M8.5 5.2H15.2L13.3 9.1H6.6L8.5 5.2Z"
-        fill="#FFFFFF"
-        fillOpacity="0.38"
-      />
-      <path
-        d="M3.2 10.8H19.8L22.5 3.5"
-        stroke="#FEF08A"
-        strokeOpacity="0.7"
-        strokeWidth="0.7"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-};
-
-export const TwoWayArrowsIcon: React.FC<{ className?: string }> = ({
-  className = 'w-[17px] h-[17px]',
-}) => (
-  <svg
-    viewBox="0 0 24 24"
-    fill="none"
-    xmlns="http://www.w3.org/2000/svg"
-    className={className}
-    aria-hidden="true"
-  >
-    {/* Top arrow going right */}
-    <path
-      d="M4.5 8H19.5M19.5 8L15.8 4.4M19.5 8L15.8 11.6"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    />
-    {/* Bottom arrow returning left */}
-    <path
-      d="M19.5 16H4.5M4.5 16L8.2 12.4M4.5 16L8.2 19.6"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    />
-  </svg>
-);
+import { DailyFlagKey, FlagFilterKey, PWAFlags, PWAItem } from '../types/pwa';
+import {
+  isPWAFlagActive,
+  normalizeDayMonthOnBlur,
+  sanitizeDayMonthTyping,
+} from '../utils/pwaLogic';
 
 export const MoneySymbolIcon: React.FC<{ className?: string }> = ({
-  className = 'w-[17px] h-[17px]',
+  className = 'w-[19px] h-[19px]',
 }) => (
   <svg
     viewBox="0 0 24 24"
     fill="none"
     xmlns="http://www.w3.org/2000/svg"
-    className={className}
+    className={`${className} text-emerald-400 drop-shadow-[0_0_6px_rgba(34,197,94,0.48)]`}
     aria-hidden="true"
   >
-    {/* Subtle coin medallion */}
+    {/* Vivid green medallion */}
     <circle
       cx="12"
       cy="12"
-      r="9.5"
-      fill="currentColor"
-      fillOpacity="0.12"
-      stroke="currentColor"
-      strokeOpacity="0.45"
-      strokeWidth="1.4"
+      r="10"
+      fill="#10B981"
+      fillOpacity="0.24"
+      stroke="#34D399"
+      strokeWidth="1.75"
     />
-    {/* Crisp dollar emblem */}
+    {/* Crisp bright dollar sign */}
     <path
-      d="M12 6.2V17.8M14.8 8.8C14.8 7.6 13.55 6.8 12 6.8C10.45 6.8 9.2 7.6 9.2 8.9C9.2 10.3 10.6 10.8 12 11.2C13.4 11.6 14.9 12.1 14.9 13.7C14.9 15.1 13.6 16 12 16C10.35 16 9.1 15.1 9.1 13.8"
-      stroke="currentColor"
-      strokeWidth="1.9"
+      d="M12 5.6V18.4M15.1 8.6C15.1 7.25 13.75 6.4 12 6.4C10.25 6.4 8.9 7.3 8.9 8.75C8.9 10.25 10.45 10.8 12 11.25C13.55 11.7 15.2 12.25 15.2 14.0C15.2 15.5 13.75 16.5 12 16.5C10.15 16.5 8.8 15.55 8.8 14.15"
+      stroke="#4ADE80"
+      strokeWidth="2.15"
       strokeLinecap="round"
       strokeLinejoin="round"
     />
   </svg>
 );
 
-export const FLAG_META: Array<{
-  key: FlagFilterKey;
+export const DAILY_FLAG_META: Array<{
+  key: DailyFlagKey;
   label: string;
-  filterActiveClass: string;
-  iconColorClass: string;
+  badgeColorClass: string;
+  activeChipClass: string;
+  inactiveChipClass: string;
   checkboxActiveClass: string;
-  itemActiveClass: string;
+  filterActiveClass: string;
 }> = [
   {
-    key: 'money',
-    label: 'Dinheiro',
-    filterActiveClass:
-      'bg-emerald-500/15 border-emerald-400/60 text-emerald-200 shadow-[0_0_12px_-4px_rgba(16,185,129,0.45)]',
-    iconColorClass: 'text-emerald-400',
+    key: 'com',
+    label: 'COM',
+    badgeColorClass: 'text-sky-300',
+    activeChipClass:
+      'bg-sky-500/22 border-sky-400 text-sky-100 shadow-[0_0_10px_-3px_rgba(56,189,248,0.5)]',
+    inactiveChipClass:
+      'bg-neutral-900/95 border-neutral-600/85 text-neutral-100 hover:border-sky-400/70 hover:bg-neutral-800/90',
     checkboxActiveClass:
-      'bg-emerald-500 border-emerald-400 text-neutral-950 shadow-[0_0_8px_-1px_rgba(16,185,129,0.55)]',
-    itemActiveClass: 'bg-emerald-500/[0.08]',
+      'bg-sky-400 border-sky-300 text-neutral-950 shadow-[0_0_8px_-1px_rgba(56,189,248,0.65)]',
+    filterActiveClass:
+      'bg-sky-500/18 border-sky-400/75 text-sky-200 shadow-[0_0_12px_-4px_rgba(56,189,248,0.5)]',
   },
   {
-    key: 'transfer',
-    label: 'Vai e Volta',
-    filterActiveClass:
-      'bg-sky-500/15 border-sky-400/60 text-sky-200 shadow-[0_0_12px_-4px_rgba(56,189,248,0.45)]',
-    iconColorClass: 'text-sky-400',
+    key: 'rb',
+    label: 'RB',
+    badgeColorClass: 'text-amber-300',
+    activeChipClass:
+      'bg-amber-500/22 border-amber-400 text-amber-100 shadow-[0_0_10px_-3px_rgba(251,191,36,0.5)]',
+    inactiveChipClass:
+      'bg-neutral-900/95 border-neutral-600/85 text-neutral-100 hover:border-amber-400/70 hover:bg-neutral-800/90',
     checkboxActiveClass:
-      'bg-sky-400 border-sky-300 text-neutral-950 shadow-[0_0_8px_-1px_rgba(56,189,248,0.55)]',
-    itemActiveClass: 'bg-sky-500/[0.08]',
+      'bg-amber-400 border-amber-300 text-neutral-950 shadow-[0_0_8px_-1px_rgba(251,191,36,0.65)]',
+    filterActiveClass:
+      'bg-amber-500/18 border-amber-400/75 text-amber-200 shadow-[0_0_12px_-4px_rgba(245,158,11,0.5)]',
   },
   {
-    key: 'gold',
-    label: 'Barra de Ouro',
-    filterActiveClass:
-      'bg-amber-500/15 border-amber-400/60 text-amber-200 shadow-[0_0_12px_-4px_rgba(245,158,11,0.45)]',
-    iconColorClass: 'text-amber-400',
+    key: 'bon',
+    label: 'BON',
+    badgeColorClass: 'text-violet-300',
+    activeChipClass:
+      'bg-violet-500/22 border-violet-400 text-violet-100 shadow-[0_0_10px_-3px_rgba(167,139,250,0.5)]',
+    inactiveChipClass:
+      'bg-neutral-900/95 border-neutral-600/85 text-neutral-100 hover:border-violet-400/70 hover:bg-neutral-800/90',
     checkboxActiveClass:
-      'bg-amber-400 border-amber-300 text-neutral-950 shadow-[0_0_8px_-1px_rgba(251,191,36,0.55)]',
-    itemActiveClass: 'bg-amber-500/[0.08]',
+      'bg-violet-400 border-violet-300 text-neutral-950 shadow-[0_0_8px_-1px_rgba(167,139,250,0.65)]',
+    filterActiveClass:
+      'bg-violet-500/18 border-violet-400/75 text-violet-200 shadow-[0_0_12px_-4px_rgba(167,139,250,0.5)]',
   },
 ];
 
-export function renderFlagIcon(key: FlagFilterKey, className?: string, active = true) {
-  if (key === 'money') return <MoneySymbolIcon className={className || 'w-[17px] h-[17px]'} />;
-  if (key === 'transfer') return <TwoWayArrowsIcon className={className || 'w-[17px] h-[17px]'} />;
-  return <GoldBarIcon className={className || 'w-[19px] h-[14px]'} active={active} />;
-}
+export const FILTER_FLAG_META: Array<{
+  key: FlagFilterKey;
+  label: string;
+  filterActiveClass: string;
+  badgeColorClass: string;
+}> = [
+  {
+    key: 'moneyDate',
+    label: '$ Data',
+    filterActiveClass:
+      'bg-emerald-500/18 border-emerald-400/75 text-emerald-200 shadow-[0_0_12px_-4px_rgba(16,185,129,0.5)]',
+    badgeColorClass: 'text-emerald-400',
+  },
+  ...DAILY_FLAG_META.map((m) => ({
+    key: m.key as FlagFilterKey,
+    label: m.label,
+    filterActiveClass: m.filterActiveClass,
+    badgeColorClass: m.badgeColorClass,
+  })),
+];
 
 interface PWAFlagsControlProps {
   item: PWAItem;
+  todayStr: string;
   flags?: PWAFlags;
-  onToggleFlag: (item: PWAItem, flag: FlagFilterKey) => void;
+  onToggleFlag: (item: PWAItem, flag: DailyFlagKey) => void;
+  onUpdateMoneyDate?: (item: PWAItem, moneyDate: string) => void;
   compact?: boolean;
 }
 
 export const PWAFlagsControl: React.FC<PWAFlagsControlProps> = ({
   item,
+  todayStr,
   flags,
   onToggleFlag,
+  onUpdateMoneyDate,
   compact = false,
 }) => {
   const effectiveFlags = flags ?? item.flags ?? {};
+  const persistedDate = effectiveFlags.moneyDate || '';
+  const [draftDate, setDraftDate] = useState(persistedDate);
+
+  useEffect(() => {
+    setDraftDate(persistedDate);
+  }, [persistedDate, item.id]);
+
+  const commitDate = (rawVal: string) => {
+    const normalized = normalizeDayMonthOnBlur(rawVal);
+    setDraftDate(normalized);
+    if (onUpdateMoneyDate && normalized !== persistedDate) {
+      onUpdateMoneyDate(item, normalized);
+    }
+  };
+
+  const hasDateValue = draftDate.trim().length > 0;
 
   return (
     <div
-      className={`inline-flex items-center ${compact ? 'gap-2.5' : 'gap-3.5'} flex-wrap`}
+      className={`flex items-center justify-between flex-wrap ${compact ? 'gap-1.5' : 'gap-2'}`}
       onClick={(e) => e.stopPropagation()}
     >
-      {FLAG_META.map(({ key, label, iconColorClass, checkboxActiveClass, itemActiveClass }) => {
-        const checked = Boolean(effectiveFlags[key]);
-        return (
-          <button
-            key={key}
-            type="button"
-            role="checkbox"
-            aria-checked={checked}
-            aria-label={`Marcar ${label} em ${item.name}`}
-            data-testid={`pwa-flag-${key}-${item.id}`}
-            title={`${label}: ${checked ? 'Marcado (clique para desmarcar)' : 'Desmarcado (clique para marcar)'}`}
-            onClick={(e) => {
-              e.stopPropagation();
-              onToggleFlag(item, key);
-            }}
-            className={`group/flag inline-flex items-center gap-1.5 px-1.5 py-1 -mx-1 rounded-md transition-all duration-150 cursor-pointer select-none focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-emerald-400 ${
-              checked
-                ? itemActiveClass
-                : 'hover:bg-white/[0.05]'
-            }`}
-          >
-            <span
-              className={`inline-flex items-center justify-center transition-all duration-150 ${
-                checked
-                  ? iconColorClass
-                  : 'text-neutral-400/80 group-hover/flag:text-neutral-200'
-              }`}
-            >
-              {renderFlagIcon(
-                key,
-                key === 'gold'
-                  ? compact
-                    ? 'w-[17px] h-[12px]'
-                    : 'w-[19px] h-[14px]'
-                  : compact
-                  ? 'w-[15px] h-[15px]'
-                  : 'w-[17px] h-[17px]',
-                checked
-              )}
-            </span>
-            <span
-              className={`w-[15px] h-[15px] rounded-[4px] border flex items-center justify-center shrink-0 transition-all duration-150 ${
-                checked
-                  ? checkboxActiveClass
-                  : 'border-neutral-600/85 bg-neutral-950/70 group-hover/flag:border-neutral-400 text-transparent'
-              }`}
-            >
-              <Check className="w-2.5 h-2.5 stroke-[3]" />
-            </span>
-          </button>
-        );
-      })}
+      {/* Left: Prominent Green $ Icon + Persistent DD/MM Input */}
+      <div className="inline-flex items-center gap-1.5 shrink-0">
+        <span
+          className="inline-flex items-center justify-center shrink-0"
+          title="Data de Dia/Mês (não reseta à meia-noite)"
+        >
+          <MoneySymbolIcon className={compact ? 'w-[17px] h-[17px]' : 'w-[20px] h-[20px]'} />
+        </span>
+        <input
+          type="text"
+          inputMode="numeric"
+          maxLength={5}
+          value={draftDate}
+          placeholder="DD/MM"
+          aria-label={`Data dia e mês de ${item.name}`}
+          data-testid={`pwa-money-date-${item.id}`}
+          title="Dia e mês (DD/MM) — permanente, não reseta à meia-noite"
+          onClick={(e) => e.stopPropagation()}
+          onChange={(e) => {
+            const next = sanitizeDayMonthTyping(e.target.value);
+            setDraftDate(next);
+            if (onUpdateMoneyDate && (next === '' || /^\d{2}\/\d{2}$/.test(next))) {
+              onUpdateMoneyDate(item, next);
+            }
+          }}
+          onBlur={(e) => commitDate(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              commitDate((e.target as HTMLInputElement).value);
+              (e.target as HTMLInputElement).blur();
+            } else if (e.key === 'Escape') {
+              setDraftDate(persistedDate);
+              (e.target as HTMLInputElement).blur();
+            }
+          }}
+          className={`${
+            compact ? 'w-[48px] h-[22px] text-[10px]' : 'w-[54px] h-[24px] text-[11px]'
+          } font-mono font-bold text-center rounded-md border px-1 transition-colors focus:outline-none focus:ring-1 focus:ring-emerald-400 ${
+            hasDateValue
+              ? 'bg-emerald-950/45 border-emerald-400/75 text-emerald-300 shadow-[0_0_8px_-3px_rgba(16,185,129,0.4)]'
+              : 'bg-neutral-950/90 border-neutral-600/85 text-neutral-100 placeholder:text-neutral-500 hover:border-emerald-400/60'
+          }`}
+        />
+      </div>
+
+      {/* Right: Highlighted Daily Checkboxes (COM, RD, IRB — auto-reset at midnight) */}
+      <div className={`inline-flex items-center ${compact ? 'gap-1' : 'gap-1.5'} flex-wrap`}>
+        {DAILY_FLAG_META.map(
+          ({
+            key,
+            label,
+            badgeColorClass,
+            activeChipClass,
+            inactiveChipClass,
+            checkboxActiveClass,
+          }) => {
+            const checked = isPWAFlagActive({ flags: effectiveFlags }, key, todayStr);
+            return (
+              <button
+                key={key}
+                type="button"
+                role="checkbox"
+                aria-checked={checked}
+                aria-label={`Marcar ${label} em ${item.name}`}
+                data-testid={`pwa-flag-${key}-${item.id}`}
+                title={`${label}: ${
+                  checked ? 'Marcado hoje' : 'Desmarcado'
+                } (reseta diariamente à meia-noite)`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onToggleFlag(item, key);
+                }}
+                className={`group/flag inline-flex items-center ${
+                  compact ? 'gap-1 px-1.5 py-0.5 text-[10px]' : 'gap-1.5 px-1.5 py-0.5 text-[11px]'
+                } rounded-md border font-bold tracking-wide transition-all duration-150 cursor-pointer select-none focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-emerald-400 ${
+                  checked ? activeChipClass : inactiveChipClass
+                }`}
+              >
+                <span className={checked ? '' : badgeColorClass}>{label}</span>
+                <span
+                  className={`${
+                    compact ? 'w-[13px] h-[13px]' : 'w-[14px] h-[14px]'
+                  } rounded-[3px] border flex items-center justify-center shrink-0 transition-all duration-150 ${
+                    checked
+                      ? checkboxActiveClass
+                      : 'border-neutral-400/85 bg-neutral-950 group-hover/flag:border-white text-transparent'
+                  }`}
+                >
+                  <Check className="w-2.5 h-2.5 stroke-[3.2]" />
+                </span>
+              </button>
+            );
+          }
+        )}
+      </div>
     </div>
   );
 };

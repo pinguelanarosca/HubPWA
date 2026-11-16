@@ -12,8 +12,10 @@ import {
   FolderInput,
   CheckCircle2,
   Clock,
+  CheckSquare,
+  Square,
 } from 'lucide-react';
-import { FlagFilterKey, PWAFolder, PWAItem } from '../types/pwa';
+import { DailyFlagKey, PWAFolder, PWAItem } from '../types/pwa';
 import { PWAIcon } from './PWAIcon';
 import { CardsView } from './CardsView';
 import { GROUP_COLOR_THEMES } from '../utils/groupLogic';
@@ -30,10 +32,12 @@ interface FolderViewProps {
   groupColors?: Record<string, string>;
   selectedIds?: Set<string>;
   onToggleSelect?: (id: string) => void;
+  onToggleSelectAll?: () => void;
   onLaunch: (item: PWAItem) => void;
   onToggleStatus: (item: PWAItem) => void;
   onUpdateNote: (item: PWAItem, newNote: string) => void;
-  onToggleFlag?: (item: PWAItem, flag: FlagFilterKey) => void;
+  onToggleFlag?: (item: PWAItem, flag: DailyFlagKey) => void;
+  onUpdateMoneyDate?: (item: PWAItem, moneyDate: string) => void;
   onTogglePin?: (item: PWAItem) => void;
   onSetRating?: (item: PWAItem, rating: number) => void;
   onEdit: (item: PWAItem) => void;
@@ -59,10 +63,12 @@ export const FolderView: React.FC<FolderViewProps> = ({
   groupColors = {},
   selectedIds = new Set<string>(),
   onToggleSelect,
+  onToggleSelectAll,
   onLaunch,
   onToggleStatus,
   onUpdateNote,
   onToggleFlag,
+  onUpdateMoneyDate,
   onTogglePin,
   onSetRating,
   onEdit,
@@ -465,12 +471,41 @@ export const FolderView: React.FC<FolderViewProps> = ({
 
       {/* PWAs at Current Folder Level */}
       <section className="space-y-2.5">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-2 flex-wrap">
           <h2 className="text-xs font-bold text-neutral-300 uppercase tracking-wider">
             {currentFolder
               ? `PWAs em "${currentFolder.name}" (${levelItems.length})`
               : `PWAs sem pasta (${levelItems.length})`}
           </h2>
+          {levelItems.length > 0 && onToggleSelectAll && (() => {
+            const allLevelSelected = levelItems.every((it) => selectedIds.has(it.id));
+            return (
+              <button
+                type="button"
+                onClick={onToggleSelectAll}
+                data-testid="folder-select-all-btn"
+                aria-pressed={allLevelSelected}
+                className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold border transition-colors cursor-pointer ${
+                  allLevelSelected
+                    ? 'bg-emerald-500/20 border-emerald-400/75 text-emerald-200'
+                    : 'bg-[#14151a] hover:bg-[#1f212a] border-[#242633] text-neutral-200 hover:text-white'
+                }`}
+              >
+                {allLevelSelected ? (
+                  <CheckSquare className="w-3.5 h-3.5 text-emerald-400" />
+                ) : (
+                  <Square className="w-3.5 h-3.5 text-neutral-400" />
+                )}
+                <span>
+                  {allLevelSelected
+                    ? `Desmarcar todas (${levelItems.length})`
+                    : currentFolder
+                    ? `Selecionar todas da pasta (${levelItems.length})`
+                    : `Selecionar todas (${levelItems.length})`}
+                </span>
+              </button>
+            );
+          })()}
         </div>
 
         {levelItems.length === 0 ? (
@@ -508,6 +543,7 @@ export const FolderView: React.FC<FolderViewProps> = ({
             onToggleStatus={onToggleStatus}
             onUpdateNote={onUpdateNote}
             onToggleFlag={onToggleFlag}
+            onUpdateMoneyDate={onUpdateMoneyDate}
             onTogglePin={onTogglePin}
             onSetRating={onSetRating}
             onEdit={onEdit}

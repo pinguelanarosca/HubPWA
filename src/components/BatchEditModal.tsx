@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { X, Layers, Star, Tag, FileText, FolderInput } from 'lucide-react';
+import { X, Layers, Star, StarOff, Tag, FileText, FolderInput } from 'lucide-react';
 import { PWAFolder } from '../types/pwa';
 import { flattenFoldersHierarchy } from '../utils/folderLogic';
 import { StarRating } from './StarRating';
@@ -164,11 +164,22 @@ export const BatchEditModal: React.FC<BatchEditModalProps> = ({
               </span>
             </label>
             {changeRating && (
-              <div className="pt-1 flex items-center justify-between">
+              <div className="pt-1 flex items-center justify-between gap-2 flex-wrap">
                 <span className="text-xs text-neutral-400">
                   {rating === 0 ? 'Sem estrelas' : `${rating} estrela${rating > 1 ? 's' : ''}`}
                 </span>
-                <StarRating rating={rating} onChange={setRating} size="md" />
+                <div className="flex items-center gap-2">
+                  <StarRating rating={rating} onChange={setRating} size="md" />
+                  <button
+                    type="button"
+                    onClick={() => setRating(0)}
+                    title="Remover todas as estrelas"
+                    className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium bg-neutral-900 hover:bg-rose-950/60 border border-neutral-700 hover:border-rose-700/70 text-neutral-300 hover:text-rose-300 transition-colors cursor-pointer"
+                  >
+                    <StarOff className="w-3 h-3 text-rose-400" />
+                    <span>Remover</span>
+                  </button>
+                </div>
               </div>
             )}
           </div>

@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { FlagFilterKey, PWAFolder, PWAItem } from '../types/pwa';
+import { DailyFlagKey, PWAFolder, PWAItem } from '../types/pwa';
 import { PWAIcon } from './PWAIcon';
 import { InlineNoteInput } from './InlineNoteInput';
 import { StarRating } from './StarRating';
@@ -20,7 +20,8 @@ interface CardsViewProps {
   onLaunch: (item: PWAItem) => void;
   onToggleStatus: (item: PWAItem) => void;
   onUpdateNote: (item: PWAItem, newNote: string) => void;
-  onToggleFlag?: (item: PWAItem, flag: FlagFilterKey) => void;
+  onToggleFlag?: (item: PWAItem, flag: DailyFlagKey) => void;
+  onUpdateMoneyDate?: (item: PWAItem, moneyDate: string) => void;
   onTogglePin?: (item: PWAItem) => void;
   onSetRating?: (item: PWAItem, rating: number) => void;
   onEdit: (item: PWAItem) => void;
@@ -44,6 +45,7 @@ export const CardsView: React.FC<CardsViewProps> = ({
   onToggleStatus,
   onUpdateNote,
   onToggleFlag,
+  onUpdateMoneyDate,
   onSetRating,
   onEdit,
   onClone,
@@ -446,15 +448,20 @@ export const CardsView: React.FC<CardsViewProps> = ({
                   compact={false}
                 />
               </div>
-
-              {/* 4. Checkable Icons Below Notes (Money, Going/Returning Arrows, Gold Bar) */}
-              {onToggleFlag && (
-                <div className="mt-2.5">
-                  <PWAFlagsControl item={item} onToggleFlag={onToggleFlag} />
-                </div>
-              )}
             </div>
           </div>
+
+          {/* Card Bottom Bar (Below Icon & Notes): Vibrant Green $ + DD/MM Date on Left | COM, RD, IRB Daily Checkboxes */}
+          {onToggleFlag && (
+            <div className="mt-3 pt-2.5 border-t border-white/[0.08]">
+              <PWAFlagsControl
+                item={item}
+                todayStr={todayStr}
+                onToggleFlag={onToggleFlag}
+                onUpdateMoneyDate={onUpdateMoneyDate}
+              />
+            </div>
+          )}
         </div>
       </div>
     );

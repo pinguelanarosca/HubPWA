@@ -1,6 +1,6 @@
 import React, { useMemo } from 'react';
 import { Trash2, Edit2, User, Clock, Folder, Copy } from 'lucide-react';
-import { FlagFilterKey, PWAFolder, PWAItem } from '../types/pwa';
+import { DailyFlagKey, PWAFolder, PWAItem } from '../types/pwa';
 import { PWAIcon } from './PWAIcon';
 import { StatusIndicator } from './StatusIndicator';
 import { InlineNoteInput } from './InlineNoteInput';
@@ -15,7 +15,8 @@ interface CompactTableViewProps {
   onLaunch: (item: PWAItem) => void;
   onToggleStatus: (item: PWAItem) => void;
   onUpdateNote: (item: PWAItem, newNote: string) => void;
-  onToggleFlag?: (item: PWAItem, flag: FlagFilterKey) => void;
+  onToggleFlag?: (item: PWAItem, flag: DailyFlagKey) => void;
+  onUpdateMoneyDate?: (item: PWAItem, moneyDate: string) => void;
   onTogglePin: (item: PWAItem) => void;
   onSetRating?: (item: PWAItem, rating: number) => void;
   onEdit: (item: PWAItem) => void;
@@ -31,6 +32,7 @@ export const CompactTableView: React.FC<CompactTableViewProps> = ({
   onToggleStatus,
   onUpdateNote,
   onToggleFlag,
+  onUpdateMoneyDate,
   onTogglePin,
   onSetRating,
   onEdit,
@@ -58,7 +60,7 @@ export const CompactTableView: React.FC<CompactTableViewProps> = ({
             <th className="py-2 px-3 w-44">Log de Acesso (Data/Hora)</th>
             <th className="py-2 px-3 min-w-[200px]">PWA & Domínio</th>
             <th className="py-2 px-3 min-w-[200px]">Anotações (Clique para editar)</th>
-            {onToggleFlag && <th className="py-2 px-3 w-48">Marcações</th>}
+            {onToggleFlag && <th className="py-2 px-3 w-64">Data ($) / Marcações</th>}
             <th className="py-2 px-3 w-20 text-right">Ações</th>
           </tr>
         </thead>
@@ -188,10 +190,16 @@ export const CompactTableView: React.FC<CompactTableViewProps> = ({
                   />
                 </td>
 
-                {/* Checkable Flag Icons */}
+                {/* Reorganized Date ($) & Daily Checkboxes */}
                 {onToggleFlag && (
                   <td className="py-1 px-3 whitespace-nowrap">
-                    <PWAFlagsControl item={item} onToggleFlag={onToggleFlag} compact={true} />
+                    <PWAFlagsControl
+                      item={item}
+                      todayStr={todayStr}
+                      onToggleFlag={onToggleFlag}
+                      onUpdateMoneyDate={onUpdateMoneyDate}
+                      compact={true}
+                    />
                   </td>
                 )}
 

@@ -4,9 +4,11 @@
  */
 
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { PWAFolder, PWAItem, ViewDensity, StatusFilter, StarFilter, SortOption, FlagFilterKey } from './types/pwa';
+import { DailyFlagKey, PWAFolder, PWAItem, ViewDensity, StatusFilter, StarFilter, SortOption, FlagFilterKey } from './types/pwa';
 import {
   getTodayString,
+  getMsUntilNextMidnight,
+  getScopedSelectableItems,
   markAsAccessed,
   toggleAccessedToday,
   calculateStats,
@@ -16,7 +18,13 @@ import {
   isSameOrMatchingPWA,
   extractChromeProfileDirectory,
   togglePWAFlag,
+  updatePWAMoneyDate,
   countPWAFlags,
+  migratePWAFlags,
+  batchSetRating,
+  batchSetStatus,
+  batchSetDailyFlag,
+  batchClearFlags,
   ChromeProfileOption,
   clonePWAForProfile,
 } from './utils/pwaLogic';
@@ -81,11 +89,13 @@ export function repairAndSanitizePWA(it: PWAItem): PWAItem {
   }
 
   const profileDirectory = it.profileDirectory?.trim() || extractChromeProfileDirectory(it);
+  const migratedFlags = it.flags ? migratePWAFlags(it.flags as unknown as Record<string, unknown>) : undefined;
 
   return {
     ...it,
     url,
     icon,
+    ...(migratedFlags ? { flags: migratedFlags } : {}),
     ...(profileDirectory ? { profileDirectory } : {}),
   };
 }
@@ -155,6 +165,11 @@ export default function App() {
   // Card batch selection state
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
+  // Clear selection when changing active folder or view mode so batch actions only target visible scope
+  useEffect(() => {
+    setSelectedIds((prev) => (prev.size > 0 ? new Set() : prev));
+  }, [currentExplorerFolderId, selectedFolder, density]);
+
   // Modals state
   const [isAddEditOpen, setIsAddEditOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<PWAItem | null>(null);
@@ -223,7 +238,8 @@ export default function App() {
   // Current day string (YYYY-MM-DD)
   const [todayStr, setTodayStr] = useState(() => getTodayString());
 
-  // Periodically keep todayStr in sync (in case the tab is open past midnight or user switches back)
+  // Keep todayStr synced: exact timer for local midnight (00:00) + 30s fallback + focus check.
+  // When todayStr rolls over at midnight, COM/RB/BON daily selections disappear automatically.
   useEffect(() => {
     const syncToday = () => {
       const current = getTodayString();
@@ -231,9 +247,11 @@ export default function App() {
         setTodayStr(current);
       }
     };
+    const midnightTimeout = setTimeout(syncToday, getMsUntilNextMidnight());
     const interval = setInterval(syncToday, 30000);
     window.addEventListener('focus', syncToday);
     return () => {
+      clearTimeout(midnightTimeout);
       clearInterval(interval);
       window.removeEventListener('focus', syncToday);
     };
@@ -574,8 +592,8 @@ export default function App() {
     return { unfiledCount: unfiled, folderItemCounts: recursiveCounts };
   }, [cleanItems, folders, validFolderIds]);
 
-  // Flag counts across all clean items
-  const flagCounts = useMemo(() => countPWAFlags(cleanItems), [cleanItems]);
+  // Flag counts across all clean items (for current todayStr)
+  const flagCounts = useMemo(() => countPWAFlags(cleanItems, todayStr), [cleanItems, todayStr]);
 
   // Filtered and sorted items
   const displayedItems = useMemo(() => {
@@ -598,6 +616,19 @@ export default function App() {
       todayStr,
     });
   }, [cleanItems, folders, validFolderIds, density, selectedFolder, search, selectedGroup, statusFilter, starFilter, flagFilters, sortBy, todayStr]);
+
+  // Scoped selectable items (when inside a folder -> ONLY that folder; root/unfiled -> ONLY unfiled; cards -> displayedItems)
+  const selectableItems = useMemo(() => {
+    return getScopedSelectableItems(displayedItems, {
+      density,
+      folders,
+      currentFolderId: currentExplorerFolderId,
+    });
+  }, [displayedItems, density, folders, currentExplorerFolderId]);
+
+  const allSelectableSelected = useMemo(() => {
+    return selectableItems.length > 0 && selectableItems.every((it) => selectedIds.has(it.id));
+  }, [selectableItems, selectedIds]);
 
   // Today display string in full Portuguese without abbreviation ambiguities
   const todayDisplay = useMemo(() => {
@@ -732,11 +763,32 @@ export default function App() {
     }).catch(() => {});
   }, []);
 
-  // Toggle custom icon flag (money, transfer, gold)
-  const handleToggleFlag = useCallback((item: PWAItem, flag: FlagFilterKey) => {
-    const updated = togglePWAFlag(item, flag);
+  // Toggle daily-resetting selection (COM, RB, BON) scoped to todayStr
+  const handleToggleFlag = useCallback((item: PWAItem, flag: DailyFlagKey) => {
+    const updated = togglePWAFlag(item, flag, todayStr);
     setItems((prev) => {
-      const next = prev.map((it) => (isSameOrMatchingPWA(it, item) ? togglePWAFlag(it, flag) : it));
+      const next = prev.map((it) =>
+        isSameOrMatchingPWA(it, item) ? togglePWAFlag(it, flag, todayStr) : it
+      );
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+    fetch('/api/pwas/state', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ items: [updated] }),
+    }).catch(() => {});
+  }, [todayStr]);
+
+  // Update persistent DD/MM date beside the green $ icon (never resets at midnight)
+  const handleUpdateMoneyDate = useCallback((item: PWAItem, moneyDate: string) => {
+    const updated = updatePWAMoneyDate(item, moneyDate);
+    setItems((prev) => {
+      const next = prev.map((it) =>
+        isSameOrMatchingPWA(it, item) ? updatePWAMoneyDate(it, moneyDate) : it
+      );
       try {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
       } catch {}
@@ -924,7 +976,7 @@ export default function App() {
 
   const handleToggleSelectAll = useCallback(() => {
     setSelectedIds((prev) => {
-      const visibleIds = displayedItems.map((it) => it.id);
+      const visibleIds = selectableItems.map((it) => it.id);
       const allSelected = visibleIds.length > 0 && visibleIds.every((id) => prev.has(id));
       if (allSelected) {
         return new Set();
@@ -932,43 +984,154 @@ export default function App() {
         return new Set(visibleIds);
       }
     });
-  }, [displayedItems]);
+  }, [selectableItems]);
 
   const handleDeselectAll = useCallback(() => {
     setSelectedIds(new Set());
   }, []);
 
-  // Batch toggle status (acessado / pendente)
-  const handleBatchToggleStatus = useCallback(() => {
-    if (selectedIds.size === 0) return;
+  // Helper to resolve target IDs for bulk actions: selected items if any, otherwise scoped visible items
+  const getBulkTargetIds = useCallback(() => {
+    if (selectedIds.size > 0) return selectedIds;
+    return new Set(selectableItems.map((it) => it.id));
+  }, [selectedIds, selectableItems]);
+
+  // Batch set daily status ('accessed' | 'pending' | 'toggle')
+  const handleBatchSetStatus = useCallback((mode: 'accessed' | 'pending' | 'toggle') => {
+    const targetIds = getBulkTargetIds();
+    if (targetIds.size === 0) return;
+
+    const now = new Date();
     setItems((prev) => {
-      const updatedList: PWAItem[] = [];
-      const next = prev.map((it) => {
-        if (selectedIds.has(it.id)) {
-          const updated = toggleAccessedToday(it, todayStr);
-          updatedList.push(updated);
-          return updated;
-        }
-        return it;
-      });
-      if (updatedList.length > 0) {
+      const next = batchSetStatus(prev, targetIds, mode, now, todayStr);
+      const changed = next.filter((it) => targetIds.has(it.id));
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+      } catch {}
+      if (changed.length > 0) {
         fetch('/api/pwas/state', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ items: updatedList }),
+          body: JSON.stringify({ items: changed }),
         }).catch(() => {});
       }
       return next;
     });
-  }, [selectedIds, todayStr]);
+  }, [getBulkTargetIds, todayStr]);
 
-  // Batch delete selected items
+  // Batch set star rating (0 clears all stars, 1..5 sets stars)
+  const handleBatchSetRating = useCallback((rating: number) => {
+    const targetIds = getBulkTargetIds();
+    if (targetIds.size === 0) return;
+
+    setItems((prev) => {
+      const next = batchSetRating(prev, targetIds, rating);
+      const changed = next.filter((it) => targetIds.has(it.id));
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+      } catch {}
+      if (changed.length > 0) {
+        fetch('/api/pwas/state', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ items: changed }),
+        }).catch(() => {});
+      }
+      return next;
+    });
+  }, [getBulkTargetIds]);
+
+  // Batch set or clear daily flag (COM, RB, BON)
+  const handleBatchSetDailyFlag = useCallback((flag: DailyFlagKey, active: boolean) => {
+    const targetIds = getBulkTargetIds();
+    if (targetIds.size === 0) return;
+
+    setItems((prev) => {
+      const next = batchSetDailyFlag(prev, targetIds, flag, active, todayStr);
+      const changed = next.filter((it) => targetIds.has(it.id));
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+      } catch {}
+      if (changed.length > 0) {
+        fetch('/api/pwas/state', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ items: changed }),
+        }).catch(() => {});
+      }
+      return next;
+    });
+  }, [getBulkTargetIds, todayStr]);
+
+  // Batch clear flags (daily flags and/or moneyDate)
+  const handleBatchClearFlags = useCallback((options: { clearDaily?: boolean; clearMoneyDate?: boolean } = { clearDaily: true, clearMoneyDate: false }) => {
+    const targetIds = getBulkTargetIds();
+    if (targetIds.size === 0) return;
+
+    setItems((prev) => {
+      const next = batchClearFlags(prev, targetIds, options);
+      const changed = next.filter((it) => targetIds.has(it.id));
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+      } catch {}
+      if (changed.length > 0) {
+        fetch('/api/pwas/state', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ items: changed }),
+        }).catch(() => {});
+      }
+      return next;
+    });
+  }, [getBulkTargetIds]);
+
+  // Batch refresh icons for targeted PWAs
+  const handleBatchRefreshIcons = useCallback(() => {
+    const targetIds = getBulkTargetIds();
+    if (targetIds.size === 0) return;
+
+    setItems((prev) => {
+      const next = prev.map((it) => {
+        if (!targetIds.has(it.id)) return it;
+        const repaired = repairAndSanitizePWA(it);
+        return {
+          ...repaired,
+          icon: resolveFaviconAtInsertion(repaired.url, undefined, repaired.name),
+        };
+      });
+      const changed = next.filter((it) => targetIds.has(it.id));
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+      } catch {}
+      if (changed.length > 0) {
+        fetch('/api/pwas/state', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ items: changed }),
+        }).catch(() => {});
+      }
+      return next;
+    });
+  }, [getBulkTargetIds]);
+
+  // Open BatchEditModal for selected PWAs or all scoped visible PWAs
+  const handleBulkOpenEdit = useCallback(() => {
+    const targetIds = getBulkTargetIds();
+    if (targetIds.size === 0) return;
+    if (selectedIds.size === 0) {
+      setSelectedIds(new Set(targetIds));
+    }
+    setIsBatchEditOpen(true);
+  }, [getBulkTargetIds, selectedIds.size]);
+
+  // Batch delete selected or scoped visible items
   const handleBatchDelete = useCallback(() => {
-    if (selectedIds.size === 0) return;
-    const count = selectedIds.size;
+    const targetIds = getBulkTargetIds();
+    if (targetIds.size === 0) return;
+    const count = targetIds.size;
     if (window.confirm(`Tem certeza que deseja excluir ${count} PWA${count > 1 ? 's' : ''} selecionada${count > 1 ? 's' : ''}?`)) {
-      const idsToDelete = Array.from(selectedIds);
-      setItems((prev) => prev.filter((it) => !selectedIds.has(it.id)));
+      const idsToDelete = Array.from(targetIds);
+      setItems((prev) => prev.filter((it) => !targetIds.has(it.id)));
       setSelectedIds(new Set());
 
       idsToDelete.forEach((id) => {
@@ -979,7 +1142,7 @@ export default function App() {
         }).catch(() => {});
       });
     }
-  }, [selectedIds]);
+  }, [getBulkTargetIds]);
 
   // Batch edit apply
   const handleApplyBatchEdit = useCallback((changes: {
@@ -1510,6 +1673,18 @@ export default function App() {
               accessedCount={stats.accessedTodayCount}
               groupByGroup={groupByGroup}
               onToggleGroupByGroup={handleToggleGroupByGroup}
+              selectableCount={selectableItems.length}
+              selectedCount={selectedIds.size}
+              allSelected={allSelectableSelected}
+              onToggleSelectAll={handleToggleSelectAll}
+              onDeselectAll={handleDeselectAll}
+              onBulkSetRating={handleBatchSetRating}
+              onBulkSetStatus={(mode) => handleBatchSetStatus(mode)}
+              onBulkSetDailyFlag={handleBatchSetDailyFlag}
+              onBulkClearFlags={() => handleBatchClearFlags({ clearDaily: true, clearMoneyDate: false })}
+              onBulkRefreshIcons={handleBatchRefreshIcons}
+              onBulkOpenEdit={handleBulkOpenEdit}
+              onBulkDelete={handleBatchDelete}
             />
 
             {/* View Render */}
@@ -1526,10 +1701,12 @@ export default function App() {
                   groupColors={groupColors}
                   selectedIds={selectedIds}
                   onToggleSelect={handleToggleSelect}
+                  onToggleSelectAll={handleToggleSelectAll}
                   onLaunch={handleLaunch}
                   onToggleStatus={handleToggleStatus}
                   onUpdateNote={handleUpdateNote}
                   onToggleFlag={handleToggleFlag}
+                  onUpdateMoneyDate={handleUpdateMoneyDate}
                   onTogglePin={handleTogglePin}
                   onSetRating={handleSetRating}
                   onEdit={(item) => {
@@ -1560,6 +1737,7 @@ export default function App() {
                   onToggleStatus={handleToggleStatus}
                   onUpdateNote={handleUpdateNote}
                   onToggleFlag={handleToggleFlag}
+                  onUpdateMoneyDate={handleUpdateMoneyDate}
                   onTogglePin={handleTogglePin}
                   onSetRating={handleSetRating}
                   onEdit={(item) => {
@@ -1579,6 +1757,7 @@ export default function App() {
                   onToggleStatus={handleToggleStatus}
                   onUpdateNote={handleUpdateNote}
                   onToggleFlag={handleToggleFlag}
+                  onUpdateMoneyDate={handleUpdateMoneyDate}
                   onTogglePin={handleTogglePin}
                   onSetRating={handleSetRating}
                   onEdit={(item) => {
@@ -1603,6 +1782,7 @@ export default function App() {
                   onToggleStatus={handleToggleStatus}
                   onUpdateNote={handleUpdateNote}
                   onToggleFlag={handleToggleFlag}
+                  onUpdateMoneyDate={handleUpdateMoneyDate}
                   onTogglePin={handleTogglePin}
                   onSetRating={handleSetRating}
                   onEdit={(item) => {
@@ -1635,11 +1815,15 @@ export default function App() {
       {/* Floating Batch Actions Bar (Tarefas em Lote) */}
       <BatchActionsBar
         selectedCount={selectedIds.size}
-        totalCount={displayedItems.length}
-        allSelected={displayedItems.length > 0 && displayedItems.every((it) => selectedIds.has(it.id))}
+        totalCount={selectableItems.length}
+        allSelected={allSelectableSelected}
         onToggleSelectAll={handleToggleSelectAll}
         onDeselectAll={handleDeselectAll}
-        onBatchToggleStatus={handleBatchToggleStatus}
+        onBatchSetStatus={handleBatchSetStatus}
+        onBatchSetRating={handleBatchSetRating}
+        onBatchSetDailyFlag={handleBatchSetDailyFlag}
+        onBatchClearFlags={handleBatchClearFlags}
+        onBatchRefreshIcons={handleBatchRefreshIcons}
         onBatchAssignGroup={handleBatchAssignGroup}
         onBatchAssignFolder={(folderId) => handleMovePWAsToFolder(Array.from(selectedIds), folderId)}
         onCreateAndAssignFolder={handleCreateAndAssignFolder}

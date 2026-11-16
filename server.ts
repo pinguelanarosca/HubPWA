@@ -43,9 +43,10 @@ interface ServerPWAState {
   folderId?: string | null;
   aliases?: string[];
   flags?: {
-    money?: boolean;
-    transfer?: boolean;
-    gold?: boolean;
+    moneyDate?: string;
+    comDate?: string | null;
+    rbDate?: string | null;
+    bonDate?: string | null;
   };
   clonedFromId?: string;
   lastAccessedDate?: string | null;
@@ -746,9 +747,26 @@ app.post('/api/pwas/state', (req, res) => {
           flags:
             item.flags && typeof item.flags === 'object'
               ? {
-                  money: Boolean(item.flags.money),
-                  transfer: Boolean(item.flags.transfer),
-                  gold: Boolean(item.flags.gold),
+                  ...(typeof item.flags.moneyDate === 'string'
+                    ? { moneyDate: item.flags.moneyDate.slice(0, 10) }
+                    : {}),
+                  ...(item.flags.comDate !== undefined
+                    ? { comDate: item.flags.comDate ? String(item.flags.comDate) : null }
+                    : {}),
+                  ...((item.flags.rbDate !== undefined || item.flags.rdDate !== undefined)
+                    ? {
+                        rbDate: (item.flags.rbDate ?? item.flags.rdDate)
+                          ? String(item.flags.rbDate ?? item.flags.rdDate)
+                          : null,
+                      }
+                    : {}),
+                  ...((item.flags.bonDate !== undefined || item.flags.irbDate !== undefined)
+                    ? {
+                        bonDate: (item.flags.bonDate ?? item.flags.irbDate)
+                          ? String(item.flags.bonDate ?? item.flags.irbDate)
+                          : null,
+                      }
+                    : {}),
                 }
               : db.pwas[item.id]?.flags,
           clonedFromId: item.clonedFromId || db.pwas[item.id]?.clonedFromId,
