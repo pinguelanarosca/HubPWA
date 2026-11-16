@@ -5,7 +5,7 @@ import { PWAIcon } from './PWAIcon';
 import { StatusIndicator } from './StatusIndicator';
 import { InlineNoteInput } from './InlineNoteInput';
 import { StarRating } from './StarRating';
-import { isAccessedToday, getCleanDomain, formatAccessDateTime } from '../utils/pwaLogic';
+import { isAccessedToday, getCleanDomain, formatAccessDateTime, formatChromeProfileDisplay } from '../utils/pwaLogic';
 
 interface DenseGridViewProps {
   items: PWAItem[];
@@ -46,6 +46,7 @@ export const DenseGridView: React.FC<DenseGridViewProps> = ({
         const domain = getCleanDomain(item.url);
         const currentRating = typeof item.rating === 'number' ? item.rating : (item.pinned ? 5 : 0);
         const accessLog = formatAccessDateTime(item.lastAccessedDate);
+        const chromeProfile = formatChromeProfileDisplay(item);
 
         return (
           <div
@@ -80,12 +81,6 @@ export const DenseGridView: React.FC<DenseGridViewProps> = ({
                       title={item.url}
                     >
                       <span className="truncate">{domain}</span>
-                      {item.profileDirectory && (
-                        <span className="inline-flex items-center gap-0.5 px-1 py-0.2 rounded bg-blue-950/80 border border-blue-800/80 text-blue-300 text-[8px] font-semibold font-mono shrink-0">
-                          <User className="w-2.5 h-2.5 text-blue-400" />
-                          <span>{item.profileDirectory}</span>
-                        </span>
-                      )}
                       {item.isPossibleDuplicate && (
                         <span
                           className="px-1 py-0.2 rounded bg-amber-950/80 border border-amber-800/80 text-amber-300 text-[8px] font-medium shrink-0"
@@ -109,13 +104,28 @@ export const DenseGridView: React.FC<DenseGridViewProps> = ({
                 </div>
               </div>
 
-              {/* 1 to 5 Stars Rating Bar */}
-              <div className="flex items-center justify-between text-[10px] text-neutral-400 mb-1.5 font-mono">
-                <StarRating
-                  rating={currentRating}
-                  onChange={(newRating) => (onSetRating ? onSetRating(item, newRating) : onTogglePin(item))}
-                  size="xs"
-                />
+              {/* 1 to 5 Stars Rating Bar + Chrome Profile Badge */}
+              <div className="flex items-center justify-between gap-1 text-[10px] text-neutral-400 mb-1.5 font-mono">
+                <div className="flex items-center gap-1 min-w-0">
+                  <StarRating
+                    rating={currentRating}
+                    onChange={(newRating) => (onSetRating ? onSetRating(item, newRating) : onTogglePin(item))}
+                    size="xs"
+                    compact={true}
+                    className="shrink-0"
+                  />
+                  {chromeProfile && (
+                    <span
+                      title={chromeProfile.tooltip}
+                      aria-label={chromeProfile.tooltip}
+                      data-testid={`chrome-profile-badge-${item.id}`}
+                      className="inline-flex items-center gap-0.5 px-1 py-0.5 rounded bg-sky-950/90 border border-sky-700/70 text-sky-300 text-[9px] font-sans font-semibold min-w-0 max-w-[76px] leading-none whitespace-nowrap"
+                    >
+                      <User className="w-2.5 h-2.5 text-sky-400 shrink-0" />
+                      <span className="truncate">{chromeProfile.badgeText}</span>
+                    </span>
+                  )}
+                </div>
                 <button
                   type="button"
                   onClick={(e) => {

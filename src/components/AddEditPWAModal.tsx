@@ -298,12 +298,12 @@ export const AddEditPWAModal: React.FC<AddEditPWAModalProps> = ({
 
           {/* Chrome Profile Directory (Optional) */}
           <div>
-            <div className="flex items-center justify-between mb-1">
+            <div className="flex items-center justify-between gap-2 flex-wrap mb-1">
               <label htmlFor="pwa-profile" className="block text-xs font-medium text-neutral-300">
                 Perfil do Chrome (Opcional)
               </label>
-              <div className="flex gap-1">
-                {['Default', 'Profile 1', 'Profile 2', 'Profile 3'].map((prof) => (
+              <div className="flex gap-1 flex-wrap">
+                {['Default', 'Profile 1', 'Profile 2', 'Profile 3', 'Profile 4', 'Profile 5'].map((prof) => (
                   <button
                     key={prof}
                     type="button"
@@ -314,7 +314,7 @@ export const AddEditPWAModal: React.FC<AddEditPWAModalProps> = ({
                         : 'bg-neutral-800 hover:bg-neutral-700 text-neutral-400'
                     }`}
                   >
-                    {prof}
+                    {prof === 'Default' ? 'Default' : `P${prof.replace('Profile ', '')}`}
                   </button>
                 ))}
               </div>

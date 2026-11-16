@@ -14,6 +14,7 @@ import {
   resolveFaviconAtInsertion,
   isAndroidOrRedroidApp,
   isSameOrMatchingPWA,
+  extractChromeProfileDirectory,
 } from './utils/pwaLogic';
 import {
   FOLDERS_STORAGE_KEY,
@@ -74,10 +75,13 @@ export function repairAndSanitizePWA(it: PWAItem): PWAItem {
     icon = resolveFaviconAtInsertion(url, undefined, it.name);
   }
 
+  const profileDirectory = it.profileDirectory?.trim() || extractChromeProfileDirectory(it);
+
   return {
     ...it,
     url,
     icon,
+    ...(profileDirectory ? { profileDirectory } : {}),
   };
 }
 
@@ -298,12 +302,18 @@ export default function App() {
           )?.icon;
           const finalMergedIcon = existingWorkingIcon || scanned.icon || resolveFaviconAtInsertion(scanned.url);
 
+          const finalProfileDirectory =
+            scanned.profileDirectory ||
+            matches.find((m) => m.profileDirectory)?.profileDirectory ||
+            extractChromeProfileDirectory(scanned);
+
           return {
             ...scanned,
             name: customName,
             category: customCategory,
             folderId: customFolderId,
             icon: finalMergedIcon,
+            profileDirectory: finalProfileDirectory,
             pinned: isAnyPinned || maxRating > 0,
             rating: maxRating,
             aliases: Array.from(allAliases).filter(Boolean),
@@ -313,9 +323,11 @@ export default function App() {
           };
         }
 
+        const extractedProfile = extractChromeProfileDirectory(scanned);
         return {
           ...scanned,
           icon: scanned.icon || resolveFaviconAtInsertion(scanned.url),
+          ...(extractedProfile ? { profileDirectory: extractedProfile } : {}),
         };
       });
 
@@ -796,6 +808,8 @@ export default function App() {
         folderId: nextFolderId,
         notes: data.notes,
         icon: finalIcon,
+        profileDirectory: data.profileDirectory,
+        aliases: data.aliases,
         pinned: initialRating > 0,
         rating: initialRating,
         lastAccessedDate: null,

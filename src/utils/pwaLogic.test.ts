@@ -14,6 +14,8 @@ import {
   isAndroidOrRedroidApp,
   resolveFaviconAtInsertion,
   getCleanDomain,
+  extractChromeProfileDirectory,
+  formatChromeProfileDisplay,
 } from './pwaLogic';
 import { PWAItem } from '../types/pwa';
 
@@ -315,4 +317,40 @@ test('resolveFaviconAtInsertion extracts domain from url or name and returns hig
   );
 });
 
+test('extractChromeProfileDirectory and formatChromeProfileDisplay normalize Chrome profiles cleanly', () => {
+  const p5 = formatChromeProfileDisplay({ profileDirectory: 'Profile 5' });
+  assert.ok(p5);
+  assert.equal(p5.profileNumber, '5');
+  assert.equal(p5.badgeText, 'Perfil 5');
+  assert.equal(p5.shortLabel, 'P5');
+  assert.equal(p5.isDefault, false);
 
+  const p12 = formatChromeProfileDisplay({ profileDirectory: 'Profile_12' });
+  assert.ok(p12);
+  assert.equal(p12.profileNumber, '12');
+  assert.equal(p12.badgeText, 'Perfil 12');
+
+  const bareNum = formatChromeProfileDisplay({ profileDirectory: '3' });
+  assert.ok(bareNum);
+  assert.equal(bareNum.profileNumber, '3');
+  assert.equal(bareNum.badgeText, 'Perfil 3');
+
+  const def = formatChromeProfileDisplay({ profileDirectory: 'Default' });
+  assert.ok(def);
+  assert.equal(def.profileNumber, '0');
+  assert.equal(def.badgeText, 'Default');
+  assert.equal(def.isDefault, true);
+
+  // Fallback extraction from execLine or filename
+  assert.equal(
+    extractChromeProfileDirectory({ execLine: 'google-chrome --profile-directory="Profile 7" --app-id=abc' }),
+    'Profile 7'
+  );
+  const fromFn = formatChromeProfileDisplay({ rawFileName: 'chrome-abc123-Profile_2.desktop' });
+  assert.ok(fromFn);
+  assert.equal(fromFn.badgeText, 'Perfil 2');
+
+  // Empty/missing profile returns null
+  assert.equal(formatChromeProfileDisplay({}), null);
+  assert.equal(formatChromeProfileDisplay({ profileDirectory: '   ' }), null);
+});

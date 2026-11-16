@@ -656,3 +656,98 @@ export function importPWAsFromJson(rawJson: string): PWAItem[] {
 export function exportPWAsToJson(items: PWAItem[]): string {
   return JSON.stringify(items, null, 2);
 }
+
+export interface ChromeProfileDisplay {
+  raw: string;
+  profileNumber: string;
+  shortLabel: string;
+  badgeText: string;
+  tooltip: string;
+  isDefault: boolean;
+}
+
+/**
+ * Extracts Chrome profile directory from explicit field, Chrome Exec command line, or filename/path.
+ */
+export function extractChromeProfileDirectory(item: {
+  profileDirectory?: string;
+  execLine?: string;
+  rawFileName?: string;
+  desktopPath?: string;
+}): string | undefined {
+  if (!item) return undefined;
+
+  if (item.profileDirectory && item.profileDirectory.trim()) {
+    return item.profileDirectory.trim();
+  }
+
+  if (item.execLine) {
+    const execMatch = item.execLine.match(/--profile-directory=(?:["']([^"']+)["']|([^\s"']+))/i);
+    const extracted = (execMatch?.[1] || execMatch?.[2] || '').trim();
+    if (extracted) return extracted;
+  }
+
+  const fileCandidates = [item.rawFileName, item.desktopPath].filter(Boolean) as string[];
+  for (const candidate of fileCandidates) {
+    const fnMatch = candidate.match(/Profile[_\s]?(\d+)|(Default)/i);
+    if (fnMatch) {
+      if (fnMatch[2]) return 'Default';
+      if (fnMatch[1]) return `Profile ${fnMatch[1]}`;
+    }
+  }
+
+  return undefined;
+}
+
+/**
+ * Formats Chrome profile identifier for compact display beside PWA star ratings.
+ * Examples:
+ * - "Profile 5" -> badgeText: "Perfil 5", shortLabel: "P5", profileNumber: "5"
+ * - "Default"   -> badgeText: "Default", shortLabel: "Default", profileNumber: "0"
+ */
+export function formatChromeProfileDisplay(item: {
+  profileDirectory?: string;
+  execLine?: string;
+  rawFileName?: string;
+  desktopPath?: string;
+}): ChromeProfileDisplay | null {
+  const raw = extractChromeProfileDirectory(item);
+  if (!raw) return null;
+
+  const clean = raw.trim();
+  if (!clean) return null;
+
+  if (/^default$/i.test(clean) || /^padr[aã]o$/i.test(clean)) {
+    return {
+      raw: clean,
+      profileNumber: '0',
+      shortLabel: 'Default',
+      badgeText: 'Default',
+      tooltip: `Perfil do Chrome: ${clean} (Padrão)`,
+      isDefault: true,
+    };
+  }
+
+  const numMatch = clean.match(/^(?:profile|perfil)?[_\s-]*(\d+)$/i);
+  if (numMatch) {
+    const num = numMatch[1];
+    return {
+      raw: clean,
+      profileNumber: num,
+      shortLabel: `P${num}`,
+      badgeText: `Perfil ${num}`,
+      tooltip: `Perfil do Chrome: ${clean}`,
+      isDefault: false,
+    };
+  }
+
+  return {
+    raw: clean,
+    profileNumber: clean,
+    shortLabel: clean,
+    badgeText: clean,
+    tooltip: `Perfil do Chrome: ${clean}`,
+    isDefault: false,
+  };
+}
+

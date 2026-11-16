@@ -3,10 +3,10 @@ import { PWAFolder, PWAItem } from '../types/pwa';
 import { PWAIcon } from './PWAIcon';
 import { InlineNoteInput } from './InlineNoteInput';
 import { StarRating } from './StarRating';
-import { isAccessedToday, formatAccessLogDash } from '../utils/pwaLogic';
+import { isAccessedToday, formatAccessLogDash, formatChromeProfileDisplay } from '../utils/pwaLogic';
 import { getGroupTheme } from '../utils/groupLogic';
 import { flattenFoldersHierarchy } from '../utils/folderLogic';
-import { Check, CheckCircle2, Clock, MoreVertical, Edit2, Trash2, Folder, ExternalLink, RotateCw, Upload, FolderInput, ChevronRight } from 'lucide-react';
+import { Check, CheckCircle2, Clock, MoreVertical, Edit2, Trash2, Folder, ExternalLink, RotateCw, Upload, FolderInput, ChevronRight, User } from 'lucide-react';
 
 interface CardsViewProps {
   items: PWAItem[];
@@ -86,6 +86,7 @@ export const CardsView: React.FC<CardsViewProps> = ({
     const grpName = item.group || item.category || 'Geral';
     const groupTheme = getGroupTheme(grpName, groupColors);
     const assignedFolder = item.folderId ? folderMap.get(item.folderId) : null;
+    const chromeProfile = formatChromeProfileDisplay(item);
 
     return (
       <div
@@ -128,10 +129,10 @@ export const CardsView: React.FC<CardsViewProps> = ({
 
         {/* Card Interactive Content */}
         <div className="relative z-10">
-          {/* Card Top Row: 5 Stars on Left | Today Badge + 3-Dots Menu + Group Symbol on Right */}
-          <div className="flex items-start justify-between gap-2 mb-3">
-            {/* Left: Interactive 5 Stars Rating */}
-            <div className="flex items-center gap-1">
+          {/* Card Top Row: 5 Stars + Profile on Left | Today Badge + 3-Dots Menu on Right */}
+          <div className="flex items-center justify-between gap-1.5 mb-3">
+            {/* Left: Interactive 5 Stars Rating + Chrome Profile Badge */}
+            <div className="flex items-center gap-1 min-w-0">
               {onToggleSelect && (
                 <button
                   type="button"
@@ -139,7 +140,7 @@ export const CardsView: React.FC<CardsViewProps> = ({
                     e.stopPropagation();
                     onToggleSelect(item.id);
                   }}
-                  className={`mr-1.5 w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 transition-colors cursor-pointer ${
+                  className={`mr-0.5 w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 transition-colors cursor-pointer ${
                     isSelected
                       ? 'bg-emerald-500 border-emerald-400 text-neutral-950'
                       : 'border-neutral-700 bg-neutral-950/80 hover:border-neutral-500 text-transparent'
@@ -154,11 +155,25 @@ export const CardsView: React.FC<CardsViewProps> = ({
                 rating={currentRating}
                 onChange={(newRating) => onSetRating && onSetRating(item, newRating)}
                 size="sm"
+                compact={true}
+                className="shrink-0"
               />
+
+              {chromeProfile && (
+                <span
+                  title={chromeProfile.tooltip}
+                  aria-label={chromeProfile.tooltip}
+                  data-testid={`chrome-profile-badge-${item.id}`}
+                  className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-sky-950/90 border border-sky-700/70 text-sky-300 text-[10px] font-sans font-semibold min-w-0 max-w-[84px] leading-none whitespace-nowrap"
+                >
+                  <User className="w-2.5 h-2.5 text-sky-400 shrink-0" />
+                  <span className="truncate">{chromeProfile.badgeText}</span>
+                </span>
+              )}
             </div>
 
             {/* Right: Status Badge & 3-Dots Menu */}
-            <div className="flex items-center gap-1.5 shrink-0">
+            <div className="flex items-center gap-1 shrink-0">
               {/* Today Status Badge (Clickable to Toggle Status) */}
               <button
                 type="button"
@@ -171,7 +186,7 @@ export const CardsView: React.FC<CardsViewProps> = ({
                     ? 'Acessado hoje (Clique para marcar como pendente)'
                     : 'Pendente hoje (Clique para marcar como acessado)'
                 }
-                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold transition-transform active:scale-95 cursor-pointer border ${
+                className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-semibold transition-transform active:scale-95 cursor-pointer border whitespace-nowrap ${
                   isAccessed
                     ? 'bg-emerald-950/80 border-emerald-800/80 text-emerald-300 hover:bg-emerald-900/90'
                     : 'bg-rose-950/80 border-rose-800/80 text-rose-300 hover:bg-rose-900/90'
@@ -179,12 +194,12 @@ export const CardsView: React.FC<CardsViewProps> = ({
               >
                 {isAccessed ? (
                   <>
-                    <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                    <CheckCircle2 className="w-2.5 h-2.5 text-emerald-400 shrink-0" />
                     <span>Hoje</span>
                   </>
                 ) : (
                   <>
-                    <Clock className="w-3 h-3 text-rose-400" />
+                    <Clock className="w-2.5 h-2.5 text-rose-400 shrink-0" />
                     <span>Pendente</span>
                   </>
                 )}
@@ -199,7 +214,7 @@ export const CardsView: React.FC<CardsViewProps> = ({
                     setMoveSubmenuOpen(false);
                     setActiveMenuId(activeMenuId === item.id ? null : item.id);
                   }}
-                  className="p-1 rounded-md text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors cursor-pointer"
+                  className="p-0.5 rounded-md text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors cursor-pointer"
                   title="Opções da PWA"
                   aria-label={`Opções de ${item.name}`}
                 >

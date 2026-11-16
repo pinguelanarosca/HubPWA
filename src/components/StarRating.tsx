@@ -5,6 +5,7 @@ interface StarRatingProps {
   rating?: number; // 0 to 5
   onChange?: (rating: number) => void;
   size?: 'xs' | 'sm' | 'md';
+  compact?: boolean;
   readonly?: boolean;
   className?: string;
 }
@@ -13,6 +14,7 @@ export const StarRating: React.FC<StarRatingProps> = ({
   rating = 0,
   onChange,
   size = 'sm',
+  compact = false,
   readonly = false,
   className = '',
 }) => {
@@ -20,7 +22,7 @@ export const StarRating: React.FC<StarRatingProps> = ({
 
   const starSizes = {
     xs: 'w-2.5 h-2.5',
-    sm: 'w-3.5 h-3.5',
+    sm: compact ? 'w-3 h-3' : 'w-3.5 h-3.5',
     md: 'w-4 h-4',
   }[size];
 
@@ -45,7 +47,7 @@ export const StarRating: React.FC<StarRatingProps> = ({
 
   return (
     <div
-      className={`inline-flex items-center gap-0.5 select-none ${className}`}
+      className={`inline-flex items-center ${compact ? 'gap-0' : 'gap-0.5'} select-none ${className}`}
       onMouseLeave={() => setHoverRating(null)}
       title={readonly ? `${rating || 0} de 5 estrelas` : undefined}
     >
@@ -67,7 +69,7 @@ export const StarRating: React.FC<StarRatingProps> = ({
                 : `Classificar com ${starIndex} estrela${starIndex > 1 ? 's' : ''}`
             }
             aria-label={`Classificação: ${starIndex} de 5 estrelas`}
-            className={`p-0.5 rounded transition-transform duration-100 ${
+            className={`${compact ? 'p-[1px]' : 'p-0.5'} rounded transition-transform duration-100 ${
               readonly
                 ? 'cursor-default'
                 : 'cursor-pointer hover:scale-115 active:scale-95 focus:outline-hidden'

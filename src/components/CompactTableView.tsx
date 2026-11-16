@@ -5,7 +5,7 @@ import { PWAIcon } from './PWAIcon';
 import { StatusIndicator } from './StatusIndicator';
 import { InlineNoteInput } from './InlineNoteInput';
 import { StarRating } from './StarRating';
-import { getCleanDomain, formatAccessDateTime } from '../utils/pwaLogic';
+import { getCleanDomain, formatAccessDateTime, formatChromeProfileDisplay } from '../utils/pwaLogic';
 
 interface CompactTableViewProps {
   items: PWAItem[];
@@ -48,7 +48,7 @@ export const CompactTableView: React.FC<CompactTableViewProps> = ({
       <table className="w-full text-left text-xs border-collapse">
         <thead>
           <tr className="border-b border-neutral-800 bg-neutral-900/60 text-neutral-400 font-medium select-none text-[11px]">
-            <th className="py-2 px-3 w-28 text-left">Classificação</th>
+            <th className="py-2 px-3 w-48 text-left">Classificação / Perfil</th>
             <th className="py-2 px-3 w-32">Status Hoje</th>
             <th className="py-2 px-3 w-44">Log de Acesso (Data/Hora)</th>
             <th className="py-2 px-3 min-w-[200px]">PWA & Domínio</th>
@@ -62,19 +62,33 @@ export const CompactTableView: React.FC<CompactTableViewProps> = ({
             const currentRating = typeof item.rating === 'number' ? item.rating : (item.pinned ? 5 : 0);
             const accessLog = formatAccessDateTime(item.lastAccessedDate);
             const assignedFolder = item.folderId ? folderMap.get(item.folderId) : null;
+            const chromeProfile = formatChromeProfileDisplay(item);
 
             return (
               <tr
                 key={item.id}
                 className="group hover:bg-neutral-900/50 transition-colors h-9"
               >
-                {/* 1 to 5 Star Rating */}
+                {/* 1 to 5 Star Rating + Chrome Profile */}
                 <td className="py-1 px-3 whitespace-nowrap">
-                  <StarRating
-                    rating={currentRating}
-                    onChange={(newRating) => (onSetRating ? onSetRating(item, newRating) : onTogglePin(item))}
-                    size="sm"
-                  />
+                  <div className="flex items-center gap-1.5">
+                    <StarRating
+                      rating={currentRating}
+                      onChange={(newRating) => (onSetRating ? onSetRating(item, newRating) : onTogglePin(item))}
+                      size="sm"
+                    />
+                    {chromeProfile && (
+                      <span
+                        title={chromeProfile.tooltip}
+                        aria-label={chromeProfile.tooltip}
+                        data-testid={`chrome-profile-badge-${item.id}`}
+                        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-sky-950/85 border border-sky-700/70 text-sky-300 text-[10px] font-mono font-semibold shrink-0 leading-none"
+                      >
+                        <User className="w-2.5 h-2.5 text-sky-400 shrink-0" />
+                        <span>{chromeProfile.badgeText}</span>
+                      </span>
+                    )}
+                  </div>
                 </td>
 
                 {/* Status Indicator (Verde / Vermelho - Clicável para Alternar Status) */}
@@ -136,12 +150,6 @@ export const CompactTableView: React.FC<CompactTableViewProps> = ({
                           <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-neutral-900 border border-neutral-700 text-emerald-300 text-[9px] font-medium shrink-0">
                             <Folder className="w-2.5 h-2.5 text-emerald-400" />
                             <span>{assignedFolder.name}</span>
-                          </span>
-                        )}
-                        {item.profileDirectory && (
-                          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-blue-950/80 border border-blue-800/80 text-blue-300 text-[9px] font-semibold font-mono shrink-0">
-                            <User className="w-2.5 h-2.5 text-blue-400" />
-                            <span>{item.profileDirectory}</span>
                           </span>
                         )}
                         {item.isPossibleDuplicate && (
