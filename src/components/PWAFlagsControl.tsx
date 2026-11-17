@@ -95,7 +95,7 @@ interface PWAFlagsControlProps {
   onToggleFlag: (item: PWAItem, flag: DailyFlagKey, state?: DailyFlagState | null) => void;
   onUpdateMoneyDate?: (item: PWAItem, moneyDate: string) => void;
   compact?: boolean;
-  layout?: 'row' | 'stacked' | 'grid2x2';
+  layout?: 'row' | 'stacked';
 }
 
 export const PWAFlagsControl: React.FC<PWAFlagsControlProps> = ({
@@ -125,125 +125,23 @@ export const PWAFlagsControl: React.FC<PWAFlagsControlProps> = ({
 
   const hasDateValue = draftDate.trim().length > 0;
   const isStacked = layout === 'stacked';
-  const isGrid2x2 = layout === 'grid2x2';
-
-  if (isGrid2x2) {
-    return (
-      <div className="grid grid-cols-2 gap-1 w-full" onClick={(e) => e.stopPropagation()}>
-        {/* Cell 1: Money Date */}
-        <div className="inline-flex items-center justify-between gap-1 px-1.5 py-0.5 rounded border border-emerald-500/80 bg-emerald-950/45 text-[9.5px]">
-          <span className="flex items-center gap-0.5 text-emerald-300 font-bold shrink-0">
-            <MoneySymbolIcon className="w-[13px] h-[13px]" />
-            <span>$</span>
-          </span>
-          <input
-            type="text"
-            inputMode="numeric"
-            maxLength={5}
-            value={draftDate}
-            placeholder="DD/MM"
-            aria-label={`Data dia e mês de ${item.name}`}
-            data-testid={`pwa-money-date-${item.id}`}
-            onClick={(e) => e.stopPropagation()}
-            onChange={(e) => {
-              const next = sanitizeDayMonthTyping(e.target.value);
-              setDraftDate(next);
-              if (onUpdateMoneyDate && (next === '' || /^\d{2}\/\d{2}$/.test(next))) {
-                onUpdateMoneyDate(item, next);
-              }
-            }}
-            onBlur={(e) => commitDate(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                commitDate((e.target as HTMLInputElement).value);
-                (e.target as HTMLInputElement).blur();
-              } else if (e.key === 'Escape') {
-                setDraftDate(persistedDate);
-                (e.target as HTMLInputElement).blur();
-              }
-            }}
-            className="w-[42px] h-[15px] font-mono font-bold text-center rounded bg-neutral-950/90 border border-emerald-400/75 text-emerald-300 text-[9px] focus:outline-none"
-          />
-        </div>
-
-        {/* Cells 2, 3, 4: COM, RB, BON */}
-        {DAILY_FLAG_META.map(({ key, label }) => {
-          const rawState = getPWAFlagState({ flags: effectiveFlags }, key, todayStr);
-          const flagState: DailyFlagState = rawState === 'x' ? 'x' : 'check';
-          const isCheck = flagState === 'check';
-          const trackTone = isCheck
-            ? 'bg-emerald-950/70 border-emerald-500/80'
-            : 'bg-rose-950/70 border-rose-500/80';
-
-          return (
-            <div
-              key={key}
-              data-testid={`pwa-flag-${key}-${item.id}`}
-              data-state={flagState}
-              className={`inline-flex items-center justify-between gap-1 px-1.5 py-0.5 rounded border font-bold tracking-wide select-none ${trackTone} text-[9.5px]`}
-            >
-              <span className={`leading-none ${isCheck ? 'text-emerald-200' : 'text-rose-200'}`}>
-                {label}
-              </span>
-
-              <div className="relative inline-flex items-center w-[32px] h-[15px] bg-neutral-900 rounded-full border border-neutral-700 p-0.5 cursor-pointer shadow-inner shrink-0">
-                <div className="absolute inset-0 flex items-center justify-between px-0.5 pointer-events-none text-[8px] font-bold">
-                  <span className="text-rose-400 opacity-90">✕</span>
-                  <span className="text-emerald-400 opacity-90">✓</span>
-                </div>
-                <div
-                  className={`absolute top-0.5 bottom-0.5 w-[14px] rounded-full transition-all duration-200 flex items-center justify-center shadow-md ${
-                    isCheck ? 'translate-x-[16px] bg-emerald-500 text-neutral-950' : 'translate-x-0 bg-rose-500 text-white'
-                  }`}
-                >
-                  {isCheck ? (
-                    <Check className="w-2 h-2 stroke-[3.5]" />
-                  ) : (
-                    <X className="w-2 h-2 stroke-[3.5]" />
-                  )}
-                </div>
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onToggleFlag(item, key, 'x');
-                  }}
-                  className="absolute inset-y-0 left-0 w-1/2 cursor-pointer z-10 bg-transparent border-0 focus-visible:outline-none"
-                />
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onToggleFlag(item, key, 'check');
-                  }}
-                  className="absolute inset-y-0 right-0 w-1/2 cursor-pointer z-10 bg-transparent border-0 focus-visible:outline-none"
-                />
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    );
-  }
-
-  const isCompactRow = compact && !isStacked;
 
   return (
     <div
       className={
         isStacked
           ? 'flex flex-col gap-1.5 w-full'
-          : 'flex items-center gap-1 shrink-0 max-w-full overflow-hidden'
+          : 'flex items-center justify-between flex-wrap gap-1'
       }
       onClick={(e) => e.stopPropagation()}
     >
       {/* Left: Prominent Green $ Icon + Persistent DD/MM Input */}
-      <div className="inline-flex items-center gap-0.5 shrink-0">
+      <div className="inline-flex items-center gap-1 shrink-0">
         <span
           className="inline-flex items-center justify-center shrink-0"
           title="Data de Dia/Mês (não reseta à meia-noite)"
         >
-          <MoneySymbolIcon className={isCompactRow ? 'w-[14px] h-[14px]' : 'w-[16px] h-[16px]'} />
+          <MoneySymbolIcon className={compact ? 'w-[16px] h-[16px]' : 'w-[17px] h-[17px]'} />
         </span>
         <input
           type="text"
@@ -273,8 +171,8 @@ export const PWAFlagsControl: React.FC<PWAFlagsControlProps> = ({
             }
           }}
           className={`${
-            isCompactRow ? 'w-[38px] h-[20px] text-[9px]' : compact ? 'w-[42px] h-[22px] text-[10px]' : 'w-[43px] h-[22px] text-[10px]'
-          } font-mono font-bold text-center rounded border px-0.5 transition-colors focus:outline-none focus:ring-1 focus:ring-emerald-400 ${
+            compact ? 'w-[42px] h-[22px] text-[10px]' : 'w-[43px] h-[22px] text-[10px]'
+          } font-mono font-bold text-center rounded-md border px-0.5 transition-colors focus:outline-none focus:ring-1 focus:ring-emerald-400 ${
             hasDateValue
               ? 'bg-emerald-950/45 border-emerald-400/75 text-emerald-300 shadow-[0_0_8px_-3px_rgba(16,185,129,0.4)]'
               : 'bg-neutral-950/90 border-neutral-600/85 text-neutral-100 placeholder:text-neutral-500 hover:border-emerald-400/60'
@@ -282,92 +180,107 @@ export const PWAFlagsControl: React.FC<PWAFlagsControlProps> = ({
         />
       </div>
 
-      {/* Right: Compact Sliding Toggle Switch (Interruptor Deslizante) for COM, RB, BON */}
+      {/* Right: Optional Daily Check (Green ✓) or X (Red ✕) Markers for COM, RB, BON */}
       <div
         className={
           isStacked
-            ? 'flex flex-wrap items-center gap-1.5 w-full'
-            : 'inline-flex items-center gap-1 shrink-0'
+            ? 'grid grid-cols-3 gap-1 w-full'
+            : 'inline-flex items-center gap-1 flex-wrap'
         }
       >
         {DAILY_FLAG_META.map(({ key, label, badgeColorClass }) => {
-          const rawState = getPWAFlagState({ flags: effectiveFlags }, key, todayStr);
-          // Non-null requirement: always either 'check' (green) or 'x' (red). Default to 'check' if un-set.
-          const flagState: DailyFlagState = rawState === 'x' ? 'x' : 'check';
+          const flagState = getPWAFlagState({ flags: effectiveFlags }, key, todayStr);
           const isCheck = flagState === 'check';
           const isX = flagState === 'x';
 
-          const trackTone = isCheck
-            ? 'bg-emerald-950/70 border-emerald-500/80 shadow-[0_0_10px_-4px_rgba(16,185,129,0.5)]'
-            : 'bg-rose-950/70 border-rose-500/80 shadow-[0_0_10px_-4px_rgba(244,63,94,0.5)]';
+          const chipContainerTone = isCheck
+            ? 'bg-emerald-950/40 border-emerald-500/75 shadow-[0_0_10px_-4px_rgba(16,185,129,0.55)]'
+            : isX
+            ? 'bg-rose-950/40 border-rose-500/75 shadow-[0_0_10px_-4px_rgba(244,63,94,0.55)]'
+            : 'bg-neutral-900/95 border-neutral-600/80';
+
+          const checkBtnClass = isCheck
+            ? 'bg-emerald-500/25 text-emerald-300 ring-1 ring-emerald-400 shadow-[0_0_8px_rgba(16,185,129,0.55)]'
+            : isX
+            ? 'text-emerald-400/30 hover:text-emerald-300 hover:bg-emerald-500/15'
+            : 'text-emerald-400/75 hover:text-emerald-300 hover:bg-emerald-500/20';
+
+          const xBtnClass = isX
+            ? 'bg-rose-500/25 text-rose-300 ring-1 ring-rose-400 shadow-[0_0_8px_rgba(244,63,94,0.55)]'
+            : isCheck
+            ? 'text-rose-400/30 hover:text-rose-300 hover:bg-rose-500/15'
+            : 'text-rose-400/75 hover:text-rose-300 hover:bg-rose-500/20';
 
           return (
             <div
               key={key}
               data-testid={`pwa-flag-${key}-${item.id}`}
-              data-state={flagState}
+              data-state={flagState ?? 'none'}
               title={`${label}: ${
-                isCheck ? 'Check verde (✓) à direita' : 'X vermelho (✕) à esquerda'
+                isCheck ? 'Check verde (✓)' : isX ? 'X vermelho (✕)' : 'Opcional (sem marcação)'
               } — reseta diariamente à meia-noite`}
-              className={`inline-flex items-center ${isCompactRow ? 'gap-0.5 px-1 py-0.5 text-[9px]' : 'gap-1.5 px-1.5 py-0.5 text-[10px]'} rounded border font-bold tracking-wide select-none transition-all duration-150 shrink-0 whitespace-nowrap ${
-                isStacked ? 'justify-between w-full' : ''
-              } ${trackTone}`}
+              className={`inline-flex items-center rounded-md border font-bold tracking-wide transition-all duration-150 select-none ${
+                isStacked
+                  ? 'flex-col justify-center gap-0.5 px-1 py-1 w-full'
+                  : 'gap-0.5 px-1 py-0.5'
+              } ${chipContainerTone}`}
             >
-              <span className={`leading-none shrink-0 ${isCheck ? 'text-emerald-200' : 'text-rose-200'}`}>
+              <span
+                className={`${
+                  isStacked
+                    ? 'text-[9.5px] leading-none'
+                    : 'text-[9.5px] leading-none mr-0.5'
+                } ${isCheck ? 'text-emerald-200' : isX ? 'text-rose-200' : badgeColorClass}`}
+              >
                 {label}
               </span>
 
-              {/* Compact sliding switch container */}
-              <div
-                className={`relative inline-flex items-center ${isCompactRow ? 'w-[32px] h-[15px]' : 'w-[40px] h-[17px]'} bg-neutral-900 rounded-full border border-neutral-700 p-0.5 cursor-pointer shadow-inner shrink-0`}
-                onClick={(e) => e.stopPropagation()}
-              >
-                {/* Background ✕ (left) and ✓ (right) */}
-                <div className={`absolute inset-0 flex items-center justify-between px-0.5 pointer-events-none ${isCompactRow ? 'text-[8px]' : 'text-[9px]'} font-bold`}>
-                  <span className="text-rose-400 opacity-90">✕</span>
-                  <span className="text-emerald-400 opacity-90">✓</span>
-                </div>
-
-                {/* Sliding thumb */}
-                <div
-                  className={`absolute top-0.5 bottom-0.5 ${isCompactRow ? 'w-[14px]' : 'w-[16px]'} rounded-full transition-all duration-200 flex items-center justify-center shadow-md ${
-                    isCheck
-                      ? isCompactRow ? 'translate-x-[16px] bg-emerald-500 text-neutral-950' : 'translate-x-[20px] bg-emerald-500 text-neutral-950'
-                      : 'translate-x-0 bg-rose-500 text-white'
-                  }`}
-                >
-                  {isCheck ? (
-                    <Check className={isCompactRow ? 'w-2 h-2 stroke-[3.5]' : 'w-2.5 h-2.5 stroke-[3.5]'} />
-                  ) : (
-                    <X className={isCompactRow ? 'w-2 h-2 stroke-[3.5]' : 'w-2.5 h-2.5 stroke-[3.5]'} />
-                  )}
-                </div>
-
-                {/* Left side click target (X red) */}
+              <div className="inline-flex items-center gap-0.5">
                 <button
                   type="button"
-                  aria-label={`Marcar X vermelho (✕) em ${label} de ${item.name}`}
-                  data-testid={`pwa-flag-${key}-x-${item.id}`}
-                  title={`Marcar X vermelho (✕) à esquerda`}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onToggleFlag(item, key, 'x');
-                  }}
-                  className="absolute inset-y-0 left-0 w-1/2 cursor-pointer z-10 bg-transparent border-0 focus-visible:outline-none"
-                />
-
-                {/* Right side click target (Check green) */}
-                <button
-                  type="button"
-                  aria-label={`Marcar check verde (✓) em ${label} de ${item.name}`}
+                  aria-pressed={isCheck}
+                  aria-label={`Marcar check verde em ${label} de ${item.name}`}
                   data-testid={`pwa-flag-${key}-check-${item.id}`}
-                  title={`Marcar check verde (✓) à direita`}
+                  title={
+                    isCheck
+                      ? `Remover check verde de ${label}`
+                      : `Marcar check verde (✓) em ${label}`
+                  }
                   onClick={(e) => {
                     e.stopPropagation();
                     onToggleFlag(item, key, 'check');
                   }}
-                  className="absolute inset-y-0 right-0 w-1/2 cursor-pointer z-10 bg-transparent border-0 focus-visible:outline-none"
-                />
+                  className={`${
+                    isStacked
+                      ? 'w-[20px] h-[17px]'
+                      : 'w-[15px] h-[15px]'
+                  } rounded-full flex items-center justify-center transition-all duration-150 cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-emerald-400 ${checkBtnClass}`}
+                >
+                  <Check className={isStacked ? 'w-3 h-3 stroke-[3]' : 'w-2.5 h-2.5 stroke-[3]'} />
+                </button>
+
+                <button
+                  type="button"
+                  aria-pressed={isX}
+                  aria-label={`Marcar X vermelho em ${label} de ${item.name}`}
+                  data-testid={`pwa-flag-${key}-x-${item.id}`}
+                  title={
+                    isX
+                      ? `Remover X vermelho de ${label}`
+                      : `Marcar X vermelho (✕) em ${label}`
+                  }
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onToggleFlag(item, key, 'x');
+                  }}
+                  className={`${
+                    isStacked
+                      ? 'w-[20px] h-[17px]'
+                      : 'w-[15px] h-[15px]'
+                  } rounded-full flex items-center justify-center transition-all duration-150 cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-rose-400 ${xBtnClass}`}
+                >
+                  <X className={isStacked ? 'w-3 h-3 stroke-[3]' : 'w-2.5 h-2.5 stroke-[3]'} />
+                </button>
               </div>
             </div>
           );

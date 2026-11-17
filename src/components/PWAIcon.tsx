@@ -61,36 +61,18 @@ export const PWAIcon: React.FC<PWAIconProps> = ({
     }
   }
 
-  // 2. Server-side smart proxy for domain & multi-source web fallbacks
+  // 2. Server-side smart proxy for domain (checks authentic web logos, local icons, homepage scrapers)
   if (domain && domain !== 'app.com' && domain !== 'seu-app.com') {
     const localProxyFavicon = `/api/icon?domain=${encodeURIComponent(domain)}&name=${encodeURIComponent(name)}`;
     if (!candidateSources.includes(localProxyFavicon)) {
       candidateSources.push(localProxyFavicon);
     }
-    const directFavicon = `https://${domain}/favicon.ico`;
-    if (!candidateSources.includes(directFavicon)) {
-      candidateSources.push(directFavicon);
-    }
-    const googleFaviconUrl = `https://t2.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://${domain}&size=128`;
-    if (!candidateSources.includes(googleFaviconUrl)) {
-      candidateSources.push(googleFaviconUrl);
-    }
-    const ddgFaviconUrl = `https://icons.duckduckgo.com/ip3/${domain}.ico`;
-    if (!candidateSources.includes(ddgFaviconUrl)) {
-      candidateSources.push(ddgFaviconUrl);
-    }
+    // 3. Direct Icon Horse CDN fallback
     const iconHorseUrl = `https://icon.horse/icon/${domain}`;
     if (!candidateSources.includes(iconHorseUrl)) {
       candidateSources.push(iconHorseUrl);
     }
   }
-
-  // Pre-warm server icon resolution cache on mount if domain exists
-  useEffect(() => {
-    if (domain && domain !== 'app.com' && domain !== 'seu-app.com') {
-      fetch(`/api/icon/resolve?domain=${encodeURIComponent(domain)}&name=${encodeURIComponent(name)}`).catch(() => {});
-    }
-  }, [domain, name]);
 
   // Reset fallback index when candidate inputs change
   useEffect(() => {

@@ -5,31 +5,25 @@
       "id": "pwa_1794277955882_jbu92",
       "name": "DiscordDiscord",
       "category": "Comunicação",
-      "group": "Comunicação",
-      "folderId": null,
-      "icon": "/api/icon?domain=discord.com&name=DiscordDiscord",
       "url": "https://discord.com/app",
       "notes": "",
       "rating": 0,
       "pinned": false,
       "lastAccessedDate": "2026-11-10T02:32:41.000Z",
       "accessCount": 2,
-      "updatedAt": "2026-11-17T02:44:35.760Z"
+      "updatedAt": "2026-11-10T02:32:41.264Z"
     },
     "pwa_1794303611971_2t98m": {
       "id": "pwa_1794303611971_2t98m",
       "name": "Linear",
       "category": "Comunicação",
-      "group": "Comunicação",
-      "folderId": null,
-      "icon": "/api/icon?domain=linear.app&name=Linear",
       "url": "https://linear.app",
       "notes": "",
       "rating": 4,
       "pinned": true,
       "lastAccessedDate": null,
       "accessCount": 0,
-      "updatedAt": "2026-11-17T02:44:35.760Z"
+      "updatedAt": "2026-11-10T09:40:49.452Z"
     }
   },
   "folders": [],
