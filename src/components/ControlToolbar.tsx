@@ -25,10 +25,11 @@ import {
   Check,
   LayoutGrid,
 } from 'lucide-react';
-import { DailyFlagKey, FlagFilterKey, PWAFolder, SortOption, StatusFilter, StarFilter, ViewDensity } from '../types/pwa';
+import { DailyFlagKey, DailyFlagState, FlagFilterKey, PWAFolder, SortOption, StatusFilter, StarFilter, ViewDensity } from '../types/pwa';
 import { getGroupTheme, GROUP_COLOR_THEMES } from '../utils/groupLogic';
 import { flattenFoldersHierarchy } from '../utils/folderLogic';
-import { DAILY_FLAG_META, FILTER_FLAG_META, MoneySymbolIcon } from './PWAFlagsControl';
+import { PWAFlagBreakdown } from '../utils/pwaLogic';
+import { DAILY_FLAG_META, MoneySymbolIcon } from './PWAFlagsControl';
 
 interface ControlToolbarProps {
   search: string;
@@ -51,7 +52,8 @@ interface ControlToolbarProps {
   starFilter: StarFilter;
   onStarFilterChange: (star: StarFilter) => void;
   flagFilters?: FlagFilterKey[];
-  flagCounts?: Record<FlagFilterKey, number>;
+  flagCounts?: Record<'moneyDate' | DailyFlagKey, number>;
+  flagBreakdown?: PWAFlagBreakdown;
   onToggleFlagFilter?: (flag: FlagFilterKey) => void;
   onClearFlagFilters?: () => void;
   density: ViewDensity;
@@ -70,7 +72,7 @@ interface ControlToolbarProps {
   onDeselectAll?: () => void;
   onBulkSetRating?: (rating: number) => void;
   onBulkSetStatus?: (mode: 'accessed' | 'pending') => void;
-  onBulkSetDailyFlag?: (flag: DailyFlagKey, active: boolean) => void;
+  onBulkSetDailyFlag?: (flag: DailyFlagKey, activeOrState: boolean | DailyFlagState | null) => void;
   onBulkClearFlags?: () => void;
   onBulkRefreshIcons?: () => void;
   onBulkOpenEdit?: () => void;
@@ -98,6 +100,7 @@ export const ControlToolbar: React.FC<ControlToolbarProps> = ({
   onStarFilterChange,
   flagFilters = [],
   flagCounts = { moneyDate: 0, com: 0, rb: 0, bon: 0 },
+  flagBreakdown,
   onToggleFlagFilter,
   onClearFlagFilters,
   density,
@@ -503,21 +506,40 @@ export const ControlToolbar: React.FC<ControlToolbarProps> = ({
                       <div className="text-[10px] uppercase font-bold text-neutral-400 tracking-wider px-0.5">
                         Marcar Hoje (COM / RB / BON)
                       </div>
-                      <div className="grid grid-cols-3 gap-1">
+                      <div className="space-y-1">
                         {DAILY_FLAG_META.map(({ key, label, badgeColorClass }) => (
-                          <button
+                          <div
                             key={key}
-                            type="button"
-                            data-testid={`bulk-menu-flag-${key}`}
-                            onClick={() => {
-                              onBulkSetDailyFlag(key, true);
-                              setIsBulkMenuOpen(false);
-                            }}
-                            className="inline-flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg bg-[#1e2028] hover:bg-[#282a36] border border-[#2c2e3d] font-bold cursor-pointer"
+                            className="flex items-center justify-between gap-2 px-2 py-1 rounded-lg bg-[#191b22] border border-[#2c2e3d]"
                           >
-                            <Check className="w-3 h-3 text-emerald-400" />
-                            <span className={badgeColorClass}>{label}</span>
-                          </button>
+                            <span className={`font-bold text-[11px] ${badgeColorClass}`}>{label}</span>
+                            <div className="flex items-center gap-1">
+                              <button
+                                type="button"
+                                data-testid={`bulk-menu-flag-${key}-check`}
+                                title={`Marcar check verde (✓) em ${label}`}
+                                onClick={() => {
+                                  onBulkSetDailyFlag(key, 'check');
+                                  setIsBulkMenuOpen(false);
+                                }}
+                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-500/20 hover:bg-emerald-500/35 border border-emerald-500/50 text-emerald-300 text-[10px] font-bold cursor-pointer"
+                              >
+                                <Check className="w-3 h-3 stroke-[2.8]" />
+                              </button>
+                              <button
+                                type="button"
+                                data-testid={`bulk-menu-flag-${key}-x`}
+                                title={`Marcar X vermelho (✕) em ${label}`}
+                                onClick={() => {
+                                  onBulkSetDailyFlag(key, 'x');
+                                  setIsBulkMenuOpen(false);
+                                }}
+                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-rose-500/20 hover:bg-rose-500/35 border border-rose-500/50 text-rose-300 text-[10px] font-bold cursor-pointer"
+                              >
+                                <X className="w-3 h-3 stroke-[2.8]" />
+                              </button>
+                            </div>
+                          </div>
                         ))}
                       </div>
                       {onBulkClearFlags && (
@@ -609,38 +631,101 @@ export const ControlToolbar: React.FC<ControlToolbarProps> = ({
             Todas
           </button>
 
-          {FILTER_FLAG_META.map(({ key, label, filterActiveClass, badgeColorClass }) => {
-            const isActive = flagFilters.includes(key);
-            const count = flagCounts[key] || 0;
+          {(() => {
+            const isMoneyActive = flagFilters.includes('moneyDate');
+            const moneyCount = flagBreakdown ? flagBreakdown.moneyDate : flagCounts.moneyDate || 0;
             return (
               <button
-                key={key}
                 type="button"
-                onClick={() => onToggleFlagFilter(key)}
-                aria-pressed={isActive}
-                aria-label={`Filtrar por ${label}`}
-                data-testid={`filter-flag-${key}`}
-                title={
-                  key === 'moneyDate'
-                    ? 'Filtrar PWAs com data (DD/MM) preenchida'
-                    : `Filtrar PWAs com ${label} marcado hoje`
-                }
+                onClick={() => onToggleFlagFilter('moneyDate')}
+                aria-pressed={isMoneyActive}
+                aria-label="Filtrar por $ Data"
+                data-testid="filter-flag-moneyDate"
+                title="Filtrar PWAs com data (DD/MM) preenchida"
                 className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold whitespace-nowrap border transition-all cursor-pointer ${
-                  isActive
-                    ? filterActiveClass
+                  isMoneyActive
+                    ? 'bg-emerald-500/18 border-emerald-400/75 text-emerald-200 shadow-[0_0_12px_-4px_rgba(16,185,129,0.5)]'
                     : 'bg-[#14151a] hover:bg-[#1b1d26] text-neutral-200 hover:text-white border-[#242633]'
                 }`}
               >
-                {key === 'moneyDate' ? (
-                  <span className="inline-flex items-center">
-                    <MoneySymbolIcon className="w-3.5 h-3.5" />
-                  </span>
-                ) : null}
-                <span className={isActive ? '' : badgeColorClass}>{label}</span>
-                <span className={`text-[11px] font-mono tabular-nums ${isActive ? 'opacity-95' : 'text-neutral-400'}`}>
-                  ({count})
+                <span className="inline-flex items-center">
+                  <MoneySymbolIcon className="w-3.5 h-3.5" />
+                </span>
+                <span className={isMoneyActive ? '' : 'text-emerald-400'}>$ Data</span>
+                <span className={`text-[11px] font-mono tabular-nums ${isMoneyActive ? 'opacity-95' : 'text-neutral-400'}`}>
+                  ({moneyCount})
                 </span>
               </button>
+            );
+          })()}
+
+          {DAILY_FLAG_META.map(({ key, label, filterActiveClass, badgeColorClass }) => {
+            const checkFilterKey = `${key}:check` as FlagFilterKey;
+            const xFilterKey = `${key}:x` as FlagFilterKey;
+            const isAnyActive = flagFilters.includes(key);
+            const isCheckActive = flagFilters.includes(checkFilterKey);
+            const isXActive = flagFilters.includes(xFilterKey);
+
+            const totalForKey = flagBreakdown ? flagBreakdown[key].total : flagCounts[key] || 0;
+            const checkForKey = flagBreakdown ? flagBreakdown[key].check : 0;
+            const xForKey = flagBreakdown ? flagBreakdown[key].x : 0;
+
+            return (
+              <div
+                key={key}
+                className="inline-flex items-center rounded-lg border border-[#242633] bg-[#14151a] overflow-hidden shrink-0"
+              >
+                <button
+                  type="button"
+                  onClick={() => onToggleFlagFilter(key)}
+                  aria-pressed={isAnyActive}
+                  aria-label={`Filtrar por ${label}`}
+                  data-testid={`filter-flag-${key}`}
+                  title={`Filtrar PWAs com ${label} marcado hoje (✓ ou ✕)`}
+                  className={`inline-flex items-center gap-1 px-2 py-1 text-xs font-semibold whitespace-nowrap transition-all cursor-pointer ${
+                    isAnyActive
+                      ? filterActiveClass
+                      : 'hover:bg-[#1b1d26] text-neutral-200 hover:text-white'
+                  }`}
+                >
+                  <span className={isAnyActive ? '' : badgeColorClass}>{label}</span>
+                  <span className={`text-[11px] font-mono tabular-nums ${isAnyActive ? 'opacity-95' : 'text-neutral-400'}`}>
+                    ({totalForKey})
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onToggleFlagFilter(checkFilterKey)}
+                  aria-pressed={isCheckActive}
+                  aria-label={`Filtrar ${label} com check verde`}
+                  data-testid={`filter-flag-${key}-check`}
+                  title={`Filtrar apenas ${label} com check verde (✓)`}
+                  className={`inline-flex items-center gap-0.5 px-1.5 py-1 text-[11px] font-mono border-l border-[#242633] transition-colors cursor-pointer ${
+                    isCheckActive
+                      ? 'bg-emerald-500/25 text-emerald-200 font-bold'
+                      : 'text-emerald-400/80 hover:bg-emerald-500/15 hover:text-emerald-300'
+                  }`}
+                >
+                  <Check className="w-3 h-3 stroke-[2.8]" />
+                  <span>{checkForKey}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onToggleFlagFilter(xFilterKey)}
+                  aria-pressed={isXActive}
+                  aria-label={`Filtrar ${label} com X vermelho`}
+                  data-testid={`filter-flag-${key}-x`}
+                  title={`Filtrar apenas ${label} com X vermelho (✕)`}
+                  className={`inline-flex items-center gap-0.5 px-1.5 py-1 text-[11px] font-mono border-l border-[#242633] transition-colors cursor-pointer ${
+                    isXActive
+                      ? 'bg-rose-500/25 text-rose-200 font-bold'
+                      : 'text-rose-400/80 hover:bg-rose-500/15 hover:text-rose-300'
+                  }`}
+                >
+                  <X className="w-3 h-3 stroke-[2.8]" />
+                  <span>{xForKey}</span>
+                </button>
+              </div>
             );
           })}
 

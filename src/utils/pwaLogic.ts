@@ -1,4 +1,4 @@
-import { DailyFlagKey, FlagFilterKey, PWAFlags, PWAItem, PWAStats, SortOption, StatusFilter } from '../types/pwa';
+import { DailyFlagKey, DailyFlagState, FlagFilterKey, PWAFlags, PWAItem, PWAStats, SortOption, StatusFilter } from '../types/pwa';
 
 /**
  * Returns the date in YYYY-MM-DD format in the user's local timezone
@@ -334,11 +334,123 @@ export function toggleAccessedToday(
 }
 
 /**
+ * Detects legacy generic-prone third-party favicon URLs that frequently serve monochrome letter placeholders
+ */
+export function isDeprecatedGenericIconUrl(iconUrl?: string | null): boolean {
+  if (!iconUrl || !iconUrl.trim()) return false;
+  const lower = iconUrl.trim().toLowerCase();
+  return (
+    lower.includes('google.com/s2/favicons') ||
+    lower.includes('gstatic.com/faviconv2') ||
+    lower.includes('icons.duckduckgo.com')
+  );
+}
+
+/**
+ * Returns true if an icon URL represents an explicit custom image/URL or a web-resolved /api/icon?domain=...
+ * reference that should be preserved across local .desktop rescans (never overwritten by chrome-* paths).
+ */
+export function isPreservableIconUrl(iconUrl?: string | null): boolean {
+  if (!iconUrl || !iconUrl.trim()) return false;
+  const clean = iconUrl.trim();
+  if (isDeprecatedGenericIconUrl(clean)) return false;
+  if (clean.startsWith('data:')) return true;
+  if (clean.startsWith('http://') || clean.startsWith('https://')) return true;
+  if (clean.includes('/api/icon')) {
+    return (
+      clean.includes('domain=') &&
+      !clean.includes('name=chrome-') &&
+      !clean.includes('path=')
+    );
+  }
+  return false;
+}
+
+/**
+ * Detects whether a local icon candidate name/path refers to Chrome's auto-generated shortcut icon
+ */
+export function isChromeShortcutLocalCandidate(cand?: string | null): boolean {
+  if (!cand) return false;
+  const lower = cand.trim().toLowerCase();
+  return (
+    /(?:^|[\\/])chrome-/i.test(lower) ||
+    /(?:^|[\\/_-])profile[_\s-]?\d+/i.test(lower) ||
+    /[-_]default(?:\.\w+)?$/i.test(lower) ||
+    lower.includes('web applications') ||
+    lower.includes('google-chrome')
+  );
+}
+
+/**
+ * Extracts ordered icon candidate URLs (apple-touch-icon, link icon, og:image) from HTML regardless of attribute order.
+ */
+export function extractHtmlIconCandidates(html: string, domain: string): string[] {
+  if (!html || !domain) return [];
+  const rawHrefs: string[] = [];
+
+  const linkTags = html.match(/<link\b[^>]*>/gi) || [];
+  const appleLinks: string[] = [];
+  const standardLinks: string[] = [];
+
+  for (const tag of linkTags) {
+    const relMatch = tag.match(/\brel\s*=\s*["']([^"']+)["']/i);
+    const hrefMatch = tag.match(/\bhref\s*=\s*["']([^"']+)["']/i);
+    if (!relMatch || !hrefMatch) continue;
+    const rel = relMatch[1].toLowerCase();
+    const href = hrefMatch[1].trim();
+    if (!href || href.startsWith('data:text')) continue;
+    if (rel.includes('apple-touch-icon')) {
+      appleLinks.push(href);
+    } else if (/\bicon\b/i.test(rel)) {
+      standardLinks.push(href);
+    }
+  }
+
+  rawHrefs.push(...appleLinks, ...standardLinks);
+
+  const metaTags = html.match(/<meta\b[^>]*>/gi) || [];
+  for (const tag of metaTags) {
+    const propMatch = tag.match(/\b(?:property|name)\s*=\s*["']([^"']+)["']/i);
+    const contentMatch = tag.match(/\bcontent\s*=\s*["']([^"']+)["']/i);
+    if (!propMatch || !contentMatch) continue;
+    const prop = propMatch[1].toLowerCase();
+    if (prop === 'og:image' || prop === 'twitter:image') {
+      rawHrefs.push(contentMatch[1].trim());
+    }
+  }
+
+  const seen = new Set<string>();
+  const resolved: string[] = [];
+  for (const rawHref of rawHrefs) {
+    let absUrl = '';
+    if (rawHref.startsWith('http://') || rawHref.startsWith('https://') || rawHref.startsWith('data:image')) {
+      absUrl = rawHref;
+    } else if (rawHref.startsWith('//')) {
+      absUrl = `https:${rawHref}`;
+    } else if (rawHref.startsWith('/')) {
+      absUrl = `https://${domain}${rawHref}`;
+    } else {
+      absUrl = `https://${domain}/${rawHref.replace(/^\.\//, '')}`;
+    }
+    if (absUrl && !seen.has(absUrl)) {
+      seen.add(absUrl);
+      resolved.push(absUrl);
+    }
+  }
+  return resolved;
+}
+
+/**
  * Resolves the favicon URL once at insertion time.
  * This stores the static icon URL permanently in the PWA object to prevent system overload.
  */
 export function resolveFaviconAtInsertion(url: string, customIcon?: string, name?: string): string {
-  if (customIcon && customIcon.trim().length > 0 && !customIcon.includes('/api/icon')) {
+  if (
+    customIcon &&
+    customIcon.trim().length > 0 &&
+    !customIcon.includes('/api/icon') &&
+    !isDeprecatedGenericIconUrl(customIcon)
+  ) {
     return customIcon.trim();
   }
 
@@ -365,7 +477,7 @@ export function resolveFaviconAtInsertion(url: string, customIcon?: string, name
 
   if (!domain) return '';
 
-  // Use local smart proxy that validates image size and filters out 1478B gray placeholders
+  // Use local smart proxy that validates image size and filters out generic letter placeholders
   const nameQuery = name ? `&name=${encodeURIComponent(name)}` : '';
   return `/api/icon?domain=${encodeURIComponent(domain)}${nameQuery}`;
 }
@@ -840,11 +952,23 @@ export function normalizeDayMonthOnBlur(raw: string): string {
   return dayStr;
 }
 
-const DAILY_FLAG_FIELD_MAP: Record<DailyFlagKey, 'comDate' | 'rbDate' | 'bonDate'> = {
-  com: 'comDate',
-  rb: 'rbDate',
-  bon: 'bonDate',
+const DAILY_FLAG_FIELD_MAP: Record<
+  DailyFlagKey,
+  {
+    dateField: 'comDate' | 'rbDate' | 'bonDate';
+    stateField: 'comState' | 'rbState' | 'bonState';
+  }
+> = {
+  com: { dateField: 'comDate', stateField: 'comState' },
+  rb: { dateField: 'rbDate', stateField: 'rbState' },
+  bon: { dateField: 'bonDate', stateField: 'bonState' },
 };
+
+function normalizeDailyFlagState(raw: unknown): DailyFlagState | null | undefined {
+  if (raw === 'check' || raw === 'x') return raw;
+  if (raw === null) return null;
+  return undefined;
+}
 
 /**
  * Normalizes and migrates legacy rdDate/irbDate fields to rbDate/bonDate cleanly.
@@ -860,22 +984,58 @@ export function migratePWAFlags(rawFlags?: Record<string, unknown> | null): PWAF
   if (f.comDate !== undefined) {
     result.comDate = f.comDate ? String(f.comDate) : null;
   }
+  const comState = normalizeDailyFlagState(f.comState);
+  if (comState !== undefined) {
+    result.comState = comState;
+  }
+
   const rbRaw = f.rbDate !== undefined ? f.rbDate : f.rdDate;
   if (rbRaw !== undefined) {
     result.rbDate = rbRaw ? String(rbRaw) : null;
   }
+  const rbState = normalizeDailyFlagState(f.rbState !== undefined ? f.rbState : f.rdState);
+  if (rbState !== undefined) {
+    result.rbState = rbState;
+  }
+
   const bonRaw = f.bonDate !== undefined ? f.bonDate : f.irbDate;
   if (bonRaw !== undefined) {
     result.bonDate = bonRaw ? String(bonRaw) : null;
+  }
+  const bonState = normalizeDailyFlagState(f.bonState !== undefined ? f.bonState : f.irbState);
+  if (bonState !== undefined) {
+    result.bonState = bonState;
   }
 
   return Object.keys(result).length > 0 ? result : undefined;
 }
 
 /**
+ * Returns the active daily state ('check' | 'x' | null) for COM, RB, or BON on `todayStr`.
+ * Automatically resets to null at midnight rollover. Legacy records with `comDate === todayStr`
+ * and no explicit `comState` smoothly resolve as 'check'.
+ */
+export function getPWAFlagState(
+  item: Pick<PWAItem, 'flags'> | undefined,
+  flag: DailyFlagKey,
+  todayStr: string = getTodayString()
+): DailyFlagState | null {
+  const flags = item?.flags;
+  if (!flags) return null;
+  const { dateField, stateField } = DAILY_FLAG_FIELD_MAP[flag];
+  const storedDate = flags[dateField];
+  if (!storedDate || storedDate.trim() !== todayStr) {
+    return null;
+  }
+  const storedState = flags[stateField];
+  return storedState === 'x' ? 'x' : 'check';
+}
+
+/**
  * Checks whether a PWA flag or DD/MM date marking is active for the given local day (`todayStr`).
  * - `moneyDate`: active whenever a non-empty DD/MM date is filled (never resets at midnight).
- * - `com`, `rb`, `bon`: active ONLY when their stored YYYY-MM-DD equals `todayStr` (resets at midnight).
+ * - `com`, `rb`, `bon`: active when either green check ('check') or red X ('x') is selected today.
+ * - `com:check` / `com:x` (etc.): active only when that exact state is selected today.
  */
 export function isPWAFlagActive(
   item: Pick<PWAItem, 'flags'> | undefined,
@@ -887,25 +1047,49 @@ export function isPWAFlagActive(
   if (flag === 'moneyDate') {
     return Boolean(flags.moneyDate && flags.moneyDate.trim().length > 0);
   }
-  const field = DAILY_FLAG_FIELD_MAP[flag];
-  const storedDate = flags[field];
-  return Boolean(storedDate && storedDate.trim() === todayStr);
+  if (flag.includes(':')) {
+    const [baseFlag, targetState] = flag.split(':') as [DailyFlagKey, DailyFlagState];
+    return getPWAFlagState(item, baseFlag, todayStr) === targetState;
+  }
+  return getPWAFlagState(item, flag as DailyFlagKey, todayStr) !== null;
 }
 
 /**
- * Toggles a daily-resetting selection (`com`, `rb`, `bon`) for `todayStr`.
+ * Toggles or sets a daily-resetting selection (`com`, `rb`, `bon`) for `todayStr`.
+ * Clicking the currently active state ('check' or 'x') clears it back to null (optional).
  */
 export function togglePWAFlag(
   item: PWAItem,
   flag: DailyFlagKey,
-  todayStr: string = getTodayString()
+  todayStr: string = getTodayString(),
+  targetState?: DailyFlagState | null
 ): PWAItem {
-  const field = DAILY_FLAG_FIELD_MAP[flag];
+  const { dateField, stateField } = DAILY_FLAG_FIELD_MAP[flag];
   const currentFlags = item.flags || {};
-  const currentlyActive = isPWAFlagActive(item, flag, todayStr);
+  const currentState = getPWAFlagState(item, flag, todayStr);
+
+  let nextDate: string | null = null;
+  let nextState: DailyFlagState | null = null;
+
+  if (targetState === null) {
+    nextDate = null;
+    nextState = null;
+  } else {
+    const desired: DailyFlagState = targetState ?? 'check';
+    if (currentState === desired) {
+      // Optional toggle-off when clicking the already-selected icon
+      nextDate = null;
+      nextState = null;
+    } else {
+      nextDate = todayStr;
+      nextState = desired;
+    }
+  }
+
   const nextFlags: PWAFlags = {
     ...currentFlags,
-    [field]: currentlyActive ? null : todayStr,
+    [dateField]: nextDate,
+    [stateField]: nextState,
   };
   return {
     ...item,
@@ -927,27 +1111,63 @@ export function updatePWAMoneyDate(item: PWAItem, moneyDate: string): PWAItem {
   };
 }
 
+export interface DailyFlagBreakdown {
+  total: number;
+  check: number;
+  x: number;
+}
+
+export interface PWAFlagBreakdown {
+  moneyDate: number;
+  com: DailyFlagBreakdown;
+  rb: DailyFlagBreakdown;
+  bon: DailyFlagBreakdown;
+}
+
+/**
+ * Counts active markings (both total and check/x breakdown) across PWAs for `todayStr`.
+ */
+export function countPWAFlagBreakdown(
+  items: PWAItem[],
+  todayStr: string = getTodayString()
+): PWAFlagBreakdown {
+  const counts: PWAFlagBreakdown = {
+    moneyDate: 0,
+    com: { total: 0, check: 0, x: 0 },
+    rb: { total: 0, check: 0, x: 0 },
+    bon: { total: 0, check: 0, x: 0 },
+  };
+  for (const it of items) {
+    if (!it || !it.flags) continue;
+    if (isPWAFlagActive(it, 'moneyDate', todayStr)) counts.moneyDate++;
+    (['com', 'rb', 'bon'] as DailyFlagKey[]).forEach((key) => {
+      const st = getPWAFlagState(it, key, todayStr);
+      if (st === 'check') {
+        counts[key].total++;
+        counts[key].check++;
+      } else if (st === 'x') {
+        counts[key].total++;
+        counts[key].x++;
+      }
+    });
+  }
+  return counts;
+}
+
 /**
  * Counts active markings across PWAs for the given local day (`todayStr`).
  */
 export function countPWAFlags(
   items: PWAItem[],
   todayStr: string = getTodayString()
-): Record<FlagFilterKey, number> {
-  const counts: Record<FlagFilterKey, number> = {
-    moneyDate: 0,
-    com: 0,
-    rb: 0,
-    bon: 0,
+): Record<'moneyDate' | DailyFlagKey, number> {
+  const breakdown = countPWAFlagBreakdown(items, todayStr);
+  return {
+    moneyDate: breakdown.moneyDate,
+    com: breakdown.com.total,
+    rb: breakdown.rb.total,
+    bon: breakdown.bon.total,
   };
-  for (const it of items) {
-    if (!it || !it.flags) continue;
-    if (isPWAFlagActive(it, 'moneyDate', todayStr)) counts.moneyDate++;
-    if (isPWAFlagActive(it, 'com', todayStr)) counts.com++;
-    if (isPWAFlagActive(it, 'rb', todayStr)) counts.rb++;
-    if (isPWAFlagActive(it, 'bon', todayStr)) counts.bon++;
-  }
-  return counts;
 }
 
 /**
@@ -1039,22 +1259,31 @@ export function batchSetStatus(
 
 /**
  * Bulk sets or clears a daily flag ('com', 'rb', 'bon') on target PWA IDs.
+ * Supports `true` (defaults to 'check'), `'check'`, `'x'`, `false`, or `null`.
  */
 export function batchSetDailyFlag(
   items: PWAItem[],
   targetIds: Set<string>,
   flag: DailyFlagKey,
-  active: boolean,
+  activeOrState: boolean | DailyFlagState | null,
   todayStr: string = getTodayString()
 ): PWAItem[] {
-  const field = DAILY_FLAG_FIELD_MAP[flag];
+  const { dateField, stateField } = DAILY_FLAG_FIELD_MAP[flag];
+  const resolvedState: DailyFlagState | null =
+    activeOrState === true
+      ? 'check'
+      : activeOrState === false || activeOrState === null
+      ? null
+      : activeOrState;
+
   return items.map((it) => {
     if (!targetIds.has(it.id)) return it;
     return {
       ...it,
       flags: {
         ...(it.flags || {}),
-        [field]: active ? todayStr : null,
+        [dateField]: resolvedState ? todayStr : null,
+        [stateField]: resolvedState,
       },
     };
   });
@@ -1075,7 +1304,9 @@ export function batchClearFlags(
       ...it,
       flags: {
         ...prev,
-        ...(options.clearDaily ? { comDate: null, rbDate: null, bonDate: null } : {}),
+        ...(options.clearDaily
+          ? { comDate: null, comState: null, rbDate: null, rbState: null, bonDate: null, bonState: null }
+          : {}),
         ...(options.clearMoneyDate ? { moneyDate: '' } : {}),
       },
     };

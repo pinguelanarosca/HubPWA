@@ -10,7 +10,14 @@ import crypto from 'crypto';
 import { spawn, exec, execSync } from 'child_process';
 import { parseDesktopFile, ParsedDesktopApp, convertParsedToPWAs } from './src/utils/desktopParser.js';
 import { deduplicateDesktopApps, DeduplicationResult, normalizeAppUrl } from './src/utils/desktopDeduplicator.js';
-import { getCleanDomain, getTodayString, isAndroidOrRedroidApp } from './src/utils/pwaLogic.js';
+import {
+  extractHtmlIconCandidates,
+  getCleanDomain,
+  getTodayString,
+  isAndroidOrRedroidApp,
+  isChromeShortcutLocalCandidate,
+  isPreservableIconUrl,
+} from './src/utils/pwaLogic.js';
 import { getAutostartStatus, enableAutostartOnUbuntu, disableAutostartOnUbuntu } from './scripts/setup-autostart.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -45,8 +52,11 @@ interface ServerPWAState {
   flags?: {
     moneyDate?: string;
     comDate?: string | null;
+    comState?: 'check' | 'x' | null;
     rbDate?: string | null;
+    rbState?: 'check' | 'x' | null;
     bonDate?: string | null;
+    bonState?: 'check' | 'x' | null;
   };
   clonedFromId?: string;
   lastAccessedDate?: string | null;
@@ -278,7 +288,7 @@ function findLocalIcon(iconNameOrPath: string): string | null {
           ) {
             if (lowerName.includes(rawKeyLower)) return fullPath;
             if (appId && lowerName.includes(appId)) return fullPath;
-            if (searchKeyClean.length >= 1 && lowerName.includes(searchKeyClean)) return fullPath;
+            if (searchKeyClean.length >= 3 && lowerName.includes(searchKeyClean)) return fullPath;
           }
         }
       }
@@ -317,6 +327,114 @@ app.get(['/favicon.ico', '/favicon.svg'], (_req, res) => {
   return res.status(204).end();
 });
 
+async function fetchAuthenticWebIcon(domain: string): Promise<{ buffer: Buffer; contentType: string } | null> {
+  // Attempt 1: Fetch Icon Horse CDN high-resolution original app icon (reject generic fallback stand-in)
+  try {
+    const ihUrl = `https://icon.horse/icon/${domain}`;
+    const response = await fetch(ihUrl, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64)' },
+      signal: AbortSignal.timeout(4000),
+    });
+    if (response.ok) {
+      const isStandIn =
+        response.headers.get('x-icon-fallback') === 'true' ||
+        response.headers.get('x-icon-stand-in') === 'true';
+      if (!isStandIn) {
+        const arrayBuf = await response.arrayBuffer();
+        const buf = Buffer.from(arrayBuf);
+        const ct = response.headers.get('content-type') || 'image/png';
+        if (isValidImageBuffer(buf, ct) && buf.length > 400) {
+          return { buffer: buf, contentType: ct };
+        }
+      }
+    }
+  } catch {
+    // ignore
+  }
+
+  // Attempt 2: HTML Scrape for exact original apple-touch-icon, link icon or og:image from homepage
+  for (const originUrl of [`https://${domain}`, `https://www.${domain}`]) {
+    try {
+      const pageRes = await fetch(originUrl, {
+        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
+        signal: AbortSignal.timeout(3500),
+      });
+      if (pageRes.ok) {
+        const html = await pageRes.text();
+        const effectiveDomain = (() => {
+          try {
+            return new URL(pageRes.url || originUrl).hostname || domain;
+          } catch {
+            return domain;
+          }
+        })();
+        const candidateHrefs = extractHtmlIconCandidates(html, effectiveDomain);
+        for (const absIconUrl of candidateHrefs) {
+          try {
+            const imgRes = await fetch(absIconUrl, {
+              headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
+              signal: AbortSignal.timeout(3000),
+            });
+            if (imgRes.ok) {
+              const arrayBuf = await imgRes.arrayBuffer();
+              const buf = Buffer.from(arrayBuf);
+              const ct = imgRes.headers.get('content-type') || 'image/png';
+              if (isValidImageBuffer(buf, ct) && buf.length > 200) {
+                return { buffer: buf, contentType: ct };
+              }
+            }
+          } catch {
+            // try next candidate
+          }
+        }
+        break;
+      }
+    } catch {
+      // try next origin
+    }
+  }
+
+  // Attempt 3: Fetch DuckDuckGo high-res original favicon
+  try {
+    const ddgUrl = `https://icons.duckduckgo.com/ip3/${domain}.ico`;
+    const response = await fetch(ddgUrl, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64)' },
+      signal: AbortSignal.timeout(3500),
+    });
+    if (response.ok) {
+      const arrayBuf = await response.arrayBuffer();
+      const buf = Buffer.from(arrayBuf);
+      const ct = response.headers.get('content-type') || 'image/png';
+      if (isValidImageBuffer(buf, ct) && buf.length > 1500) {
+        return { buffer: buf, contentType: ct };
+      }
+    }
+  } catch {
+    // ignore
+  }
+
+  // Attempt 4: Fetch Google GStatic favicon (strictly filter out tiny ~726B grey letter monograms)
+  try {
+    const gstaticUrl = `https://t1.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=http://${domain}&size=128`;
+    const response = await fetch(gstaticUrl, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64)' },
+      signal: AbortSignal.timeout(3500),
+    });
+    if (response.ok) {
+      const arrayBuf = await response.arrayBuffer();
+      const buf = Buffer.from(arrayBuf);
+      const ct = response.headers.get('content-type') || 'image/png';
+      if (isValidImageBuffer(buf, ct) && buf.length > 1200) {
+        return { buffer: buf, contentType: ct };
+      }
+    }
+  } catch {
+    // ignore
+  }
+
+  return null;
+}
+
 // Route to serve local Linux icon image files or proxy original web favicons directly
 app.get('/api/icon', async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -326,18 +444,10 @@ app.get('/api/icon', async (req, res) => {
   const urlParam = String(req.query.url || '');
   const domainParam = String(req.query.domain || '');
   const nameParam = String(req.query.name || '');
+  const forceRefresh = req.query.refresh === '1';
+  const preferWeb = forceRefresh || req.query.preferWeb === '1';
 
-  // 1. Check local Ubuntu system icon files across candidates (cached)
-  const localCandidates = [iconParam, nameParam, domainParam, urlParam].filter(Boolean);
-  for (const cand of localCandidates) {
-    const resolved = findLocalIconCached(cand);
-    if (resolved && fs.existsSync(resolved)) {
-      res.setHeader('Cache-Control', 'public, max-age=86400');
-      return res.sendFile(resolved);
-    }
-  }
-
-  // 2. Extract domain
+  // 1. Extract domain
   let domain = domainParam.trim().toLowerCase();
   if (!domain && urlParam) {
     try {
@@ -358,9 +468,43 @@ app.get('/api/icon', async (req, res) => {
     domain = domain.slice(0, -7) + '.com';
   }
 
-  if (domain && domain !== 'app.com' && domain !== 'seu-app.com') {
-    // 3. Serve cached original favicon buffer if available and valid
-    if (iconBufferCache.has(domain)) {
+  const hasPublicDomain = Boolean(
+    domain &&
+      domain !== 'app.com' &&
+      domain !== 'seu-app.com' &&
+      !domain.includes('localhost') &&
+      !/^(?:\d{1,3}\.){3}\d{1,3}$/.test(domain)
+  );
+
+  // 2. Check local Ubuntu system icon files across candidates (cached)
+  let localMatch: { resolved: string; isChromeShortcut: boolean } | null = null;
+  const localCandidates = [iconParam, nameParam, domainParam, urlParam].filter(Boolean);
+  for (const cand of localCandidates) {
+    const resolved = findLocalIconCached(cand);
+    if (resolved && fs.existsSync(resolved)) {
+      const isChromeShortcut =
+        isChromeShortcutLocalCandidate(cand) ||
+        isChromeShortcutLocalCandidate(path.basename(resolved)) ||
+        resolved.toLowerCase().includes('web applications');
+      localMatch = { resolved, isChromeShortcut };
+      break;
+    }
+  }
+
+  // Serve explicit non-Chrome local icons immediately (unless refresh/preferWeb explicitly requested)
+  if (localMatch && !localMatch.isChromeShortcut && !preferWeb) {
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    return res.sendFile(localMatch.resolved);
+  }
+
+  // 3. For web domains (even when Chrome wrote a local .desktop PNG, which is often a generic letter monogram),
+  //    resolve authentic web favicon first and keep Chrome's local file as fallback.
+  if (hasPublicDomain) {
+    if (forceRefresh) {
+      iconBufferCache.delete(domain);
+    }
+
+    if (!forceRefresh && iconBufferCache.has(domain)) {
       const cached = iconBufferCache.get(domain)!;
       if (isValidImageBuffer(cached.buffer, cached.contentType)) {
         res.setHeader('Content-Type', cached.contentType);
@@ -371,125 +515,19 @@ app.get('/api/icon', async (req, res) => {
       }
     }
 
-    // Attempt 1: Fetch Icon Horse CDN high-resolution original app icon
-    try {
-      const ihUrl = `https://icon.horse/icon/${domain}`;
-      const response = await fetch(ihUrl, {
-        headers: { 'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64)' },
-        signal: AbortSignal.timeout(4000),
-      });
-      if (response.ok) {
-        const arrayBuf = await response.arrayBuffer();
-        const buf = Buffer.from(arrayBuf);
-        const ct = response.headers.get('content-type') || 'image/png';
-        if (isValidImageBuffer(buf, ct) && buf.length > 2000) {
-          iconBufferCache.set(domain, { buffer: buf, contentType: ct });
-          res.setHeader('Content-Type', ct);
-          res.setHeader('Cache-Control', 'public, max-age=604800');
-          return res.send(buf);
-        }
-      }
-    } catch {
-      // ignore
+    const webIcon = await fetchAuthenticWebIcon(domain);
+    if (webIcon) {
+      iconBufferCache.set(domain, webIcon);
+      res.setHeader('Content-Type', webIcon.contentType);
+      res.setHeader('Cache-Control', forceRefresh ? 'no-cache' : 'public, max-age=604800');
+      return res.send(webIcon.buffer);
     }
+  }
 
-    // Attempt 2: HTML Scrape for exact original apple-touch-icon, og:image or icon link from platform homepage
-    try {
-      const pageRes = await fetch(`https://${domain}`, {
-        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
-        signal: AbortSignal.timeout(3500),
-      });
-      if (pageRes.ok) {
-        const html = await pageRes.text();
-        const candidateHrefs: string[] = [];
-
-        // Check apple-touch-icon first (highest res logo)
-        const appleMatch = html.match(/<link[^>]+rel=["']apple-touch-icon["'][^>]+href=["']([^"']+)["']/i);
-        if (appleMatch && appleMatch[1]) candidateHrefs.push(appleMatch[1].trim());
-
-        // Check og:image
-        const ogMatch = html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i);
-        if (ogMatch && ogMatch[1]) candidateHrefs.push(ogMatch[1].trim());
-
-        // Check shortcut icon / icon
-        const iconMatch = html.match(/<link[^>]+rel=["'](?:shortcut )?icon["'][^>]+href=["']([^"']+)["']/i);
-        if (iconMatch && iconMatch[1]) candidateHrefs.push(iconMatch[1].trim());
-
-        for (const rawHref of candidateHrefs) {
-          const absIconUrl = rawHref.startsWith('http')
-            ? rawHref
-            : rawHref.startsWith('/')
-            ? `https://${domain}${rawHref}`
-            : `https://${domain}/${rawHref}`;
-
-          try {
-            const imgRes = await fetch(absIconUrl, {
-              headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
-              signal: AbortSignal.timeout(3000),
-            });
-            if (imgRes.ok) {
-              const arrayBuf = await imgRes.arrayBuffer();
-              const buf = Buffer.from(arrayBuf);
-              const ct = imgRes.headers.get('content-type') || 'image/png';
-              if (isValidImageBuffer(buf, ct)) {
-                iconBufferCache.set(domain, { buffer: buf, contentType: ct });
-                res.setHeader('Content-Type', ct);
-                res.setHeader('Cache-Control', 'public, max-age=604800');
-                return res.send(buf);
-              }
-            }
-          } catch {
-            // try next candidate
-          }
-        }
-      }
-    } catch {
-      // ignore
-    }
-
-    // Attempt 3: Fetch DuckDuckGo high-res original favicon
-    try {
-      const ddgUrl = `https://icons.duckduckgo.com/ip3/${domain}.ico`;
-      const response = await fetch(ddgUrl, {
-        headers: { 'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64)' },
-        signal: AbortSignal.timeout(3500),
-      });
-      if (response.ok) {
-        const arrayBuf = await response.arrayBuffer();
-        const buf = Buffer.from(arrayBuf);
-        const ct = response.headers.get('content-type') || 'image/png';
-        if (isValidImageBuffer(buf, ct) && buf.length > 2000) {
-          iconBufferCache.set(domain, { buffer: buf, contentType: ct });
-          res.setHeader('Content-Type', ct);
-          res.setHeader('Cache-Control', 'public, max-age=604800');
-          return res.send(buf);
-        }
-      }
-    } catch {
-      // ignore
-    }
-
-    // Attempt 4: Fetch Google GStatic original favicon
-    try {
-      const gstaticUrl = `https://t1.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=http://${domain}&size=128`;
-      const response = await fetch(gstaticUrl, {
-        headers: { 'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64)' },
-        signal: AbortSignal.timeout(3500),
-      });
-      if (response.ok) {
-        const arrayBuf = await response.arrayBuffer();
-        const buf = Buffer.from(arrayBuf);
-        const ct = response.headers.get('content-type') || 'image/png';
-        if (isValidImageBuffer(buf, ct)) {
-          iconBufferCache.set(domain, { buffer: buf, contentType: ct });
-          res.setHeader('Content-Type', ct);
-          res.setHeader('Cache-Control', 'public, max-age=604800');
-          return res.send(buf);
-        }
-      }
-    } catch {
-      // ignore
-    }
+  // Fallback to local icon file (e.g. Cloudflare-protected sites or local network apps)
+  if (localMatch) {
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    return res.sendFile(localMatch.resolved);
   }
 
   return res.status(404).send('Icon not found');
@@ -499,6 +537,7 @@ app.get('/api/icon', async (req, res) => {
 app.get('/api/icon/resolve', async (req, res) => {
   const urlParam = String(req.query.url || '');
   const nameParam = String(req.query.name || '');
+  const forceRefresh = req.query.refresh === '1';
   let domain = String(req.query.domain || '').trim().toLowerCase();
 
   if (!domain && urlParam) {
@@ -520,7 +559,18 @@ app.get('/api/icon/resolve', async (req, res) => {
     return res.status(400).json({ success: false, error: 'Domain or URL required' });
   }
 
-  // Pre-warm local search or CDN fetch
+  if (forceRefresh) {
+    iconBufferCache.delete(domain);
+  }
+
+  // Pre-warm web icon into cache cleanly
+  if (!iconBufferCache.has(domain)) {
+    const webIcon = await fetchAuthenticWebIcon(domain);
+    if (webIcon) {
+      iconBufferCache.set(domain, webIcon);
+    }
+  }
+
   const local = findLocalIconCached(nameParam) || findLocalIconCached(domain);
   const iconUrl = `/api/icon?domain=${encodeURIComponent(domain)}&name=${encodeURIComponent(nameParam)}`;
 
@@ -528,6 +578,7 @@ app.get('/api/icon/resolve', async (req, res) => {
     success: true,
     domain,
     hasLocalIcon: Boolean(local),
+    hasWebIcon: iconBufferCache.has(domain),
     iconUrl,
   });
 });
@@ -654,10 +705,9 @@ app.get('/api/pwas/scan', (_req, res) => {
       .map((pwa) => {
         const stored = findStoredState(pwa, db);
         if (stored) {
-          const workingIcon =
-            stored.icon && !stored.icon.includes('/api/icon')
-              ? stored.icon
-              : pwa.icon;
+          const workingIcon = isPreservableIconUrl(stored.icon)
+            ? stored.icon
+            : pwa.icon;
           return {
             ...pwa,
             name: stored.name || pwa.name,
@@ -753,6 +803,14 @@ app.post('/api/pwas/state', (req, res) => {
                   ...(item.flags.comDate !== undefined
                     ? { comDate: item.flags.comDate ? String(item.flags.comDate) : null }
                     : {}),
+                  ...(item.flags.comState !== undefined
+                    ? {
+                        comState:
+                          item.flags.comState === 'check' || item.flags.comState === 'x'
+                            ? item.flags.comState
+                            : null,
+                      }
+                    : {}),
                   ...((item.flags.rbDate !== undefined || item.flags.rdDate !== undefined)
                     ? {
                         rbDate: (item.flags.rbDate ?? item.flags.rdDate)
@@ -760,11 +818,27 @@ app.post('/api/pwas/state', (req, res) => {
                           : null,
                       }
                     : {}),
+                  ...(item.flags.rbState !== undefined
+                    ? {
+                        rbState:
+                          item.flags.rbState === 'check' || item.flags.rbState === 'x'
+                            ? item.flags.rbState
+                            : null,
+                      }
+                    : {}),
                   ...((item.flags.bonDate !== undefined || item.flags.irbDate !== undefined)
                     ? {
                         bonDate: (item.flags.bonDate ?? item.flags.irbDate)
                           ? String(item.flags.bonDate ?? item.flags.irbDate)
                           : null,
+                      }
+                    : {}),
+                  ...(item.flags.bonState !== undefined
+                    ? {
+                        bonState:
+                          item.flags.bonState === 'check' || item.flags.bonState === 'x'
+                            ? item.flags.bonState
+                            : null,
                       }
                     : {}),
                 }

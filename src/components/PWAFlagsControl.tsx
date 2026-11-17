@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import { Check } from 'lucide-react';
-import { DailyFlagKey, FlagFilterKey, PWAFlags, PWAItem } from '../types/pwa';
+import { Check, X } from 'lucide-react';
+import { DailyFlagKey, DailyFlagState, FlagFilterKey, PWAFlags, PWAItem } from '../types/pwa';
 import {
-  isPWAFlagActive,
+  getPWAFlagState,
   normalizeDayMonthOnBlur,
   sanitizeDayMonthTyping,
 } from '../utils/pwaLogic';
@@ -42,21 +42,12 @@ export const DAILY_FLAG_META: Array<{
   key: DailyFlagKey;
   label: string;
   badgeColorClass: string;
-  activeChipClass: string;
-  inactiveChipClass: string;
-  checkboxActiveClass: string;
   filterActiveClass: string;
 }> = [
   {
     key: 'com',
     label: 'COM',
     badgeColorClass: 'text-sky-300',
-    activeChipClass:
-      'bg-sky-500/22 border-sky-400 text-sky-100 shadow-[0_0_10px_-3px_rgba(56,189,248,0.5)]',
-    inactiveChipClass:
-      'bg-neutral-900/95 border-neutral-600/85 text-neutral-100 hover:border-sky-400/70 hover:bg-neutral-800/90',
-    checkboxActiveClass:
-      'bg-sky-400 border-sky-300 text-neutral-950 shadow-[0_0_8px_-1px_rgba(56,189,248,0.65)]',
     filterActiveClass:
       'bg-sky-500/18 border-sky-400/75 text-sky-200 shadow-[0_0_12px_-4px_rgba(56,189,248,0.5)]',
   },
@@ -64,12 +55,6 @@ export const DAILY_FLAG_META: Array<{
     key: 'rb',
     label: 'RB',
     badgeColorClass: 'text-amber-300',
-    activeChipClass:
-      'bg-amber-500/22 border-amber-400 text-amber-100 shadow-[0_0_10px_-3px_rgba(251,191,36,0.5)]',
-    inactiveChipClass:
-      'bg-neutral-900/95 border-neutral-600/85 text-neutral-100 hover:border-amber-400/70 hover:bg-neutral-800/90',
-    checkboxActiveClass:
-      'bg-amber-400 border-amber-300 text-neutral-950 shadow-[0_0_8px_-1px_rgba(251,191,36,0.65)]',
     filterActiveClass:
       'bg-amber-500/18 border-amber-400/75 text-amber-200 shadow-[0_0_12px_-4px_rgba(245,158,11,0.5)]',
   },
@@ -77,12 +62,6 @@ export const DAILY_FLAG_META: Array<{
     key: 'bon',
     label: 'BON',
     badgeColorClass: 'text-violet-300',
-    activeChipClass:
-      'bg-violet-500/22 border-violet-400 text-violet-100 shadow-[0_0_10px_-3px_rgba(167,139,250,0.5)]',
-    inactiveChipClass:
-      'bg-neutral-900/95 border-neutral-600/85 text-neutral-100 hover:border-violet-400/70 hover:bg-neutral-800/90',
-    checkboxActiveClass:
-      'bg-violet-400 border-violet-300 text-neutral-950 shadow-[0_0_8px_-1px_rgba(167,139,250,0.65)]',
     filterActiveClass:
       'bg-violet-500/18 border-violet-400/75 text-violet-200 shadow-[0_0_12px_-4px_rgba(167,139,250,0.5)]',
   },
@@ -113,10 +92,10 @@ interface PWAFlagsControlProps {
   item: PWAItem;
   todayStr: string;
   flags?: PWAFlags;
-  onToggleFlag: (item: PWAItem, flag: DailyFlagKey) => void;
+  onToggleFlag: (item: PWAItem, flag: DailyFlagKey, state?: DailyFlagState | null) => void;
   onUpdateMoneyDate?: (item: PWAItem, moneyDate: string) => void;
   compact?: boolean;
-  layout?: 'row' | 'stacked';
+  layout?: 'row' | 'stacked' | 'grid2x2';
 }
 
 export const PWAFlagsControl: React.FC<PWAFlagsControlProps> = ({
@@ -145,25 +124,126 @@ export const PWAFlagsControl: React.FC<PWAFlagsControlProps> = ({
   };
 
   const hasDateValue = draftDate.trim().length > 0;
-
   const isStacked = layout === 'stacked';
+  const isGrid2x2 = layout === 'grid2x2';
+
+  if (isGrid2x2) {
+    return (
+      <div className="grid grid-cols-2 gap-1 w-full" onClick={(e) => e.stopPropagation()}>
+        {/* Cell 1: Money Date */}
+        <div className="inline-flex items-center justify-between gap-1 px-1.5 py-0.5 rounded border border-emerald-500/80 bg-emerald-950/45 text-[9.5px]">
+          <span className="flex items-center gap-0.5 text-emerald-300 font-bold shrink-0">
+            <MoneySymbolIcon className="w-[13px] h-[13px]" />
+            <span>$</span>
+          </span>
+          <input
+            type="text"
+            inputMode="numeric"
+            maxLength={5}
+            value={draftDate}
+            placeholder="DD/MM"
+            aria-label={`Data dia e mês de ${item.name}`}
+            data-testid={`pwa-money-date-${item.id}`}
+            onClick={(e) => e.stopPropagation()}
+            onChange={(e) => {
+              const next = sanitizeDayMonthTyping(e.target.value);
+              setDraftDate(next);
+              if (onUpdateMoneyDate && (next === '' || /^\d{2}\/\d{2}$/.test(next))) {
+                onUpdateMoneyDate(item, next);
+              }
+            }}
+            onBlur={(e) => commitDate(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                commitDate((e.target as HTMLInputElement).value);
+                (e.target as HTMLInputElement).blur();
+              } else if (e.key === 'Escape') {
+                setDraftDate(persistedDate);
+                (e.target as HTMLInputElement).blur();
+              }
+            }}
+            className="w-[42px] h-[15px] font-mono font-bold text-center rounded bg-neutral-950/90 border border-emerald-400/75 text-emerald-300 text-[9px] focus:outline-none"
+          />
+        </div>
+
+        {/* Cells 2, 3, 4: COM, RB, BON */}
+        {DAILY_FLAG_META.map(({ key, label }) => {
+          const rawState = getPWAFlagState({ flags: effectiveFlags }, key, todayStr);
+          const flagState: DailyFlagState = rawState === 'x' ? 'x' : 'check';
+          const isCheck = flagState === 'check';
+          const trackTone = isCheck
+            ? 'bg-emerald-950/70 border-emerald-500/80'
+            : 'bg-rose-950/70 border-rose-500/80';
+
+          return (
+            <div
+              key={key}
+              data-testid={`pwa-flag-${key}-${item.id}`}
+              data-state={flagState}
+              className={`inline-flex items-center justify-between gap-1 px-1.5 py-0.5 rounded border font-bold tracking-wide select-none ${trackTone} text-[9.5px]`}
+            >
+              <span className={`leading-none ${isCheck ? 'text-emerald-200' : 'text-rose-200'}`}>
+                {label}
+              </span>
+
+              <div className="relative inline-flex items-center w-[32px] h-[15px] bg-neutral-900 rounded-full border border-neutral-700 p-0.5 cursor-pointer shadow-inner shrink-0">
+                <div className="absolute inset-0 flex items-center justify-between px-0.5 pointer-events-none text-[8px] font-bold">
+                  <span className="text-rose-400 opacity-90">✕</span>
+                  <span className="text-emerald-400 opacity-90">✓</span>
+                </div>
+                <div
+                  className={`absolute top-0.5 bottom-0.5 w-[14px] rounded-full transition-all duration-200 flex items-center justify-center shadow-md ${
+                    isCheck ? 'translate-x-[16px] bg-emerald-500 text-neutral-950' : 'translate-x-0 bg-rose-500 text-white'
+                  }`}
+                >
+                  {isCheck ? (
+                    <Check className="w-2 h-2 stroke-[3.5]" />
+                  ) : (
+                    <X className="w-2 h-2 stroke-[3.5]" />
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onToggleFlag(item, key, 'x');
+                  }}
+                  className="absolute inset-y-0 left-0 w-1/2 cursor-pointer z-10 bg-transparent border-0 focus-visible:outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onToggleFlag(item, key, 'check');
+                  }}
+                  className="absolute inset-y-0 right-0 w-1/2 cursor-pointer z-10 bg-transparent border-0 focus-visible:outline-none"
+                />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
+
+  const isCompactRow = compact && !isStacked;
 
   return (
     <div
       className={
         isStacked
           ? 'flex flex-col gap-1.5 w-full'
-          : `flex items-center justify-between flex-wrap ${compact ? 'gap-1.5' : 'gap-2'}`
+          : 'flex items-center gap-1 shrink-0 max-w-full overflow-hidden'
       }
       onClick={(e) => e.stopPropagation()}
     >
       {/* Left: Prominent Green $ Icon + Persistent DD/MM Input */}
-      <div className="inline-flex items-center gap-1.5 shrink-0">
+      <div className="inline-flex items-center gap-0.5 shrink-0">
         <span
           className="inline-flex items-center justify-center shrink-0"
           title="Data de Dia/Mês (não reseta à meia-noite)"
         >
-          <MoneySymbolIcon className={compact ? 'w-[17px] h-[17px]' : 'w-[20px] h-[20px]'} />
+          <MoneySymbolIcon className={isCompactRow ? 'w-[14px] h-[14px]' : 'w-[16px] h-[16px]'} />
         </span>
         <input
           type="text"
@@ -193,8 +273,8 @@ export const PWAFlagsControl: React.FC<PWAFlagsControlProps> = ({
             }
           }}
           className={`${
-            compact ? 'w-[48px] h-[22px] text-[10px]' : 'w-[54px] h-[24px] text-[11px]'
-          } font-mono font-bold text-center rounded-md border px-1 transition-colors focus:outline-none focus:ring-1 focus:ring-emerald-400 ${
+            isCompactRow ? 'w-[38px] h-[20px] text-[9px]' : compact ? 'w-[42px] h-[22px] text-[10px]' : 'w-[43px] h-[22px] text-[10px]'
+          } font-mono font-bold text-center rounded border px-0.5 transition-colors focus:outline-none focus:ring-1 focus:ring-emerald-400 ${
             hasDateValue
               ? 'bg-emerald-950/45 border-emerald-400/75 text-emerald-300 shadow-[0_0_8px_-3px_rgba(16,185,129,0.4)]'
               : 'bg-neutral-950/90 border-neutral-600/85 text-neutral-100 placeholder:text-neutral-500 hover:border-emerald-400/60'
@@ -202,65 +282,96 @@ export const PWAFlagsControl: React.FC<PWAFlagsControlProps> = ({
         />
       </div>
 
-      {/* Right: Highlighted Daily Checkboxes (COM, RB, BON — auto-reset at midnight) */}
+      {/* Right: Compact Sliding Toggle Switch (Interruptor Deslizante) for COM, RB, BON */}
       <div
         className={
           isStacked
-            ? 'grid grid-cols-3 gap-1 w-full'
-            : `inline-flex items-center ${compact ? 'gap-1' : 'gap-1.5'} flex-wrap`
+            ? 'flex flex-wrap items-center gap-1.5 w-full'
+            : 'inline-flex items-center gap-1 shrink-0'
         }
       >
-        {DAILY_FLAG_META.map(
-          ({
-            key,
-            label,
-            badgeColorClass,
-            activeChipClass,
-            inactiveChipClass,
-            checkboxActiveClass,
-          }) => {
-            const checked = isPWAFlagActive({ flags: effectiveFlags }, key, todayStr);
-            return (
-              <button
-                key={key}
-                type="button"
-                role="checkbox"
-                aria-checked={checked}
-                aria-label={`Marcar ${label} em ${item.name}`}
-                data-testid={`pwa-flag-${key}-${item.id}`}
-                title={`${label}: ${
-                  checked ? 'Marcado hoje' : 'Desmarcado'
-                } (reseta diariamente à meia-noite)`}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onToggleFlag(item, key);
-                }}
-                className={`group/flag inline-flex items-center ${
-                  isStacked
-                    ? 'justify-between gap-1 px-1.5 py-0.5 text-[10px] w-full'
-                    : compact
-                    ? 'gap-1 px-1.5 py-0.5 text-[10px]'
-                    : 'gap-1.5 px-1.5 py-0.5 text-[11px]'
-                } rounded-md border font-bold tracking-wide transition-all duration-150 cursor-pointer select-none focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-emerald-400 ${
-                  checked ? activeChipClass : inactiveChipClass
-                }`}
+        {DAILY_FLAG_META.map(({ key, label, badgeColorClass }) => {
+          const rawState = getPWAFlagState({ flags: effectiveFlags }, key, todayStr);
+          // Non-null requirement: always either 'check' (green) or 'x' (red). Default to 'check' if un-set.
+          const flagState: DailyFlagState = rawState === 'x' ? 'x' : 'check';
+          const isCheck = flagState === 'check';
+          const isX = flagState === 'x';
+
+          const trackTone = isCheck
+            ? 'bg-emerald-950/70 border-emerald-500/80 shadow-[0_0_10px_-4px_rgba(16,185,129,0.5)]'
+            : 'bg-rose-950/70 border-rose-500/80 shadow-[0_0_10px_-4px_rgba(244,63,94,0.5)]';
+
+          return (
+            <div
+              key={key}
+              data-testid={`pwa-flag-${key}-${item.id}`}
+              data-state={flagState}
+              title={`${label}: ${
+                isCheck ? 'Check verde (✓) à direita' : 'X vermelho (✕) à esquerda'
+              } — reseta diariamente à meia-noite`}
+              className={`inline-flex items-center ${isCompactRow ? 'gap-0.5 px-1 py-0.5 text-[9px]' : 'gap-1.5 px-1.5 py-0.5 text-[10px]'} rounded border font-bold tracking-wide select-none transition-all duration-150 shrink-0 whitespace-nowrap ${
+                isStacked ? 'justify-between w-full' : ''
+              } ${trackTone}`}
+            >
+              <span className={`leading-none shrink-0 ${isCheck ? 'text-emerald-200' : 'text-rose-200'}`}>
+                {label}
+              </span>
+
+              {/* Compact sliding switch container */}
+              <div
+                className={`relative inline-flex items-center ${isCompactRow ? 'w-[32px] h-[15px]' : 'w-[40px] h-[17px]'} bg-neutral-900 rounded-full border border-neutral-700 p-0.5 cursor-pointer shadow-inner shrink-0`}
+                onClick={(e) => e.stopPropagation()}
               >
-                <span className={checked ? '' : badgeColorClass}>{label}</span>
-                <span
-                  className={`${
-                    compact ? 'w-[13px] h-[13px]' : 'w-[14px] h-[14px]'
-                  } rounded-[3px] border flex items-center justify-center shrink-0 transition-all duration-150 ${
-                    checked
-                      ? checkboxActiveClass
-                      : 'border-neutral-400/85 bg-neutral-950 group-hover/flag:border-white text-transparent'
+                {/* Background ✕ (left) and ✓ (right) */}
+                <div className={`absolute inset-0 flex items-center justify-between px-0.5 pointer-events-none ${isCompactRow ? 'text-[8px]' : 'text-[9px]'} font-bold`}>
+                  <span className="text-rose-400 opacity-90">✕</span>
+                  <span className="text-emerald-400 opacity-90">✓</span>
+                </div>
+
+                {/* Sliding thumb */}
+                <div
+                  className={`absolute top-0.5 bottom-0.5 ${isCompactRow ? 'w-[14px]' : 'w-[16px]'} rounded-full transition-all duration-200 flex items-center justify-center shadow-md ${
+                    isCheck
+                      ? isCompactRow ? 'translate-x-[16px] bg-emerald-500 text-neutral-950' : 'translate-x-[20px] bg-emerald-500 text-neutral-950'
+                      : 'translate-x-0 bg-rose-500 text-white'
                   }`}
                 >
-                  <Check className="w-2.5 h-2.5 stroke-[3.2]" />
-                </span>
-              </button>
-            );
-          }
-        )}
+                  {isCheck ? (
+                    <Check className={isCompactRow ? 'w-2 h-2 stroke-[3.5]' : 'w-2.5 h-2.5 stroke-[3.5]'} />
+                  ) : (
+                    <X className={isCompactRow ? 'w-2 h-2 stroke-[3.5]' : 'w-2.5 h-2.5 stroke-[3.5]'} />
+                  )}
+                </div>
+
+                {/* Left side click target (X red) */}
+                <button
+                  type="button"
+                  aria-label={`Marcar X vermelho (✕) em ${label} de ${item.name}`}
+                  data-testid={`pwa-flag-${key}-x-${item.id}`}
+                  title={`Marcar X vermelho (✕) à esquerda`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onToggleFlag(item, key, 'x');
+                  }}
+                  className="absolute inset-y-0 left-0 w-1/2 cursor-pointer z-10 bg-transparent border-0 focus-visible:outline-none"
+                />
+
+                {/* Right side click target (Check green) */}
+                <button
+                  type="button"
+                  aria-label={`Marcar check verde (✓) em ${label} de ${item.name}`}
+                  data-testid={`pwa-flag-${key}-check-${item.id}`}
+                  title={`Marcar check verde (✓) à direita`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onToggleFlag(item, key, 'check');
+                  }}
+                  className="absolute inset-y-0 right-0 w-1/2 cursor-pointer z-10 bg-transparent border-0 focus-visible:outline-none"
+                />
+              </div>
+            </div>
+          );
+        })}
       </div>
     </div>
   );

@@ -20,7 +20,7 @@ import {
   Check,
   Eraser,
 } from 'lucide-react';
-import { DailyFlagKey, PWAFolder } from '../types/pwa';
+import { DailyFlagKey, DailyFlagState, PWAFolder } from '../types/pwa';
 import { flattenFoldersHierarchy } from '../utils/folderLogic';
 import { DAILY_FLAG_META, MoneySymbolIcon } from './PWAFlagsControl';
 
@@ -32,7 +32,7 @@ interface BatchActionsBarProps {
   onDeselectAll: () => void;
   onBatchSetStatus: (mode: 'accessed' | 'pending' | 'toggle') => void;
   onBatchSetRating: (rating: number) => void;
-  onBatchSetDailyFlag?: (flag: DailyFlagKey, active: boolean) => void;
+  onBatchSetDailyFlag?: (flag: DailyFlagKey, activeOrState: boolean | DailyFlagState | null) => void;
   onBatchClearFlags?: (options: { clearDaily?: boolean; clearMoneyDate?: boolean }) => void;
   onBatchRefreshIcons?: () => void;
   onBatchEdit: () => void;
@@ -312,19 +312,33 @@ export const BatchActionsBar: React.FC<BatchActionsBarProps> = ({
                       <div className="flex items-center gap-1">
                         <button
                           type="button"
+                          data-testid={`batch-flag-${key}-check`}
+                          title={`Marcar check verde (✓) em ${label}`}
                           onClick={() => {
-                            onBatchSetDailyFlag(key, true);
+                            onBatchSetDailyFlag(key, 'check');
                             setOpenMenu(null);
                           }}
-                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-500/20 hover:bg-emerald-500/35 border border-emerald-500/50 text-emerald-200 text-[10px] font-semibold cursor-pointer"
+                          className="inline-flex items-center justify-center w-6 h-5 rounded bg-emerald-500/20 hover:bg-emerald-500/35 border border-emerald-500/50 text-emerald-300 cursor-pointer"
                         >
-                          <Check className="w-2.5 h-2.5" />
-                          <span>Marcar</span>
+                          <Check className="w-3 h-3 stroke-[2.8]" />
                         </button>
                         <button
                           type="button"
+                          data-testid={`batch-flag-${key}-x`}
+                          title={`Marcar X vermelho (✕) em ${label}`}
                           onClick={() => {
-                            onBatchSetDailyFlag(key, false);
+                            onBatchSetDailyFlag(key, 'x');
+                            setOpenMenu(null);
+                          }}
+                          className="inline-flex items-center justify-center w-6 h-5 rounded bg-rose-500/20 hover:bg-rose-500/35 border border-rose-500/50 text-rose-300 cursor-pointer"
+                        >
+                          <X className="w-3 h-3 stroke-[2.8]" />
+                        </button>
+                        <button
+                          type="button"
+                          data-testid={`batch-flag-${key}-clear`}
+                          onClick={() => {
+                            onBatchSetDailyFlag(key, null);
                             setOpenMenu(null);
                           }}
                           className="px-2 py-0.5 rounded bg-neutral-900 hover:bg-neutral-800 border border-neutral-700 text-neutral-300 text-[10px] cursor-pointer"

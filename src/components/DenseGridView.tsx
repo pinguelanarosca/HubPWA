@@ -1,6 +1,6 @@
 import React from 'react';
 import { ExternalLink, Trash2, Edit2, User, Clock, Copy } from 'lucide-react';
-import { DailyFlagKey, PWAItem } from '../types/pwa';
+import { DailyFlagKey, DailyFlagState, PWAItem } from '../types/pwa';
 import { PWAIcon } from './PWAIcon';
 import { StatusIndicator } from './StatusIndicator';
 import { InlineNoteInput } from './InlineNoteInput';
@@ -14,7 +14,7 @@ interface DenseGridViewProps {
   onLaunch: (item: PWAItem) => void;
   onToggleStatus: (item: PWAItem) => void;
   onUpdateNote: (item: PWAItem, newNote: string) => void;
-  onToggleFlag?: (item: PWAItem, flag: DailyFlagKey) => void;
+  onToggleFlag?: (item: PWAItem, flag: DailyFlagKey, state?: DailyFlagState | null) => void;
   onUpdateMoneyDate?: (item: PWAItem, moneyDate: string) => void;
   onTogglePin: (item: PWAItem) => void;
   onSetRating?: (item: PWAItem, rating: number) => void;

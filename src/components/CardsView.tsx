@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { DailyFlagKey, PWAFolder, PWAItem } from '../types/pwa';
+import { DailyFlagKey, DailyFlagState, PWAFolder, PWAItem } from '../types/pwa';
 import { PWAIcon } from './PWAIcon';
 import { InlineNoteInput } from './InlineNoteInput';
 import { StarRating } from './StarRating';
@@ -20,7 +20,7 @@ interface CardsViewProps {
   onLaunch: (item: PWAItem) => void;
   onToggleStatus: (item: PWAItem) => void;
   onUpdateNote: (item: PWAItem, newNote: string) => void;
-  onToggleFlag?: (item: PWAItem, flag: DailyFlagKey) => void;
+  onToggleFlag?: (item: PWAItem, flag: DailyFlagKey, state?: DailyFlagState | null) => void;
   onUpdateMoneyDate?: (item: PWAItem, moneyDate: string) => void;
   onTogglePin?: (item: PWAItem) => void;
   onSetRating?: (item: PWAItem, rating: number) => void;

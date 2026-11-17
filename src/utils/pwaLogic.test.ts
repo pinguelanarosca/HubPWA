@@ -18,8 +18,10 @@ import {
   formatChromeProfileDisplay,
   togglePWAFlag,
   updatePWAMoneyDate,
+  getPWAFlagState,
   isPWAFlagActive,
   countPWAFlags,
+  countPWAFlagBreakdown,
   sanitizeDayMonthTyping,
   normalizeDayMonthOnBlur,
   getMsUntilNextMidnight,
@@ -33,6 +35,10 @@ import {
   stripProfileSuffixFromName,
   clonePWAForProfile,
   buildAvailableChromeProfiles,
+  isDeprecatedGenericIconUrl,
+  isPreservableIconUrl,
+  isChromeShortcutLocalCandidate,
+  extractHtmlIconCandidates,
   isSameOrMatchingPWA,
 } from './pwaLogic';
 import { PWAItem } from '../types/pwa';
@@ -422,47 +428,83 @@ test('moneyDate persists across midnight while COM, RB, and BON selections reset
     createdAt: '2026-11-01',
   };
 
-  // Update persistent DD/MM date and toggle COM / BON on App A for today
+  // Update persistent DD/MM date and set COM -> 'check', RB -> 'x', BON -> 'check' on App A for today
   const aDated = updatePWAMoneyDate(baseA, '16/11');
-  const aWithCom = togglePWAFlag(aDated, 'com', today);
-  const aWithComBon = togglePWAFlag(aWithCom, 'bon', today);
+  const aWithCom = togglePWAFlag(aDated, 'com', today, 'check');
+  const aWithRbX = togglePWAFlag(aWithCom, 'rb', today, 'x');
+  const aWithComRbBon = togglePWAFlag(aWithRbX, 'bon', today, 'check');
 
-  assert.equal(aWithComBon.flags?.moneyDate, '16/11');
-  assert.equal(aWithComBon.flags?.comDate, today);
-  assert.equal(aWithComBon.flags?.bonDate, today);
-  assert.equal(isPWAFlagActive(aWithComBon, 'com', today), true);
-  assert.equal(isPWAFlagActive(aWithComBon, 'rb', today), false);
-  assert.equal(isPWAFlagActive(aWithComBon, 'bon', today), true);
-  assert.equal(isPWAFlagActive(aWithComBon, 'moneyDate', today), true);
+  assert.equal(aWithComRbBon.flags?.moneyDate, '16/11');
+  assert.equal(aWithComRbBon.flags?.comDate, today);
+  assert.equal(aWithComRbBon.flags?.comState, 'check');
+  assert.equal(aWithComRbBon.flags?.rbDate, today);
+  assert.equal(aWithComRbBon.flags?.rbState, 'x');
+  assert.equal(aWithComRbBon.flags?.bonDate, today);
+  assert.equal(aWithComRbBon.flags?.bonState, 'check');
 
-  // Untoggle COM -> clears today's selection
-  const aWithoutCom = togglePWAFlag(aWithComBon, 'com', today);
-  assert.equal(aWithoutCom.flags?.comDate, null);
-  assert.equal(isPWAFlagActive(aWithoutCom, 'com', today), false);
+  assert.equal(getPWAFlagState(aWithComRbBon, 'com', today), 'check');
+  assert.equal(getPWAFlagState(aWithComRbBon, 'rb', today), 'x');
+  assert.equal(getPWAFlagState(aWithComRbBon, 'bon', today), 'check');
+  assert.equal(getPWAFlagState(baseB, 'com', today), 'check'); // legacy record without comState defaults to 'check'
+  assert.equal(getPWAFlagState(baseB, 'rb', today), null);
 
-  const items = [aWithComBon, baseB, baseC];
+  assert.equal(isPWAFlagActive(aWithComRbBon, 'com', today), true);
+  assert.equal(isPWAFlagActive(aWithComRbBon, 'com:check', today), true);
+  assert.equal(isPWAFlagActive(aWithComRbBon, 'com:x', today), false);
+  assert.equal(isPWAFlagActive(aWithComRbBon, 'rb', today), true);
+  assert.equal(isPWAFlagActive(aWithComRbBon, 'rb:x', today), true);
+  assert.equal(isPWAFlagActive(aWithComRbBon, 'rb:check', today), false);
+  assert.equal(isPWAFlagActive(aWithComRbBon, 'moneyDate', today), true);
+
+  // Clicking the active X on RB clears it back to optional null; clicking X on COM switches 'check' -> 'x'
+  const aClearedRb = togglePWAFlag(aWithComRbBon, 'rb', today, 'x');
+  assert.equal(aClearedRb.flags?.rbDate, null);
+  assert.equal(aClearedRb.flags?.rbState, null);
+  assert.equal(getPWAFlagState(aClearedRb, 'rb', today), null);
+
+  const aComSwitchedToX = togglePWAFlag(aWithComRbBon, 'com', today, 'x');
+  assert.equal(getPWAFlagState(aComSwitchedToX, 'com', today), 'x');
+
+  const items = [aWithComRbBon, baseB, baseC];
   assert.deepEqual(countPWAFlags(items, today), {
     moneyDate: 2,
     com: 3,
-    rb: 1,
+    rb: 2,
     bon: 2,
   });
+  assert.deepEqual(countPWAFlagBreakdown(items, today), {
+    moneyDate: 2,
+    com: { total: 3, check: 3, x: 0 },
+    rb: { total: 2, check: 1, x: 1 },
+    bon: { total: 2, check: 2, x: 0 },
+  });
 
-  // Filtering on today
+  // Filtering on today (general + specific check/x)
   assert.deepEqual(
     filterAndSortPWAs(items, { flagFilters: ['moneyDate'], todayStr: today }).map((i) => i.id).sort(),
     ['a', 'b']
   );
   assert.deepEqual(
-    filterAndSortPWAs(items, { flagFilters: ['com', 'rb'], todayStr: today }).map((i) => i.id),
+    filterAndSortPWAs(items, { flagFilters: ['com', 'rb'], todayStr: today }).map((i) => i.id).sort(),
+    ['a', 'c']
+  );
+  assert.deepEqual(
+    filterAndSortPWAs(items, { flagFilters: ['rb:x'], todayStr: today }).map((i) => i.id),
+    ['a']
+  );
+  assert.deepEqual(
+    filterAndSortPWAs(items, { flagFilters: ['rb:check'], todayStr: today }).map((i) => i.id),
     ['c']
   );
 
-  // Midnight rollover to tomorrow: COM, RB, BON selections vanish automatically, moneyDate stays!
-  assert.equal(isPWAFlagActive(aWithComBon, 'com', tomorrow), false);
-  assert.equal(isPWAFlagActive(aWithComBon, 'bon', tomorrow), false);
-  assert.equal(isPWAFlagActive(aWithComBon, 'moneyDate', tomorrow), true);
-  assert.equal(aWithComBon.flags?.moneyDate, '16/11');
+  // Midnight rollover to tomorrow: COM, RB, BON check/x selections vanish automatically, moneyDate stays!
+  assert.equal(getPWAFlagState(aWithComRbBon, 'com', tomorrow), null);
+  assert.equal(getPWAFlagState(aWithComRbBon, 'rb', tomorrow), null);
+  assert.equal(isPWAFlagActive(aWithComRbBon, 'com', tomorrow), false);
+  assert.equal(isPWAFlagActive(aWithComRbBon, 'rb:x', tomorrow), false);
+  assert.equal(isPWAFlagActive(aWithComRbBon, 'bon', tomorrow), false);
+  assert.equal(isPWAFlagActive(aWithComRbBon, 'moneyDate', tomorrow), true);
+  assert.equal(aWithComRbBon.flags?.moneyDate, '16/11');
   assert.deepEqual(countPWAFlags(items, tomorrow), {
     moneyDate: 2,
     com: 0,
@@ -671,16 +713,51 @@ test('bulk actions add/remove stars, update status, and set/clear daily COM/RB/B
   assert.equal(pending[0].lastAccessedDate, null);
   assert.equal(pending[1].lastAccessedDate, null);
 
-  // Bulk set daily RB & BON flags, then clear daily flags (moneyDate preserved)
-  const withRb = batchSetDailyFlag(pending, targets, 'rb', true, today);
-  const withBon = batchSetDailyFlag(withRb, targets, 'bon', true, today);
+  // Bulk set daily RB ('x') & BON ('check') flags, then clear daily flags (moneyDate preserved)
+  const withRb = batchSetDailyFlag(pending, targets, 'rb', 'x', today);
+  const withBon = batchSetDailyFlag(withRb, targets, 'bon', 'check', today);
   assert.equal(withBon[0].flags?.rbDate, today);
+  assert.equal(withBon[0].flags?.rbState, 'x');
   assert.equal(withBon[1].flags?.bonDate, today);
+  assert.equal(withBon[1].flags?.bonState, 'check');
   assert.equal(withBon[2].flags, undefined);
 
   const clearedDaily = batchClearFlags(withBon, targets, { clearDaily: true, clearMoneyDate: false });
   assert.equal(clearedDaily[0].flags?.comDate, null);
+  assert.equal(clearedDaily[0].flags?.comState, null);
   assert.equal(clearedDaily[0].flags?.rbDate, null);
+  assert.equal(clearedDaily[0].flags?.rbState, null);
   assert.equal(clearedDaily[0].flags?.bonDate, null);
+  assert.equal(clearedDaily[0].flags?.bonState, null);
   assert.equal(clearedDaily[0].flags?.moneyDate, '05/11'); // permanent preserved!
 });
+
+test('icon URL helpers preserve web-resolved /api/icon?domain=... across rescans and extract HTML icons regardless of attribute order', () => {
+  assert.equal(isDeprecatedGenericIconUrl('https://www.google.com/s2/favicons?domain=aa222.bet&sz=128'), true);
+  assert.equal(isDeprecatedGenericIconUrl('https://t1.gstatic.com/faviconV2?url=http://aa222.bet'), true);
+  assert.equal(isDeprecatedGenericIconUrl('https://icons.duckduckgo.com/ip3/aa222.bet.ico'), true);
+  assert.equal(isDeprecatedGenericIconUrl('/api/icon?domain=aa222.bet'), false);
+
+  assert.equal(isPreservableIconUrl('/api/icon?domain=aa222.bet&name=AA222.BET'), true);
+  assert.equal(isPreservableIconUrl('data:image/png;base64,abc'), true);
+  assert.equal(isPreservableIconUrl('https://cdn.aa222.bet/logo.png'), true);
+  assert.equal(isPreservableIconUrl('/api/icon?name=chrome-abcdef-Profile_5&url=https://aa222.bet'), false);
+  assert.equal(isPreservableIconUrl('https://www.google.com/s2/favicons?domain=aa222.bet'), false);
+
+  assert.equal(isChromeShortcutLocalCandidate('chrome-abcdef-Profile_5'), true);
+  assert.equal(isChromeShortcutLocalCandidate('Profile_5'), true);
+  assert.equal(isChromeShortcutLocalCandidate('/home/user/.config/google-chrome/Profile 5/Web Applications/foo.png'), true);
+  assert.equal(isChromeShortcutLocalCandidate('aa222.bet'), false);
+
+  const html = `
+    <link href="//cdn.aa222.bet/favicon.png" rel="icon" type="image/png">
+    <link href="/apple-icon.png" rel="apple-touch-icon-precomposed">
+    <meta content="./og-logo.png" property="og:image">
+  `;
+  assert.deepEqual(extractHtmlIconCandidates(html, 'aa222.bet'), [
+    'https://aa222.bet/apple-icon.png',
+    'https://cdn.aa222.bet/favicon.png',
+    'https://aa222.bet/og-logo.png',
+  ]);
+});
+

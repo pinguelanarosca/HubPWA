@@ -4,7 +4,7 @@
  */
 
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { DailyFlagKey, PWAFolder, PWAItem, ViewDensity, StatusFilter, StarFilter, SortOption, FlagFilterKey } from './types/pwa';
+import { DailyFlagKey, DailyFlagState, PWAFolder, PWAItem, ViewDensity, StatusFilter, StarFilter, SortOption, FlagFilterKey } from './types/pwa';
 import {
   getTodayString,
   getMsUntilNextMidnight,
@@ -14,12 +14,15 @@ import {
   calculateStats,
   filterAndSortPWAs,
   resolveFaviconAtInsertion,
+  isDeprecatedGenericIconUrl,
+  isPreservableIconUrl,
   isAndroidOrRedroidApp,
   isSameOrMatchingPWA,
   extractChromeProfileDirectory,
   togglePWAFlag,
   updatePWAMoneyDate,
   countPWAFlags,
+  countPWAFlagBreakdown,
   migratePWAFlags,
   batchSetRating,
   batchSetStatus,
@@ -83,9 +86,9 @@ export function repairAndSanitizePWA(it: PWAItem): PWAItem {
     url = url.slice(0, -7) + '.com';
   }
 
-  // Preserve local PWA icon if present (from system .desktop file or custom entry)
+  // Preserve working/custom PWA icon, replacing missing or legacy generic-prone third-party URLs
   let icon = it.icon;
-  if (!icon || icon.includes('duckduckgo.com')) {
+  if (!icon || isDeprecatedGenericIconUrl(icon)) {
     icon = resolveFaviconAtInsertion(url, undefined, it.name);
   }
 
@@ -323,12 +326,10 @@ export default function App() {
             ...matches.map((m) => m.accessCount || 0)
           );
 
-          // Preserve folder assignment & working icon from previous state
+          // Preserve folder assignment & working icon (custom URLs or web-resolved /api/icon?domain=...) across rescans
           const customFolderId = matches.find((m) => m.folderId)?.folderId ?? scanned.folderId ?? null;
-          const existingWorkingIcon = matches.find(
-            (m) => m.icon && !m.icon.includes('/api/icon') && m.icon.trim()
-          )?.icon;
-          const finalMergedIcon = existingWorkingIcon || scanned.icon || resolveFaviconAtInsertion(scanned.url);
+          const existingWorkingIcon = matches.find((m) => isPreservableIconUrl(m.icon))?.icon;
+          const finalMergedIcon = existingWorkingIcon || scanned.icon || resolveFaviconAtInsertion(scanned.url, undefined, customName);
 
           const finalProfileDirectory =
             scanned.profileDirectory ||
@@ -595,6 +596,7 @@ export default function App() {
 
   // Flag counts across all clean items (for current todayStr)
   const flagCounts = useMemo(() => countPWAFlags(cleanItems, todayStr), [cleanItems, todayStr]);
+  const flagBreakdown = useMemo(() => countPWAFlagBreakdown(cleanItems, todayStr), [cleanItems, todayStr]);
 
   // Filtered and sorted items
   const displayedItems = useMemo(() => {
@@ -764,12 +766,12 @@ export default function App() {
     }).catch(() => {});
   }, []);
 
-  // Toggle daily-resetting selection (COM, RB, BON) scoped to todayStr
-  const handleToggleFlag = useCallback((item: PWAItem, flag: DailyFlagKey) => {
-    const updated = togglePWAFlag(item, flag, todayStr);
+  // Toggle or set daily-resetting selection (COM, RB, BON -> optional green 'check' or red 'x') scoped to todayStr
+  const handleToggleFlag = useCallback((item: PWAItem, flag: DailyFlagKey, state?: DailyFlagState | null) => {
+    const updated = togglePWAFlag(item, flag, todayStr, state);
     setItems((prev) => {
       const next = prev.map((it) =>
-        isSameOrMatchingPWA(it, item) ? togglePWAFlag(it, flag, todayStr) : it
+        isSameOrMatchingPWA(it, item) ? togglePWAFlag(it, flag, todayStr, state) : it
       );
       try {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
@@ -803,9 +805,20 @@ export default function App() {
   }, []);
 
   const handleToggleFlagFilter = useCallback((flag: FlagFilterKey) => {
-    setFlagFilters((prev) =>
-      prev.includes(flag) ? prev.filter((f) => f !== flag) : [...prev, flag]
-    );
+    setFlagFilters((prev) => {
+      if (prev.includes(flag)) {
+        return prev.filter((f) => f !== flag);
+      }
+      if (flag === 'moneyDate') {
+        return [...prev, flag];
+      }
+      // Within the same daily flag (e.g. com, com:check, com:x), replace conflicting variants
+      const baseFlag = flag.split(':')[0] as DailyFlagKey;
+      const withoutSameGroup = prev.filter(
+        (f) => f !== baseFlag && f !== `${baseFlag}:check` && f !== `${baseFlag}:x`
+      );
+      return [...withoutSameGroup, flag];
+    });
   }, []);
 
   const handleClearFlagFilters = useCallback(() => {
@@ -1042,13 +1055,13 @@ export default function App() {
     });
   }, [getBulkTargetIds]);
 
-  // Batch set or clear daily flag (COM, RB, BON)
-  const handleBatchSetDailyFlag = useCallback((flag: DailyFlagKey, active: boolean) => {
+  // Batch set or clear daily flag (COM, RB, BON -> 'check', 'x', or null)
+  const handleBatchSetDailyFlag = useCallback((flag: DailyFlagKey, activeOrState: boolean | DailyFlagState | null) => {
     const targetIds = getBulkTargetIds();
     if (targetIds.size === 0) return;
 
     setItems((prev) => {
-      const next = batchSetDailyFlag(prev, targetIds, flag, active, todayStr);
+      const next = batchSetDailyFlag(prev, targetIds, flag, activeOrState, todayStr);
       const changed = next.filter((it) => targetIds.has(it.id));
       try {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
@@ -1412,12 +1425,14 @@ export default function App() {
 
   // Batch refresh icons for all PWAs based on their URLs and names
   const handleRefreshAllIcons = useCallback(() => {
+    const bust = Date.now();
     setItems((prev) => {
       const refreshed = prev.map((it) => {
         const repaired = repairAndSanitizePWA(it);
+        const baseIcon = resolveFaviconAtInsertion(repaired.url, undefined, repaired.name);
         return {
           ...repaired,
-          icon: resolveFaviconAtInsertion(repaired.url, undefined, repaired.name),
+          icon: baseIcon ? `${baseIcon}&v=${bust}` : baseIcon,
         };
       });
       fetch('/api/pwas/state', {
@@ -1431,13 +1446,18 @@ export default function App() {
 
   // Refresh icon for a single PWA
   const handleRefreshSingleIcon = useCallback((item: PWAItem) => {
+    const bust = Date.now();
     setItems((prev) => {
       const updatedList = prev.map((it) => {
         if (it.id === item.id) {
           const repaired = repairAndSanitizePWA(it);
+          const baseIcon = resolveFaviconAtInsertion(repaired.url, undefined, repaired.name);
+          if (repaired.url) {
+            fetch(`/api/icon/resolve?url=${encodeURIComponent(repaired.url)}&name=${encodeURIComponent(repaired.name || '')}&refresh=1`).catch(() => {});
+          }
           return {
             ...repaired,
-            icon: resolveFaviconAtInsertion(repaired.url, undefined, repaired.name),
+            icon: baseIcon ? `${baseIcon}&v=${bust}` : baseIcon,
           };
         }
         return it;
@@ -1663,6 +1683,7 @@ export default function App() {
               onStarFilterChange={setStarFilter}
               flagFilters={flagFilters}
               flagCounts={flagCounts}
+              flagBreakdown={flagBreakdown}
               onToggleFlagFilter={handleToggleFlagFilter}
               onClearFlagFilters={handleClearFlagFilters}
               density={density}

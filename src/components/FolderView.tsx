@@ -15,7 +15,7 @@ import {
   CheckSquare,
   Square,
 } from 'lucide-react';
-import { DailyFlagKey, PWAFolder, PWAItem } from '../types/pwa';
+import { DailyFlagKey, DailyFlagState, PWAFolder, PWAItem } from '../types/pwa';
 import { PWAIcon } from './PWAIcon';
 import { CardsView } from './CardsView';
 import { GROUP_COLOR_THEMES } from '../utils/groupLogic';
@@ -36,7 +36,7 @@ interface FolderViewProps {
   onLaunch: (item: PWAItem) => void;
   onToggleStatus: (item: PWAItem) => void;
   onUpdateNote: (item: PWAItem, newNote: string) => void;
-  onToggleFlag?: (item: PWAItem, flag: DailyFlagKey) => void;
+  onToggleFlag?: (item: PWAItem, flag: DailyFlagKey, state?: DailyFlagState | null) => void;
   onUpdateMoneyDate?: (item: PWAItem, moneyDate: string) => void;
   onTogglePin?: (item: PWAItem) => void;
   onSetRating?: (item: PWAItem, rating: number) => void;

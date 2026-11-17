@@ -1,5 +1,5 @@
 import React from 'react';
-import { DailyFlagKey, PWAItem } from '../types/pwa';
+import { DailyFlagKey, DailyFlagState, PWAItem } from '../types/pwa';
 import { PWAIcon } from './PWAIcon';
 import { PWAFlagsControl } from './PWAFlagsControl';
 import { isAccessedToday } from '../utils/pwaLogic';
@@ -10,7 +10,7 @@ interface MiniCardsViewProps {
   todayStr: string;
   selectedIds?: Set<string>;
   onLaunch: (item: PWAItem) => void;
-  onToggleFlag: (item: PWAItem, flag: DailyFlagKey) => void;
+  onToggleFlag: (item: PWAItem, flag: DailyFlagKey, state?: DailyFlagState | null) => void;
   onUpdateMoneyDate?: (item: PWAItem, moneyDate: string) => void;
   groupByGroup?: boolean;
 }
@@ -41,17 +41,17 @@ export const MiniCardsView: React.FC<MiniCardsViewProps> = ({
       <div
         key={item.id}
         data-testid={`mini-card-${item.id}`}
-        className={`group relative overflow-hidden rounded-xl bg-[#14151a] hover:bg-[#181920] transition-all flex items-stretch min-h-[96px] ${
+        className={`group relative overflow-hidden rounded-xl bg-[#14151a] hover:bg-[#181920] transition-all flex items-center h-[82px] min-h-[82px] max-h-[82px] px-2.5 gap-2.5 ${
           isAccessed
-            ? 'border-2 border-emerald-500/80 hover:border-emerald-400 shadow-[0_0_16px_-6px_rgba(16,185,129,0.42)]'
-            : 'border-2 border-rose-500/75 hover:border-rose-400 shadow-[0_0_16px_-6px_rgba(244,63,94,0.38)]'
+            ? 'border-2 border-emerald-500/80 hover:border-emerald-400 shadow-[0_0_12px_-4px_rgba(16,185,129,0.38)]'
+            : 'border-2 border-rose-500/75 hover:border-rose-400 shadow-[0_0_12px_-4px_rgba(244,63,94,0.35)]'
         } ${isSelected ? 'ring-2 ring-emerald-400 bg-[#1a1c24]' : ''}`}
       >
-        {/* Left: Full-height prominent Icon occupying top to bottom */}
+        {/* Left: Compact Icon occupying full height */}
         <button
           type="button"
           onClick={() => onLaunch(item)}
-          className="w-[88px] sm:w-[94px] self-stretch shrink-0 p-2 bg-neutral-950/75 hover:bg-neutral-900/95 border-r border-white/[0.08] flex items-center justify-center transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-emerald-400"
+          className="w-[56px] h-[56px] shrink-0 p-1 bg-neutral-950/80 hover:bg-neutral-900 rounded-lg border border-white/[0.08] flex items-center justify-center transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-emerald-400"
           title={`Abrir ${item.name}`}
           aria-label={`Abrir ${item.name}`}
         >
@@ -60,15 +60,15 @@ export const MiniCardsView: React.FC<MiniCardsViewProps> = ({
             name={item.name}
             url={item.url}
             size="fill"
-            className="w-full h-full rounded-lg border-0 bg-transparent p-0.5 transition-transform duration-150 group-hover:scale-[1.03] active:scale-95"
+            className="w-full h-full rounded-md border-0 bg-transparent p-0.5 object-contain transition-transform duration-150 group-hover:scale-[1.03] active:scale-95"
           />
         </button>
 
-        {/* Right: Name on top + $ Date and COM, RB, BON beside icon */}
-        <div className="flex-1 min-w-0 p-2.5 flex flex-col justify-between gap-2">
+        {/* Right: Name + 2x2 Grid for Date & Flags */}
+        <div className="flex-1 min-w-0 flex flex-col justify-center gap-1.5">
           <h3
             onClick={() => onLaunch(item)}
-            className="font-bold text-sm text-white hover:text-emerald-400 cursor-pointer truncate transition-colors leading-tight"
+            className="font-bold text-xs text-white hover:text-emerald-400 cursor-pointer truncate transition-colors leading-tight"
             title={`Abrir ${item.name}`}
           >
             {item.name}
@@ -80,7 +80,7 @@ export const MiniCardsView: React.FC<MiniCardsViewProps> = ({
             onToggleFlag={onToggleFlag}
             onUpdateMoneyDate={onUpdateMoneyDate}
             compact={true}
-            layout="stacked"
+            layout="grid2x2"
           />
         </div>
       </div>

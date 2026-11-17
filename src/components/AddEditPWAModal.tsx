@@ -3,7 +3,7 @@ import { X, Globe, RotateCw, Upload } from 'lucide-react';
 import { PWAFolder, PWAItem } from '../types/pwa';
 import { PWAIcon } from './PWAIcon';
 import { StarRating } from './StarRating';
-import { getCleanDomain, resolveFaviconAtInsertion } from '../utils/pwaLogic';
+import { getCleanDomain, isDeprecatedGenericIconUrl, resolveFaviconAtInsertion } from '../utils/pwaLogic';
 import { flattenFoldersHierarchy } from '../utils/folderLogic';
 
 interface AddEditPWAModalProps {
@@ -35,6 +35,7 @@ export const AddEditPWAModal: React.FC<AddEditPWAModalProps> = ({
   const [folderId, setFolderId] = useState('');
   const [notes, setNotes] = useState('');
   const [customIcon, setCustomIcon] = useState('');
+  const [iconRefreshCount, setIconRefreshCount] = useState(0);
   const [profileDirectory, setProfileDirectory] = useState('');
   const [aliasesText, setAliasesText] = useState('');
   const [pinned, setPinned] = useState(false);
@@ -48,14 +49,14 @@ export const AddEditPWAModal: React.FC<AddEditPWAModalProps> = ({
       setGroup(editingItem.group || editingItem.category || 'Geral');
       setFolderId(editingItem.folderId || '');
       setNotes(editingItem.notes || '');
-      // Only lock customIcon if it is an actual user-entered external URL, NOT internal /api/icon or default google/duckduckgo favicon
+      // Only lock customIcon if it is an actual user-entered external URL/upload, NOT internal /api/icon or generic favicons
       const isExternalUserIcon =
         Boolean(editingItem.icon) &&
         (editingItem.icon!.startsWith('http://') || editingItem.icon!.startsWith('https://') || editingItem.icon!.startsWith('data:')) &&
-        !editingItem.icon!.includes('google.com/s2/favicons') &&
-        !editingItem.icon!.includes('duckduckgo.com') &&
+        !isDeprecatedGenericIconUrl(editingItem.icon) &&
         !editingItem.icon!.includes('/api/icon');
       setCustomIcon(isExternalUserIcon ? (editingItem.icon || '') : '');
+      setIconRefreshCount(0);
       setProfileDirectory(editingItem.profileDirectory || '');
       setAliasesText(Array.isArray(editingItem.aliases) ? editingItem.aliases.join(', ') : '');
       const initialRating = typeof editingItem.rating === 'number' ? editingItem.rating : (editingItem.pinned ? 5 : 0);
@@ -69,6 +70,7 @@ export const AddEditPWAModal: React.FC<AddEditPWAModalProps> = ({
       setFolderId(defaultFolderId || '');
       setNotes('');
       setCustomIcon('');
+      setIconRefreshCount(0);
       setProfileDirectory('');
       setAliasesText('');
       setRating(0);
@@ -120,7 +122,7 @@ export const AddEditPWAModal: React.FC<AddEditPWAModalProps> = ({
     const resolvedIcon =
       customIcon.trim() && !customIcon.includes('/api/icon')
         ? customIcon.trim()
-        : resolveFaviconAtInsertion(finalUrl);
+        : resolveFaviconAtInsertion(finalUrl, undefined, name.trim());
 
     onSave({
       ...(editingItem ? { id: editingItem.id } : {}),
@@ -173,7 +175,14 @@ export const AddEditPWAModal: React.FC<AddEditPWAModalProps> = ({
           <div className="flex items-center justify-between p-3 rounded-lg bg-neutral-950/60 border border-neutral-800/80 gap-3">
             <div className="flex items-center gap-3 min-w-0">
               <PWAIcon
-                icon={customIcon || (url ? resolveFaviconAtInsertion(url) : '')}
+                icon={
+                  customIcon.trim() ||
+                  (url
+                    ? `${resolveFaviconAtInsertion(url, undefined, name)}${
+                        iconRefreshCount > 0 ? `&refresh=1&v=${iconRefreshCount}` : ''
+                      }`
+                    : '')
+                }
                 name={name || 'P'}
                 url={url}
                 size="lg"
@@ -191,8 +200,11 @@ export const AddEditPWAModal: React.FC<AddEditPWAModalProps> = ({
               <button
                 type="button"
                 onClick={() => {
-                  const fresh = resolveFaviconAtInsertion(url);
-                  setCustomIcon(fresh);
+                  setCustomIcon('');
+                  setIconRefreshCount((prev) => prev + 1);
+                  fetch(
+                    `/api/icon/resolve?url=${encodeURIComponent(url)}&name=${encodeURIComponent(name || '')}&refresh=1`
+                  ).catch(() => {});
                 }}
                 title="Recarregar ícone padrão a partir da URL"
                 className="shrink-0 px-2.5 py-1 text-[11px] font-medium text-emerald-400 hover:text-emerald-300 bg-emerald-950/60 hover:bg-emerald-900/80 border border-emerald-800/80 rounded-md transition-colors cursor-pointer flex items-center gap-1"

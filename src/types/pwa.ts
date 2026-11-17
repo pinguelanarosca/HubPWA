@@ -6,16 +6,25 @@ export interface PWAFolder {
   createdAt: string;
 }
 
+export type DailyFlagState = 'check' | 'x';
+
 export interface PWAFlags {
   moneyDate?: string; // Persistent DD/MM date beside green $ icon (never resets at midnight)
   comDate?: string | null; // YYYY-MM-DD when COM was selected (resets daily at midnight)
+  comState?: DailyFlagState | null; // Optional 'check' (green check) or 'x' (red X)
   rbDate?: string | null; // YYYY-MM-DD when RB was selected (resets daily at midnight)
+  rbState?: DailyFlagState | null; // Optional 'check' (green check) or 'x' (red X)
   bonDate?: string | null; // YYYY-MM-DD when BON was selected (resets daily at midnight)
+  bonState?: DailyFlagState | null; // Optional 'check' (green check) or 'x' (red X)
 }
 
 export type DailyFlagKey = 'com' | 'rb' | 'bon';
 
-export type FlagFilterKey = 'moneyDate' | DailyFlagKey;
+export type FlagFilterKey =
+  | 'moneyDate'
+  | DailyFlagKey
+  | `${DailyFlagKey}:check`
+  | `${DailyFlagKey}:x`;
 
 export interface PWAItem {
   id: string;
