@@ -15,6 +15,8 @@ import {
   filterAndSortPWAs,
   resolveFaviconAtInsertion,
   isDeprecatedGenericIconUrl,
+  shouldUpgradeChromeShortcutIcon,
+  appendCacheBuster,
   isPreservableIconUrl,
   isAndroidOrRedroidApp,
   isSameOrMatchingPWA,
@@ -86,9 +88,9 @@ export function repairAndSanitizePWA(it: PWAItem): PWAItem {
     url = url.slice(0, -7) + '.com';
   }
 
-  // Preserve working/custom PWA icon, replacing missing or legacy generic-prone third-party URLs
+  // Preserve working/custom PWA icon, replacing missing, deprecated third-party, or Chrome shortcut monogram URLs
   let icon = it.icon;
-  if (!icon || isDeprecatedGenericIconUrl(icon)) {
+  if (!icon || isDeprecatedGenericIconUrl(icon) || shouldUpgradeChromeShortcutIcon(icon, url)) {
     icon = resolveFaviconAtInsertion(url, undefined, it.name);
   }
 
@@ -887,16 +889,22 @@ export default function App() {
 
   // Save new or edited PWA
   const handleSavePWA = useCallback((data: Partial<PWAItem> & { name: string; url: string; category: string; group?: string; folderId?: string | null; notes: string }) => {
-    const finalIcon =
+    const incomingCacheBust = typeof data.icon === 'string' && data.icon.includes('v=');
+    const baseIcon =
       data.icon && !data.icon.includes('/api/icon')
         ? data.icon
         : resolveFaviconAtInsertion(data.url, undefined, data.name);
+    const finalIcon =
+      incomingCacheBust && data.icon && data.icon.includes('/api/icon')
+        ? appendCacheBuster(baseIcon, Date.now())
+        : baseIcon;
     const grp = data.group || data.category || 'Geral';
     const nextFolderId = data.folderId !== undefined ? data.folderId : null;
 
     // Trigger background icon pre-warming resolution endpoint so the server immediately fetches & caches authentic logo
     if (data.url || data.name) {
-      fetch(`/api/icon/resolve?url=${encodeURIComponent(data.url)}&name=${encodeURIComponent(data.name)}`).catch(() => {});
+      const refreshFlag = incomingCacheBust ? '&refresh=1' : '';
+      fetch(`/api/icon/resolve?url=${encodeURIComponent(data.url)}&name=${encodeURIComponent(data.name)}${refreshFlag}`).catch(() => {});
     }
 
     if (data.id) {
@@ -1103,14 +1111,21 @@ export default function App() {
   const handleBatchRefreshIcons = useCallback(() => {
     const targetIds = getBulkTargetIds();
     if (targetIds.size === 0) return;
+    const bust = Date.now();
 
     setItems((prev) => {
       const next = prev.map((it) => {
         if (!targetIds.has(it.id)) return it;
         const repaired = repairAndSanitizePWA(it);
+        if (repaired.url) {
+          fetch(
+            `/api/icon/resolve?url=${encodeURIComponent(repaired.url)}&name=${encodeURIComponent(repaired.name || '')}&refresh=1`
+          ).catch(() => {});
+        }
+        const baseIcon = resolveFaviconAtInsertion(repaired.url, undefined, repaired.name);
         return {
           ...repaired,
-          icon: resolveFaviconAtInsertion(repaired.url, undefined, repaired.name),
+          icon: baseIcon ? appendCacheBuster(baseIcon, bust) : baseIcon,
         };
       });
       const changed = next.filter((it) => targetIds.has(it.id));
@@ -1429,10 +1444,15 @@ export default function App() {
     setItems((prev) => {
       const refreshed = prev.map((it) => {
         const repaired = repairAndSanitizePWA(it);
+        if (repaired.url) {
+          fetch(
+            `/api/icon/resolve?url=${encodeURIComponent(repaired.url)}&name=${encodeURIComponent(repaired.name || '')}&refresh=1`
+          ).catch(() => {});
+        }
         const baseIcon = resolveFaviconAtInsertion(repaired.url, undefined, repaired.name);
         return {
           ...repaired,
-          icon: baseIcon ? `${baseIcon}&v=${bust}` : baseIcon,
+          icon: baseIcon ? appendCacheBuster(baseIcon, bust) : baseIcon,
         };
       });
       fetch('/api/pwas/state', {
@@ -1457,7 +1477,7 @@ export default function App() {
           }
           return {
             ...repaired,
-            icon: baseIcon ? `${baseIcon}&v=${bust}` : baseIcon,
+            icon: baseIcon ? appendCacheBuster(baseIcon, bust) : baseIcon,
           };
         }
         return it;
@@ -1797,8 +1817,6 @@ export default function App() {
                   todayStr={todayStr}
                   selectedIds={selectedIds}
                   onLaunch={handleLaunch}
-                  onToggleFlag={handleToggleFlag}
-                  onUpdateMoneyDate={handleUpdateMoneyDate}
                   groupByGroup={groupByGroup}
                 />
               )}

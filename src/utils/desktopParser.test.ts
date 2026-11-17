@@ -91,3 +91,20 @@ test('mapDesktopCategory maps XDG categories correctly', () => {
   assert.equal(mapDesktopCategory('AudioVideo;Player;'), 'Design & Criatividade');
   assert.equal(mapDesktopCategory('Network;Chat;'), 'Comunicação');
 });
+
+test('parseDesktopFile upgrades Chrome shortcut monogram Icon=chrome-*-Profile_N to domain proxy matching edit modal', () => {
+  const content = `
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=AA222.BET
+Exec=/opt/google/chrome/google-chrome --profile-directory="Profile 5" --app=https://aa222.bet
+Icon=chrome-abcdefabcdefabcdefabcdefabcdefab-Profile_5
+Categories=Network;
+  `;
+
+  const parsed = parseDesktopFile(content, 'chrome-abcdef-Profile_5.desktop');
+  assert.ok(parsed);
+  assert.equal(parsed.profileDirectory, 'Profile 5');
+  assert.equal(parsed.icon, '/api/icon?domain=aa222.bet&name=AA222.BET');
+});

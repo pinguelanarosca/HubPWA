@@ -373,12 +373,54 @@ export function isChromeShortcutLocalCandidate(cand?: string | null): boolean {
   if (!cand) return false;
   const lower = cand.trim().toLowerCase();
   return (
-    /(?:^|[\\/])chrome-/i.test(lower) ||
+    /(?:^|[\\/=?&])chrome-/i.test(lower) ||
     /(?:^|[\\/_-])profile[_\s-]?\d+/i.test(lower) ||
     /[-_]default(?:\.\w+)?$/i.test(lower) ||
     lower.includes('web applications') ||
     lower.includes('google-chrome')
   );
+}
+
+/**
+ * Returns true if a stored icon URL points to a Chrome shortcut local reference (/api/icon?name=chrome-... or path=...)
+ * while a real web domain exists to resolve an authentic web logo instead.
+ */
+export function shouldUpgradeChromeShortcutIcon(iconUrl?: string | null, appUrl?: string | null): boolean {
+  if (!iconUrl || !iconUrl.trim()) return false;
+  const clean = iconUrl.trim();
+  if (!clean.includes('/api/icon')) return false;
+  const isLegacyChromeRef =
+    clean.includes('name=chrome-') ||
+    clean.includes('path=') ||
+    (!clean.includes('domain=') && isChromeShortcutLocalCandidate(clean));
+  if (!isLegacyChromeRef) return false;
+
+  if (!appUrl || !appUrl.trim()) return false;
+  const domain = getCleanDomain(appUrl).trim().toLowerCase();
+  return Boolean(
+    domain &&
+      domain.includes('.') &&
+      domain !== 'app.com' &&
+      domain !== 'seu-app.com' &&
+      !domain.includes('localhost')
+  );
+}
+
+/**
+ * Appends or replaces a cache-busting `&v=<token>` query param on non-data-URI icon URLs.
+ */
+export function appendCacheBuster(iconUrl: string, token: string | number): string {
+  if (!iconUrl || !iconUrl.trim()) return '';
+  const clean = iconUrl.trim();
+  if (clean.startsWith('data:')) return clean;
+
+  const stripped = clean
+    .replace(/([?&])v=[^&]*&?/g, '$1')
+    .replace(/([?&])refresh=[^&]*&?/g, '$1')
+    .replace(/[?&]$/, '');
+
+  const separator = stripped.includes('?') ? '&' : '?';
+  return `${stripped}${separator}v=${encodeURIComponent(String(token))}`;
 }
 
 /**

@@ -55,13 +55,13 @@ export const CompactTableView: React.FC<CompactTableViewProps> = ({
       <table className="w-full text-left text-xs border-collapse">
         <thead>
           <tr className="border-b border-neutral-800 bg-neutral-900/60 text-neutral-400 font-medium select-none text-[11px]">
-            <th className="py-2 px-3 w-48 text-left">Classificação / Perfil</th>
-            <th className="py-2 px-3 w-32">Status Hoje</th>
-            <th className="py-2 px-3 w-44">Log de Acesso (Data/Hora)</th>
-            <th className="py-2 px-3 min-w-[200px]">PWA & Domínio</th>
-            <th className="py-2 px-3 min-w-[200px]">Anotações (Clique para editar)</th>
-            {onToggleFlag && <th className="py-2 px-3 min-w-[295px]">Data ($) / Marcações</th>}
-            <th className="py-2 px-3 w-20 text-right">Ações</th>
+            <th className="py-2 px-2.5 w-40 text-left">Classificação / Perfil</th>
+            <th className="py-2 px-2.5 w-28">Status Hoje</th>
+            <th className="py-2 px-2.5 w-36">Log de Acesso</th>
+            <th className="py-2 px-2.5 min-w-[170px]">PWA & Domínio</th>
+            <th className="py-2 px-2.5 min-w-[155px]">Anotações (Clique para editar)</th>
+            {onToggleFlag && <th className="py-2 px-2.5 min-w-[310px]">Data ($) / Marcações</th>}
+            <th className="py-2 px-2.5 w-24 text-right">Ações</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-neutral-900/80">

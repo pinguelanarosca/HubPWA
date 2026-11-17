@@ -1,5 +1,5 @@
 import { PWAItem, ParsedDesktopApp } from '../types/pwa';
-import { resolveFaviconAtInsertion, isAndroidOrRedroidApp } from './pwaLogic';
+import { resolveFaviconAtInsertion, isAndroidOrRedroidApp, isChromeShortcutLocalCandidate } from './pwaLogic';
 
 export type { ParsedDesktopApp };
 
@@ -220,14 +220,18 @@ export function parseDesktopFile(content: string, fileName: string = ''): Parsed
   if (icon && (icon.startsWith('http') || icon.startsWith('data:'))) {
     resolvedIcon = icon;
   } else if (icon) {
-    const urlQuery = detectedUrl ? `&url=${encodeURIComponent(detectedUrl)}` : '';
-    if (icon.startsWith('/')) {
-      resolvedIcon = `/api/icon?path=${encodeURIComponent(icon)}${urlQuery}`;
+    if (isChromeShortcutLocalCandidate(icon) && hasExactUrl && detectedUrl) {
+      resolvedIcon = resolveFaviconAtInsertion(detectedUrl, undefined, name);
     } else {
-      resolvedIcon = `/api/icon?name=${encodeURIComponent(icon)}${urlQuery}`;
+      const urlQuery = detectedUrl ? `&url=${encodeURIComponent(detectedUrl)}` : '';
+      if (icon.startsWith('/')) {
+        resolvedIcon = `/api/icon?path=${encodeURIComponent(icon)}${urlQuery}`;
+      } else {
+        resolvedIcon = `/api/icon?name=${encodeURIComponent(icon)}${urlQuery}`;
+      }
     }
   } else if (detectedUrl) {
-    resolvedIcon = resolveFaviconAtInsertion(detectedUrl);
+    resolvedIcon = resolveFaviconAtInsertion(detectedUrl, undefined, name);
   }
 
   // Generate stable ID based on appId, rawFileName or URL + Profile

@@ -38,6 +38,8 @@ import {
   isDeprecatedGenericIconUrl,
   isPreservableIconUrl,
   isChromeShortcutLocalCandidate,
+  shouldUpgradeChromeShortcutIcon,
+  appendCacheBuster,
   extractHtmlIconCandidates,
   isSameOrMatchingPWA,
 } from './pwaLogic';
@@ -745,9 +747,36 @@ test('icon URL helpers preserve web-resolved /api/icon?domain=... across rescans
   assert.equal(isPreservableIconUrl('https://www.google.com/s2/favicons?domain=aa222.bet'), false);
 
   assert.equal(isChromeShortcutLocalCandidate('chrome-abcdef-Profile_5'), true);
+  assert.equal(isChromeShortcutLocalCandidate('/api/icon?name=chrome-abcdef-Profile_5'), true);
   assert.equal(isChromeShortcutLocalCandidate('Profile_5'), true);
   assert.equal(isChromeShortcutLocalCandidate('/home/user/.config/google-chrome/Profile 5/Web Applications/foo.png'), true);
   assert.equal(isChromeShortcutLocalCandidate('aa222.bet'), false);
+
+  assert.equal(
+    shouldUpgradeChromeShortcutIcon('/api/icon?name=chrome-abcdef-Profile_5&url=https%3A%2F%2Faa222.bet', 'https://aa222.bet'),
+    true
+  );
+  assert.equal(
+    shouldUpgradeChromeShortcutIcon('/api/icon?path=%2Fhome%2Fuser%2FProfile_5%2Ficon.png', 'https://aa222.bet'),
+    true
+  );
+  assert.equal(
+    shouldUpgradeChromeShortcutIcon('/api/icon?domain=aa222.bet&name=AA222.BET', 'https://aa222.bet'),
+    false
+  );
+  assert.equal(
+    shouldUpgradeChromeShortcutIcon('https://cdn.aa222.bet/logo.png', 'https://aa222.bet'),
+    false
+  );
+
+  assert.equal(
+    appendCacheBuster('/api/icon?domain=aa222.bet&name=AA222.BET&v=111&refresh=1', 222),
+    '/api/icon?domain=aa222.bet&name=AA222.BET&v=222'
+  );
+  assert.equal(
+    appendCacheBuster('data:image/png;base64,abc', 222),
+    'data:image/png;base64,abc'
+  );
 
   const html = `
     <link href="//cdn.aa222.bet/favicon.png" rel="icon" type="image/png">

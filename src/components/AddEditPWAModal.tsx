@@ -1,9 +1,9 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { X, Globe, RotateCw, Upload } from 'lucide-react';
 import { PWAFolder, PWAItem } from '../types/pwa';
 import { PWAIcon } from './PWAIcon';
 import { StarRating } from './StarRating';
-import { getCleanDomain, isDeprecatedGenericIconUrl, resolveFaviconAtInsertion } from '../utils/pwaLogic';
+import { appendCacheBuster, getCleanDomain, isDeprecatedGenericIconUrl, resolveFaviconAtInsertion } from '../utils/pwaLogic';
 import { flattenFoldersHierarchy } from '../utils/folderLogic';
 
 interface AddEditPWAModalProps {
@@ -41,8 +41,24 @@ export const AddEditPWAModal: React.FC<AddEditPWAModalProps> = ({
   const [pinned, setPinned] = useState(false);
   const [rating, setRating] = useState(0);
   const [error, setError] = useState('');
+  const wasOpenRef = useRef(false);
+  const lastEditingIdRef = useRef<string | null>(null);
 
   useEffect(() => {
+    if (!isOpen) {
+      wasOpenRef.current = false;
+      lastEditingIdRef.current = null;
+      return;
+    }
+
+    const currentEditId = editingItem?.id || null;
+    if (wasOpenRef.current && lastEditingIdRef.current === currentEditId) {
+      return;
+    }
+
+    wasOpenRef.current = true;
+    lastEditingIdRef.current = currentEditId;
+
     if (editingItem) {
       setName(editingItem.name);
       setUrl(editingItem.url);
@@ -119,10 +135,14 @@ export const AddEditPWAModal: React.FC<AddEditPWAModalProps> = ({
       .map((a) => a.trim())
       .filter((a) => a.length > 0);
 
-    const resolvedIcon =
+    const baseResolvedIcon =
       customIcon.trim() && !customIcon.includes('/api/icon')
         ? customIcon.trim()
         : resolveFaviconAtInsertion(finalUrl, undefined, name.trim());
+    const resolvedIcon =
+      iconRefreshCount > 0 && baseResolvedIcon
+        ? appendCacheBuster(baseResolvedIcon, Date.now())
+        : baseResolvedIcon;
 
     onSave({
       ...(editingItem ? { id: editingItem.id } : {}),
