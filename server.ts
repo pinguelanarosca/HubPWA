@@ -7,7 +7,8 @@ import { parseGitHubCommitResponse, isUpdateAvailable } from './src/utils/github
 
 import os from 'os';
 import crypto from 'crypto';
-import { spawn, exec, execSync } from 'child_process';
+import { promisify } from 'util';
+import { spawn, exec, execFile, execSync } from 'child_process';
 import { parseDesktopFile, ParsedDesktopApp, convertParsedToPWAs } from './src/utils/desktopParser.js';
 import { deduplicateDesktopApps, DeduplicationResult, normalizeAppUrl } from './src/utils/desktopDeduplicator.js';
 import {
@@ -18,7 +19,17 @@ import {
   isChromeShortcutLocalCandidate,
   isPreservableIconUrl,
 } from './src/utils/pwaLogic.js';
+import type { AccessHistoryEntry } from './src/types/pwa.js';
+import {
+  chromeWebkitTimeToLocalIso,
+  collapseRapidChromeVisits,
+  matchesVisitUrlForPWA,
+  mergeAccessHistoryRecords,
+  resolveHistoryProfileDirectory,
+} from './src/utils/historyLogic.js';
 import { getAutostartStatus, enableAutostartOnUbuntu, disableAutostartOnUbuntu } from './scripts/setup-autostart.js';
+
+const execFileAsync = promisify(execFile);
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -60,6 +71,8 @@ interface ServerPWAState {
   };
   clonedFromId?: string;
   lastAccessedDate?: string | null;
+  accessLogs?: string[];
+  accessHistory?: AccessHistoryEntry[];
   accessCount?: number;
   updatedAt?: string;
 }
@@ -723,6 +736,8 @@ app.get('/api/pwas/scan', (_req, res) => {
             rating: typeof stored.rating === 'number' ? stored.rating : (stored.pinned ? 5 : 0),
             pinned: Boolean(stored.pinned || (stored.rating && stored.rating > 0)),
             lastAccessedDate: stored.lastAccessedDate || pwa.lastAccessedDate,
+            accessLogs: Array.isArray(stored.accessLogs) ? stored.accessLogs : pwa.accessLogs,
+            accessHistory: Array.isArray(stored.accessHistory) ? stored.accessHistory : pwa.accessHistory,
             accessCount: typeof stored.accessCount === 'number' ? stored.accessCount : pwa.accessCount,
           };
         }
@@ -852,6 +867,12 @@ app.post('/api/pwas/state', (req, res) => {
           rating: typeof item.rating === 'number' ? item.rating : (item.pinned ? 5 : 0),
           pinned: Boolean(item.pinned || (item.rating && item.rating > 0)),
           lastAccessedDate: item.lastAccessedDate || null,
+          accessLogs: Array.isArray(item.accessLogs)
+            ? item.accessLogs.slice(0, 80)
+            : db.pwas[item.id]?.accessLogs,
+          accessHistory: Array.isArray(item.accessHistory)
+            ? item.accessHistory.slice(0, 100)
+            : db.pwas[item.id]?.accessHistory,
           accessCount: typeof item.accessCount === 'number' ? item.accessCount : 0,
           updatedAt: new Date().toISOString(),
         };
@@ -925,6 +946,19 @@ app.post('/api/launch-pwa', (req, res) => {
     const matched = findStoredState({ id, clonedFromId: req.body?.clonedFromId, appId, url, rawFileName }, db);
     const key = id || (matched ? matched.id : `pwa_${(appId || (rawFileName ? rawFileName.replace(/\.desktop$/i, '') : Date.now().toString())).toLowerCase().replace(/[^a-z0-9]/g, '_')}`);
 
+    const prevLogs = Array.isArray(matched?.accessLogs) ? matched.accessLogs : [];
+    const nextLogs = [localTimeStr, ...prevLogs.filter((l) => l !== localTimeStr)].slice(0, 60);
+    const prevHistory = Array.isArray(matched?.accessHistory) ? matched.accessHistory : [];
+    const nextHistory: AccessHistoryEntry[] = [
+      {
+        timestamp: localTimeStr,
+        source: 'hub' as const,
+        profileDirectory: profileDirectory || matched?.profileDirectory,
+        visitedUrl: url || matched?.url,
+      },
+      ...prevHistory.filter((h) => h && h.timestamp !== localTimeStr),
+    ].slice(0, 80);
+
     db.pwas[key] = {
       ...(matched || {}),
       id: key,
@@ -933,6 +967,8 @@ app.post('/api/launch-pwa', (req, res) => {
       rawFileName: rawFileName || (matched ? matched.rawFileName : undefined),
       profileDirectory: profileDirectory || (matched ? matched.profileDirectory : undefined),
       lastAccessedDate: localTimeStr,
+      accessLogs: nextLogs,
+      accessHistory: nextHistory,
       accessCount: ((matched && matched.accessCount) || 0) + 1,
       updatedAt: now.toISOString(),
     };
@@ -1092,6 +1128,273 @@ app.get('/api/chrome-profiles', (_req, res) => {
     });
   } catch (err) {
     return res.json({ success: false, profiles: [], error: (err as Error).message });
+  }
+});
+
+interface RawChromeHistoryRow {
+  visitTime: number;
+  url: string;
+  title: string;
+}
+
+function getChromeConfigRoots(): string[] {
+  const homeDir = process.env.HOME || os.homedir();
+  return [
+    path.join(homeDir, '.config/google-chrome'),
+    path.join(homeDir, '.config/google-chrome-beta'),
+    path.join(homeDir, '.config/chromium'),
+  ];
+}
+
+function resolveChromeHistoryFile(profileDirectory: string): string | null {
+  if (process.platform !== 'linux') return null;
+  const target = (profileDirectory || 'Default').trim();
+  const targetLower = target.toLowerCase();
+
+  for (const root of getChromeConfigRoots()) {
+    if (!fs.existsSync(root)) continue;
+
+    // Direct exact match
+    const direct = path.join(root, target, 'History');
+    if (fs.existsSync(direct)) return direct;
+
+    // Case-insensitive match across subdirectories (e.g. profile 5 vs Profile 5)
+    try {
+      const entries = fs.readdirSync(root, { withFileTypes: true });
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue;
+        if (entry.name.toLowerCase() === targetLower) {
+          const candidate = path.join(root, entry.name, 'History');
+          if (fs.existsSync(candidate)) return candidate;
+        }
+      }
+    } catch {
+      // ignore unreadable root
+    }
+  }
+
+  return null;
+}
+
+const CHROME_HISTORY_PY_SCRIPT = `
+import sqlite3, json, sys
+db_path = sys.argv[1]
+conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=2.0)
+cur = conn.cursor()
+cur.execute("""
+  SELECT v.visit_time, u.url, COALESCE(u.title, '')
+  FROM visits v
+  JOIN urls u ON v.url = u.id
+  ORDER BY v.visit_time DESC
+  LIMIT 6000
+""")
+rows = [{"visitTime": r[0], "url": r[1] or "", "title": r[2] or ""} for r in cur.fetchall()]
+conn.close()
+print(json.dumps(rows))
+`.trim();
+
+async function queryChromeProfileHistoryRows(historyPath: string): Promise<RawChromeHistoryRow[]> {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hubpwa-hist-'));
+  const tmpHistoryPath = path.join(tmpDir, 'History');
+  try {
+    fs.copyFileSync(historyPath, tmpHistoryPath);
+    for (const suffix of ['-wal', '-shm']) {
+      const auxSrc = `${historyPath}${suffix}`;
+      if (fs.existsSync(auxSrc)) {
+        try {
+          fs.copyFileSync(auxSrc, `${tmpHistoryPath}${suffix}`);
+        } catch {
+          // ignore optional wal/shm copy errors
+        }
+      }
+    }
+
+    const { stdout } = await execFileAsync(
+      'python3',
+      ['-c', CHROME_HISTORY_PY_SCRIPT, tmpHistoryPath],
+      { timeout: 6000, maxBuffer: 12 * 1024 * 1024 }
+    );
+    const parsed = JSON.parse(stdout || '[]');
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (err) {
+    console.warn('Aviso ao ler banco History do Chrome:', (err as Error).message);
+    return [];
+  } finally {
+    try {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    } catch {
+      // ignore temp cleanup errors
+    }
+  }
+}
+
+function buildChromeVisitsForPWA(
+  rows: RawChromeHistoryRow[],
+  targetUrl: string,
+  profileDirectory: string
+): AccessHistoryEntry[] {
+  if (!targetUrl || rows.length === 0) return [];
+  const matched: AccessHistoryEntry[] = [];
+
+  for (const row of rows) {
+    if (!row || !row.url || !matchesVisitUrlForPWA(row.url, targetUrl)) continue;
+    const timestamp = chromeWebkitTimeToLocalIso(Number(row.visitTime));
+    if (!timestamp) continue;
+    matched.push({
+      timestamp,
+      source: 'chrome',
+      profileDirectory,
+      visitedUrl: row.url,
+      title: row.title || undefined,
+    });
+  }
+
+  return collapseRapidChromeVisits(matched, 60, 80);
+}
+
+// GET /api/pwas/profile-history - Read a single PWA's Chrome profile SQLite History + Hub history
+app.get('/api/pwas/profile-history', async (req, res) => {
+  try {
+    const pwaId = String(req.query.pwaId || '').trim();
+    const url = String(req.query.url || '').trim();
+    const rawProfile = String(req.query.profileDirectory || '').trim();
+    const profileDirectory = resolveHistoryProfileDirectory({ profileDirectory: rawProfile });
+
+    const db = getDb();
+    const stored = pwaId ? db.pwas[pwaId] : undefined;
+    const effectiveUrl = url || stored?.url || '';
+    const historyFile = resolveChromeHistoryFile(profileDirectory);
+
+    let chromeVisits: AccessHistoryEntry[] = [];
+    if (historyFile && effectiveUrl) {
+      const rows = await queryChromeProfileHistoryRows(historyFile);
+      chromeVisits = buildChromeVisitsForPWA(rows, effectiveUrl, profileDirectory);
+    }
+
+    const merged = mergeAccessHistoryRecords(
+      {
+        lastAccessedDate: stored?.lastAccessedDate || null,
+        accessLogs: stored?.accessLogs,
+        accessHistory: stored?.accessHistory,
+        profileDirectory,
+      },
+      chromeVisits
+    );
+
+    if (stored && pwaId && chromeVisits.length > 0) {
+      db.pwas[pwaId] = {
+        ...stored,
+        lastAccessedDate: merged.lastAccessedDate,
+        accessLogs: merged.accessLogs,
+        accessHistory: merged.accessHistory,
+        accessCount: Math.max(stored.accessCount || 0, merged.accessHistory.length),
+        updatedAt: new Date().toISOString(),
+      };
+      saveServerDb(db);
+    }
+
+    return res.json({
+      success: true,
+      profileDirectory,
+      historyFound: Boolean(historyFile),
+      chromeVisitsCount: chromeVisits.length,
+      visits: chromeVisits,
+      accessHistory: merged.accessHistory,
+      accessLogs: merged.accessLogs,
+      lastAccessedDate: merged.lastAccessedDate,
+      reason: historyFile
+        ? null
+        : `Arquivo History do perfil "${profileDirectory}" não encontrado neste ambiente.`,
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: (err as Error).message });
+  }
+});
+
+// POST /api/pwas/history/sync - Batch sync Chrome profile History SQLite across all configured PWAs
+app.post('/api/pwas/history/sync', async (req, res) => {
+  try {
+    const reqItems = Array.isArray(req.body?.items) ? req.body.items : [];
+    const db = getDb();
+
+    // Cache SQLite queries per resolved Chrome History file during this sync pass
+    const rowsByHistoryPath = new Map<string, RawChromeHistoryRow[]>();
+    const results: Record<
+      string,
+      {
+        profileDirectory: string;
+        historyFound: boolean;
+        accessHistory: AccessHistoryEntry[];
+        accessLogs: string[];
+        lastAccessedDate: string | null;
+      }
+    > = {};
+
+    let updatedCount = 0;
+
+    for (const item of reqItems) {
+      if (!item || !item.id || !item.url) continue;
+      const profileDirectory = resolveHistoryProfileDirectory(item);
+      const historyFile = resolveChromeHistoryFile(profileDirectory);
+
+      let rows: RawChromeHistoryRow[] = [];
+      if (historyFile) {
+        if (rowsByHistoryPath.has(historyFile)) {
+          rows = rowsByHistoryPath.get(historyFile)!;
+        } else {
+          rows = await queryChromeProfileHistoryRows(historyFile);
+          rowsByHistoryPath.set(historyFile, rows);
+        }
+      }
+
+      const chromeVisits = historyFile
+        ? buildChromeVisitsForPWA(rows, item.url, profileDirectory)
+        : [];
+
+      const stored = db.pwas[item.id];
+      const merged = mergeAccessHistoryRecords(
+        {
+          lastAccessedDate: stored?.lastAccessedDate ?? item.lastAccessedDate ?? null,
+          accessLogs: stored?.accessLogs ?? item.accessLogs,
+          accessHistory: stored?.accessHistory ?? item.accessHistory,
+          profileDirectory,
+        },
+        chromeVisits
+      );
+
+      results[item.id] = {
+        profileDirectory,
+        historyFound: Boolean(historyFile),
+        accessHistory: merged.accessHistory,
+        accessLogs: merged.accessLogs,
+        lastAccessedDate: merged.lastAccessedDate,
+      };
+
+      if (chromeVisits.length > 0 && stored) {
+        db.pwas[item.id] = {
+          ...stored,
+          lastAccessedDate: merged.lastAccessedDate,
+          accessLogs: merged.accessLogs,
+          accessHistory: merged.accessHistory,
+          accessCount: Math.max(stored.accessCount || 0, merged.accessHistory.length),
+          updatedAt: new Date().toISOString(),
+        };
+        updatedCount++;
+      }
+    }
+
+    if (updatedCount > 0) {
+      saveServerDb(db);
+    }
+
+    return res.json({
+      success: true,
+      syncedAt: new Date().toISOString(),
+      profilesScanned: rowsByHistoryPath.size,
+      results,
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: (err as Error).message });
   }
 });
 

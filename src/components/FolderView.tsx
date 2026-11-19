@@ -50,6 +50,7 @@ interface FolderViewProps {
   onDeleteFolder: (folderId: string) => void;
   onOpenFolderManager: (parentId?: string | null) => void;
   onOpenQuickAssign: (folderId: string) => void;
+  onViewHistory?: (item: PWAItem) => void;
 }
 
 export const FolderView: React.FC<FolderViewProps> = ({
@@ -81,6 +82,7 @@ export const FolderView: React.FC<FolderViewProps> = ({
   onDeleteFolder,
   onOpenFolderManager,
   onOpenQuickAssign,
+  onViewHistory,
 }) => {
   const [dragOverFolderId, setDragOverFolderId] = useState<string | null>(null);
   const [activeFolderMenuId, setActiveFolderMenuId] = useState<string | null>(null);
@@ -552,6 +554,7 @@ export const FolderView: React.FC<FolderViewProps> = ({
             onRefreshIcon={onRefreshIcon}
             onSaveCustomIcon={onSaveCustomIcon}
             onMoveToFolder={onMoveToFolder}
+            onViewHistory={onViewHistory}
           />
         )}
       </section>

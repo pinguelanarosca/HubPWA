@@ -26,6 +26,14 @@ export type FlagFilterKey =
   | `${DailyFlagKey}:check`
   | `${DailyFlagKey}:x`;
 
+export interface AccessHistoryEntry {
+  timestamp: string; // Local ISO YYYY-MM-DDTHH:mm:ss.000Z
+  source: 'chrome' | 'hub';
+  profileDirectory?: string;
+  visitedUrl?: string;
+  title?: string;
+}
+
 export interface PWAItem {
   id: string;
   name: string;
@@ -37,6 +45,7 @@ export interface PWAItem {
   notes: string;
   lastAccessedDate: string | null; // ISO YYYY-MM-DD or full timestamp
   accessLogs?: string[]; // Array of recent access timestamps
+  accessHistory?: AccessHistoryEntry[]; // Detailed access logs with source (Chrome profile history / Hub)
   accessCount: number;
   pinned?: boolean;
   rating?: number; // 0 to 5 stars (0 = sem estrelas, 1 a 5)

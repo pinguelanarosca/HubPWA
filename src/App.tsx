@@ -45,6 +45,7 @@ import {
 } from './utils/folderLogic';
 import { parseDesktopFile, ParsedDesktopApp } from './utils/desktopParser';
 import { normalizeAppUrl } from './utils/desktopDeduplicator';
+import { mergeAccessHistoryRecords } from './utils/historyLogic';
 import { TopBar } from './components/TopBar';
 import { ControlToolbar } from './components/ControlToolbar';
 import { CompactTableView } from './components/CompactTableView';
@@ -66,6 +67,7 @@ import { FolderManagerModal } from './components/FolderManagerModal';
 import { QuickAssignFolderModal } from './components/QuickAssignFolderModal';
 import { RatingConfirmModal } from './components/RatingConfirmModal';
 import { ClonePWAProfileModal } from './components/ClonePWAProfileModal';
+import { AccessHistoryModal } from './components/AccessHistoryModal';
 import { FolderUp, FolderOpen, Plus } from 'lucide-react';
 
 const STORAGE_KEY = 'chrome_pwa_hub_items_empty_v1';
@@ -180,6 +182,8 @@ export default function App() {
   const [isAddEditOpen, setIsAddEditOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<PWAItem | null>(null);
   const [cloningItem, setCloningItem] = useState<PWAItem | null>(null);
+  const [historyModalItem, setHistoryModalItem] = useState<PWAItem | null>(null);
+  const [isSyncingHistory, setIsSyncingHistory] = useState(false);
   const [discoveredChromeProfiles, setDiscoveredChromeProfiles] = useState<ChromeProfileOption[]>([]);
   const [isBatchEditOpen, setIsBatchEditOpen] = useState(false);
   const [isBackupOpen, setIsBackupOpen] = useState(false);
@@ -339,6 +343,25 @@ export default function App() {
             extractChromeProfileDirectory(scanned);
 
           const mergedFlags = matches.find((m) => m.flags)?.flags || scanned.flags;
+          const combinedLogs = Array.from(
+            new Set([
+              ...(Array.isArray(scanned.accessLogs) ? scanned.accessLogs : []),
+              ...matches.flatMap((m) => (Array.isArray(m.accessLogs) ? m.accessLogs : [])),
+            ])
+          ).slice(0, 60);
+          const combinedHistoryEntries = [
+            ...(Array.isArray(scanned.accessHistory) ? scanned.accessHistory : []),
+            ...matches.flatMap((m) => (Array.isArray(m.accessHistory) ? m.accessHistory : [])),
+          ];
+          const mergedHist = mergeAccessHistoryRecords(
+            {
+              lastAccessedDate: latestDate,
+              accessLogs: combinedLogs,
+              accessHistory: combinedHistoryEntries,
+              profileDirectory: finalProfileDirectory,
+            },
+            []
+          );
 
           return {
             ...scanned,
@@ -352,7 +375,9 @@ export default function App() {
             rating: maxRating,
             aliases: Array.from(allAliases).filter(Boolean),
             notes: noteList.join(' | '),
-            lastAccessedDate: latestDate,
+            lastAccessedDate: mergedHist.lastAccessedDate || latestDate,
+            ...(mergedHist.accessLogs.length > 0 ? { accessLogs: mergedHist.accessLogs } : {}),
+            ...(mergedHist.accessHistory.length > 0 ? { accessHistory: mergedHist.accessHistory } : {}),
             accessCount: totalAccess,
           };
         }
@@ -380,6 +405,89 @@ export default function App() {
     });
   }, []);
 
+  const itemsRef = useRef(items);
+  itemsRef.current = items;
+
+  // Sync Chrome profile History SQLite across items
+  const syncAllProfilesHistory = useCallback(async (sourceItems?: PWAItem[]) => {
+    setIsSyncingHistory(true);
+    try {
+      const targetList = sourceItems || itemsRef.current;
+      if (!targetList || targetList.length === 0) return;
+
+      const payloadItems = targetList.map((it) => ({
+        id: it.id,
+        url: it.url,
+        profileDirectory: it.profileDirectory,
+        execLine: it.execLine,
+        rawFileName: it.rawFileName,
+        desktopPath: it.desktopPath,
+        lastAccessedDate: it.lastAccessedDate,
+        accessLogs: it.accessLogs,
+        accessHistory: it.accessHistory,
+      }));
+
+      const res = await fetch('/api/pwas/history/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ items: payloadItems }),
+      });
+
+      if (!res.ok) return;
+      const data = await res.json();
+      const resultsMap = data?.results as
+        | Record<
+            string,
+            {
+              profileDirectory: string;
+              historyFound: boolean;
+              accessHistory: PWAItem['accessHistory'];
+              accessLogs: string[];
+              lastAccessedDate: string | null;
+            }
+          >
+        | undefined;
+
+      if (!resultsMap) return;
+
+      setItems((prev) => {
+        let changed = false;
+        const next = prev.map((it) => {
+          const synced = resultsMap[it.id];
+          if (!synced || !Array.isArray(synced.accessHistory) || synced.accessHistory.length === 0) {
+            return it;
+          }
+          const nextLogs = synced.accessLogs || [];
+          const nextLast = synced.lastAccessedDate || it.lastAccessedDate;
+          const prevCount = it.accessHistory?.length || 0;
+          if (
+            nextLast !== it.lastAccessedDate ||
+            synced.accessHistory.length !== prevCount
+          ) {
+            changed = true;
+          }
+          return {
+            ...it,
+            lastAccessedDate: nextLast,
+            accessLogs: nextLogs,
+            accessHistory: synced.accessHistory,
+            accessCount: Math.max(it.accessCount || 0, synced.accessHistory.length),
+          };
+        });
+        if (changed) {
+          try {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+          } catch {}
+        }
+        return changed ? next : prev;
+      });
+    } catch {
+      // ignore offline or container sync fallback errors
+    } finally {
+      setIsSyncingHistory(false);
+    }
+  }, []);
+
   // Automatic discovery scan on launch & on demand
   const handleRescanLocalPWAs = useCallback(async () => {
     try {
@@ -392,8 +500,14 @@ export default function App() {
       }
     } catch (err) {
       console.warn('Scan de PWAs locais:', err);
+    } finally {
+      setTimeout(() => {
+        if (itemsRef.current.length > 0) {
+          void syncAllProfilesHistory(itemsRef.current);
+        }
+      }, 250);
     }
-  }, [mergeScannedPWAs]);
+  }, [mergeScannedPWAs, syncAllProfilesHistory]);
 
   // Trigger local discovery scan & hydrate persisted folders/state when app loads
   useEffect(() => {
@@ -710,15 +824,31 @@ export default function App() {
       // If server confirmed a timestamp, ensure it is recorded in React state
       if (data.lastAccessedDate) {
         setItems((prev) =>
-          prev.map((it) =>
-            isSameOrMatchingPWA(it, item)
-              ? {
-                  ...it,
-                  lastAccessedDate: data.lastAccessedDate,
-                  accessCount: Math.max(it.accessCount || 0, 1),
-                }
-              : it
-          )
+          prev.map((it) => {
+            if (!isSameOrMatchingPWA(it, item)) return it;
+            const prevLogs = Array.isArray(it.accessLogs) ? it.accessLogs : [];
+            const nextLogs = [
+              data.lastAccessedDate,
+              ...prevLogs.filter((l) => l !== data.lastAccessedDate),
+            ].slice(0, 60);
+            const prevHist = Array.isArray(it.accessHistory) ? it.accessHistory : [];
+            const nextHist = [
+              {
+                timestamp: data.lastAccessedDate,
+                source: 'hub' as const,
+                profileDirectory: it.profileDirectory,
+                visitedUrl: it.url,
+              },
+              ...prevHist.filter((h) => h && h.timestamp !== data.lastAccessedDate),
+            ].slice(0, 80);
+            return {
+              ...it,
+              lastAccessedDate: data.lastAccessedDate,
+              accessLogs: nextLogs,
+              accessHistory: nextHist,
+              accessCount: Math.max(it.accessCount || 0, 1),
+            };
+          })
         );
       }
 
@@ -741,6 +871,95 @@ export default function App() {
       }
     }
   }, [todayStr]);
+
+  // Sync Chrome profile SQLite history for a single PWA inside AccessHistoryModal
+  const handleSyncSingleProfileHistory = useCallback(
+    async (item: PWAItem, profileOverride?: string) => {
+      const targetProfile = profileOverride || item.profileDirectory || '';
+      try {
+        const params = new URLSearchParams({
+          pwaId: item.id,
+          url: item.url,
+          ...(targetProfile ? { profileDirectory: targetProfile } : {}),
+        });
+        const res = await fetch(`/api/pwas/profile-history?${params.toString()}`);
+        if (!res.ok) {
+          return {
+            historyFound: false,
+            chromeVisitsCount: 0,
+            profileDirectory: targetProfile || 'Default',
+            reason: 'Falha ao consultar servidor de histórico.',
+          };
+        }
+        const data = await res.json();
+        const chromeVisits = Array.isArray(data.visits) ? data.visits : [];
+
+        setItems((prev) => {
+          const next = prev.map((it) => {
+            if (it.id !== item.id) return it;
+            const merged = mergeAccessHistoryRecords(it, chromeVisits);
+            return {
+              ...it,
+              lastAccessedDate: merged.lastAccessedDate,
+              accessLogs: merged.accessLogs,
+              accessHistory: merged.accessHistory,
+              accessCount: Math.max(it.accessCount || 0, merged.accessHistory.length),
+            };
+          });
+          try {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+          } catch {}
+          const updatedItem = next.find((it) => it.id === item.id);
+          if (updatedItem && chromeVisits.length > 0) {
+            fetch('/api/pwas/state', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ items: [updatedItem] }),
+            }).catch(() => {});
+          }
+          return next;
+        });
+
+        return {
+          historyFound: Boolean(data.historyFound),
+          chromeVisitsCount: Number(data.chromeVisitsCount || 0),
+          profileDirectory: String(data.profileDirectory || targetProfile || 'Default'),
+          reason: data.reason || null,
+        };
+      } catch {
+        return {
+          historyFound: false,
+          chromeVisitsCount: 0,
+          profileDirectory: targetProfile || 'Default',
+          reason: 'Erro de conexão ao consultar histórico do perfil.',
+        };
+      }
+    },
+    []
+  );
+
+  // Clear local access history entries for a specific PWA
+  const handleClearItemHistory = useCallback((item: PWAItem) => {
+    const cleared: PWAItem = {
+      ...item,
+      lastAccessedDate: null,
+      accessLogs: [],
+      accessHistory: [],
+      accessCount: 0,
+    };
+    setItems((prev) => {
+      const next = prev.map((it) => (it.id === item.id ? cleared : it));
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+    fetch('/api/pwas/state', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ items: [cleared] }),
+    }).catch(() => {});
+  }, []);
 
   // Toggle status (green <-> red)
   const handleToggleStatus = useCallback((item: PWAItem) => {
@@ -1585,6 +1804,8 @@ export default function App() {
         onResetToday={handleResetToday}
         onRefreshAllIcons={handleRefreshAllIcons}
         onRescanLocalPWAs={handleRescanLocalPWAs}
+        onSyncProfileHistory={() => void syncAllProfilesHistory()}
+        isSyncingHistory={isSyncingHistory}
       />
 
       {/* Main Container */}
@@ -1767,6 +1988,7 @@ export default function App() {
                     setIsFolderManagerOpen(true);
                   }}
                   onOpenQuickAssign={(folderId) => setQuickAssignTargetFolderId(folderId)}
+                  onViewHistory={(item) => setHistoryModalItem(item)}
                 />
               )}
 
@@ -1787,6 +2009,7 @@ export default function App() {
                     setIsAddEditOpen(true);
                   }}
                   onClone={(item) => setCloningItem(item)}
+                  onViewHistory={(item) => setHistoryModalItem(item)}
                   onDelete={handleDelete}
                 />
               )}
@@ -1846,6 +2069,7 @@ export default function App() {
                   onRefreshIcon={handleRefreshSingleIcon}
                   onSaveCustomIcon={handleSaveCustomIcon}
                   onMoveToFolder={handleMovePWAsToFolder}
+                  onViewHistory={(item) => setHistoryModalItem(item)}
                   groupByGroup={groupByGroup}
                 />
               )}
@@ -2002,6 +2226,18 @@ export default function App() {
         discoveredProfiles={discoveredChromeProfiles}
         onClose={() => setCloningItem(null)}
         onConfirmClone={handleClonePWA}
+      />
+
+      {/* Per-PWA Access History (Day & Time from Chrome Profile SQLite + Hub) */}
+      <AccessHistoryModal
+        isOpen={historyModalItem !== null}
+        item={historyModalItem}
+        allItems={cleanItems}
+        todayStr={todayStr}
+        discoveredProfiles={discoveredChromeProfiles}
+        onClose={() => setHistoryModalItem(null)}
+        onSyncProfileHistory={handleSyncSingleProfileHistory}
+        onClearHistory={handleClearItemHistory}
       />
     </div>
   );

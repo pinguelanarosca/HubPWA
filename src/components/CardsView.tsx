@@ -7,7 +7,7 @@ import { PWAFlagsControl } from './PWAFlagsControl';
 import { isAccessedToday, formatAccessLogDash, formatChromeProfileDisplay } from '../utils/pwaLogic';
 import { getGroupTheme } from '../utils/groupLogic';
 import { flattenFoldersHierarchy } from '../utils/folderLogic';
-import { Check, CheckCircle2, Clock, MoreVertical, Edit2, Trash2, Folder, ExternalLink, RotateCw, Upload, FolderInput, ChevronRight, User, Copy } from 'lucide-react';
+import { Check, CheckCircle2, Clock, MoreVertical, Edit2, Trash2, Folder, ExternalLink, RotateCw, Upload, FolderInput, ChevronRight, User, Copy, History } from 'lucide-react';
 
 interface CardsViewProps {
   items: PWAItem[];
@@ -30,6 +30,7 @@ interface CardsViewProps {
   onRefreshIcon?: (item: PWAItem) => void;
   onSaveCustomIcon?: (item: PWAItem, iconDataUrl: string) => void;
   onMoveToFolder?: (pwaIds: string[], targetFolderId: string | null) => void;
+  onViewHistory?: (item: PWAItem) => void;
   groupByGroup?: boolean;
 }
 
@@ -53,6 +54,7 @@ export const CardsView: React.FC<CardsViewProps> = ({
   onRefreshIcon,
   onSaveCustomIcon,
   onMoveToFolder,
+  onViewHistory,
   groupByGroup = false,
 }) => {
   const [activeMenuId, setActiveMenuId] = useState<string | null>(null);
@@ -270,6 +272,20 @@ export const CardsView: React.FC<CardsViewProps> = ({
                         <span>Clonar para outro Perfil</span>
                       </button>
                     )}
+                    {onViewHistory && (
+                      <button
+                        type="button"
+                        data-testid={`history-pwa-menu-btn-${item.id}`}
+                        onClick={() => {
+                          setActiveMenuId(null);
+                          onViewHistory(item);
+                        }}
+                        className="w-full px-3 py-1.5 text-left hover:bg-neutral-800 flex items-center gap-2 cursor-pointer text-emerald-300 font-medium"
+                      >
+                        <History className="w-3.5 h-3.5 text-emerald-400" />
+                        <span>Histórico (Dia e Hora)</span>
+                      </button>
+                    )}
                     <button
                       type="button"
                       onClick={() => {
@@ -424,9 +440,30 @@ export const CardsView: React.FC<CardsViewProps> = ({
                 {item.name}
               </h3>
 
-              {/* 2. Access Log: DD/MM - HH:MM or - Sem registro - & Folder indicator */}
+              {/* 2. Access Log: DD/MM - HH:MM (clickable to open Day/Time History) & Folder indicator */}
               <div className="flex items-center justify-between gap-2 text-[11px] font-mono text-neutral-400 mt-0.5 notranslate" translate="no">
-                <span className="truncate">{accessLogStr}</span>
+                {onViewHistory ? (
+                  <button
+                    type="button"
+                    data-testid={`card-history-btn-${item.id}`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onViewHistory(item);
+                    }}
+                    title="Ver histórico completo de acessos (dia e hora)"
+                    className="inline-flex items-center gap-1 truncate hover:text-emerald-300 transition-colors cursor-pointer text-left"
+                  >
+                    <History className="w-3 h-3 text-neutral-500 shrink-0" />
+                    <span className="truncate">{accessLogStr}</span>
+                    {(item.accessHistory?.length || item.accessCount || 0) > 1 && (
+                      <span className="px-1 py-0.2 rounded bg-neutral-800/90 text-[9px] text-neutral-300 shrink-0">
+                        {item.accessHistory?.length || item.accessCount}x
+                      </span>
+                    )}
+                  </button>
+                ) : (
+                  <span className="truncate">{accessLogStr}</span>
+                )}
                 {assignedFolder && (
                   <span
                     className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-neutral-900/90 border border-neutral-700/80 text-[10px] font-sans text-neutral-300 truncate max-w-[110px] shrink-0"

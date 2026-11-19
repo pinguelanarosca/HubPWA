@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { Trash2, Edit2, User, Clock, Folder, Copy } from 'lucide-react';
+import { Trash2, Edit2, User, Clock, Folder, Copy, History } from 'lucide-react';
 import { DailyFlagKey, DailyFlagState, PWAFolder, PWAItem } from '../types/pwa';
 import { PWAIcon } from './PWAIcon';
 import { StatusIndicator } from './StatusIndicator';
@@ -21,6 +21,7 @@ interface CompactTableViewProps {
   onSetRating?: (item: PWAItem, rating: number) => void;
   onEdit: (item: PWAItem) => void;
   onClone?: (item: PWAItem) => void;
+  onViewHistory?: (item: PWAItem) => void;
   onDelete: (id: string) => void;
 }
 
@@ -37,6 +38,7 @@ export const CompactTableView: React.FC<CompactTableViewProps> = ({
   onSetRating,
   onEdit,
   onClone,
+  onViewHistory,
   onDelete,
 }) => {
   const folderMap = useMemo(() => new Map(folders.map((f) => [f.id, f])), [folders]);
@@ -116,31 +118,46 @@ export const CompactTableView: React.FC<CompactTableViewProps> = ({
                   />
                 </td>
 
-                {/* Log de Acesso: Data e Hora entre Indicador e Nome da PWA */}
+                {/* Log de Acesso: Data e Hora entre Indicador e Nome da PWA (clicável para histórico completo) */}
                 <td className="py-1 px-3 whitespace-nowrap notranslate" translate="no">
-                  {accessLog.hasRecord ? (
-                    <div
-                      className="inline-flex items-center gap-1.5 font-mono text-[11px] text-neutral-300 bg-neutral-900/80 px-2 py-0.5 rounded border border-neutral-800/80"
-                      title={`Último acesso: ${accessLog.fullStr} (${item.accessCount || 1} acessos)`}
-                    >
-                      <span className="text-neutral-400 font-medium">{accessLog.dateStr}</span>
-                      {accessLog.timeStr && (
-                        <span className="inline-flex items-center gap-1 text-emerald-400 font-semibold font-mono text-[10px]">
-                          <Clock className="w-2.5 h-2.5 text-emerald-400/90" />
-                          <span>{accessLog.timeStr}</span>
-                        </span>
-                      )}
-                      {(item.accessCount || 0) > 1 && (
-                        <span className="text-[9px] text-neutral-500 font-mono">
-                          {item.accessCount}x
-                        </span>
-                      )}
-                    </div>
-                  ) : (
-                    <span className="font-mono text-[10px] text-neutral-500 italic pl-1">
-                      — Sem registro
-                    </span>
-                  )}
+                  <button
+                    type="button"
+                    data-testid={`table-history-btn-${item.id}`}
+                    onClick={() => onViewHistory && onViewHistory(item)}
+                    disabled={!onViewHistory}
+                    className={`inline-flex items-center gap-1.5 font-mono text-[11px] rounded px-2 py-0.5 transition-colors ${
+                      accessLog.hasRecord
+                        ? 'text-neutral-300 bg-neutral-900/80 border border-neutral-800/80 hover:border-emerald-600/60 hover:text-emerald-200'
+                        : 'text-neutral-500 hover:text-neutral-300'
+                    } ${onViewHistory ? 'cursor-pointer' : ''}`}
+                    title={
+                      accessLog.hasRecord
+                        ? `Último acesso: ${accessLog.fullStr} — Clique para ver histórico completo`
+                        : 'Ver histórico completo de acesso (dia e hora)'
+                    }
+                  >
+                    {accessLog.hasRecord ? (
+                      <>
+                        <span className="text-neutral-400 font-medium">{accessLog.dateStr}</span>
+                        {accessLog.timeStr && (
+                          <span className="inline-flex items-center gap-1 text-emerald-400 font-semibold font-mono text-[10px]">
+                            <Clock className="w-2.5 h-2.5 text-emerald-400/90" />
+                            <span>{accessLog.timeStr}</span>
+                          </span>
+                        )}
+                        {(item.accessHistory?.length || item.accessCount || 0) > 1 && (
+                          <span className="text-[9px] text-neutral-500 font-mono">
+                            {item.accessHistory?.length || item.accessCount}x
+                          </span>
+                        )}
+                      </>
+                    ) : (
+                      <>
+                        <History className="w-3 h-3 text-neutral-500" />
+                        <span className="italic text-[10px]">Ver histórico</span>
+                      </>
+                    )}
+                  </button>
                 </td>
 
                 {/* PWA Icon + Name + Link (Clicável para Abrir PWA) */}

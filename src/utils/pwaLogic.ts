@@ -290,12 +290,24 @@ export function markAsAccessed(
   const localIso = `${todayStr}T${hours}:${minutes}:${seconds}.000Z`;
 
   const existingLogs = Array.isArray(item.accessLogs) ? item.accessLogs : [];
-  const updatedLogs = [localIso, ...existingLogs.filter((l) => l !== localIso)].slice(0, 10);
+  const updatedLogs = [localIso, ...existingLogs.filter((l) => l !== localIso)].slice(0, 60);
+
+  const existingHistory = Array.isArray(item.accessHistory) ? item.accessHistory : [];
+  const updatedHistory = [
+    {
+      timestamp: localIso,
+      source: 'hub' as const,
+      profileDirectory: item.profileDirectory,
+      visitedUrl: item.url,
+    },
+    ...existingHistory.filter((h) => h && h.timestamp !== localIso),
+  ].slice(0, 80);
 
   return {
     ...item,
     lastAccessedDate: localIso,
     accessLogs: updatedLogs,
+    accessHistory: updatedHistory,
     accessCount: (item.accessCount || 0) + 1,
   };
 }
@@ -322,12 +334,24 @@ export function toggleAccessedToday(
     const localIso = `${todayStr}T${hours}:${minutes}:${seconds}.000Z`;
 
     const existingLogs = Array.isArray(item.accessLogs) ? item.accessLogs : [];
-    const updatedLogs = [localIso, ...existingLogs.filter((l) => l !== localIso)].slice(0, 10);
+    const updatedLogs = [localIso, ...existingLogs.filter((l) => l !== localIso)].slice(0, 60);
+
+    const existingHistory = Array.isArray(item.accessHistory) ? item.accessHistory : [];
+    const updatedHistory = [
+      {
+        timestamp: localIso,
+        source: 'hub' as const,
+        profileDirectory: item.profileDirectory,
+        visitedUrl: item.url,
+      },
+      ...existingHistory.filter((h) => h && h.timestamp !== localIso),
+    ].slice(0, 80);
 
     return {
       ...item,
       lastAccessedDate: localIso,
       accessLogs: updatedLogs,
+      accessHistory: updatedHistory,
       accessCount: (item.accessCount || 0) + 1,
     };
   }

@@ -1,5 +1,5 @@
 import React, { useRef } from 'react';
-import { Plus, Download, Upload, CheckCircle2, RotateCcw, RotateCw, FolderOpen, ChevronDown, Link, Github, Calendar, Target, Power } from 'lucide-react';
+import { Plus, Upload, CheckCircle2, RotateCcw, RotateCw, FolderOpen, ChevronDown, Link, Calendar, Target, Power, History } from 'lucide-react';
 import { PWAStats } from '../types/pwa';
 
 interface TopBarProps {
@@ -14,6 +14,8 @@ interface TopBarProps {
   onResetToday: () => void;
   onRefreshAllIcons?: () => void;
   onRescanLocalPWAs?: () => void;
+  onSyncProfileHistory?: () => void;
+  isSyncingHistory?: boolean;
 }
 
 export const TopBar: React.FC<TopBarProps> = ({
@@ -28,6 +30,8 @@ export const TopBar: React.FC<TopBarProps> = ({
   onResetToday,
   onRefreshAllIcons,
   onRescanLocalPWAs,
+  onSyncProfileHistory,
+  isSyncingHistory = false,
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -141,6 +145,18 @@ export const TopBar: React.FC<TopBarProps> = ({
                 <RotateCcw className="w-3.5 h-3.5 text-rose-400" />
                 <span>Resetar status de hoje</span>
               </button>
+              {onSyncProfileHistory && (
+                <button
+                  type="button"
+                  data-testid="topbar-sync-history-btn"
+                  disabled={isSyncingHistory}
+                  onClick={onSyncProfileHistory}
+                  className="w-full text-left px-3 py-2 text-neutral-200 hover:bg-[#1e2028] hover:text-emerald-400 disabled:opacity-60 flex items-center gap-2 cursor-pointer font-medium"
+                >
+                  <History className={`w-3.5 h-3.5 text-emerald-400 ${isSyncingHistory ? 'animate-spin' : ''}`} />
+                  <span>{isSyncingHistory ? 'Sincronizando histórico...' : 'Sincronizar Histórico dos Perfis'}</span>
+                </button>
+              )}
               {onRescanLocalPWAs && (
                 <button
                   type="button"
