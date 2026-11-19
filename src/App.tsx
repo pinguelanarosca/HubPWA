@@ -4,7 +4,7 @@
  */
 
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { DailyFlagKey, DailyFlagState, PWAFolder, PWAItem, ViewDensity, StatusFilter, StarFilter, SortOption, FlagFilterKey } from './types/pwa';
+import { AccessTimeWindowFilter, DailyFlagKey, DailyFlagState, PWAFolder, PWAItem, ViewDensity, StatusFilter, StarFilter, SortOption, FlagFilterKey } from './types/pwa';
 import {
   getTodayString,
   getMsUntilNextMidnight,
@@ -45,7 +45,7 @@ import {
 } from './utils/folderLogic';
 import { parseDesktopFile, ParsedDesktopApp } from './utils/desktopParser';
 import { normalizeAppUrl } from './utils/desktopDeduplicator';
-import { mergeAccessHistoryRecords } from './utils/historyLogic';
+import { matchesAccessTimeWindow, mergeAccessHistoryRecords } from './utils/historyLogic';
 import { TopBar } from './components/TopBar';
 import { ControlToolbar } from './components/ControlToolbar';
 import { CompactTableView } from './components/CompactTableView';
@@ -161,6 +161,12 @@ export default function App() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [starFilter, setStarFilter] = useState<StarFilter>('all');
   const [flagFilters, setFlagFilters] = useState<FlagFilterKey[]>([]);
+  const [timeWindow, setTimeWindow] = useState<AccessTimeWindowFilter>({
+    enabled: false,
+    startTime: '08:00',
+    endTime: '18:00',
+    dayScope: 'today',
+  });
   const [sortBy, setSortBy] = useState<SortOption>('pinned');
   const [groupByGroup, setGroupByGroup] = useState<boolean>(() => {
     try {
@@ -714,6 +720,11 @@ export default function App() {
   const flagCounts = useMemo(() => countPWAFlags(cleanItems, todayStr), [cleanItems, todayStr]);
   const flagBreakdown = useMemo(() => countPWAFlagBreakdown(cleanItems, todayStr), [cleanItems, todayStr]);
 
+  const timeWindowMatchCount = useMemo(() => {
+    if (!timeWindow.enabled) return 0;
+    return cleanItems.filter((it) => matchesAccessTimeWindow(it, timeWindow, todayStr)).length;
+  }, [cleanItems, timeWindow, todayStr]);
+
   // Filtered and sorted items
   const displayedItems = useMemo(() => {
     const activeFolderFilter = density === 'folders' ? 'all' : selectedFolder;
@@ -731,10 +742,11 @@ export default function App() {
       statusFilter,
       starFilter,
       flagFilters,
+      timeWindow,
       sortBy,
       todayStr,
     });
-  }, [cleanItems, folders, validFolderIds, density, selectedFolder, search, selectedGroup, statusFilter, starFilter, flagFilters, sortBy, todayStr]);
+  }, [cleanItems, folders, validFolderIds, density, selectedFolder, search, selectedGroup, statusFilter, starFilter, flagFilters, timeWindow, sortBy, todayStr]);
 
   // Scoped selectable items (when inside a folder -> ONLY that folder; root/unfiled -> ONLY unfiled; cards -> displayedItems)
   const selectableItems = useMemo(() => {
@@ -1927,6 +1939,9 @@ export default function App() {
               flagBreakdown={flagBreakdown}
               onToggleFlagFilter={handleToggleFlagFilter}
               onClearFlagFilters={handleClearFlagFilters}
+              timeWindow={timeWindow}
+              onTimeWindowChange={setTimeWindow}
+              timeWindowMatchCount={timeWindowMatchCount}
               density={density}
               onDensityChange={handleDensityChange}
               sortBy={sortBy}

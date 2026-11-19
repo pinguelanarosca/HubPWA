@@ -1,4 +1,5 @@
-import { DailyFlagKey, DailyFlagState, FlagFilterKey, PWAFlags, PWAItem, PWAStats, SortOption, StatusFilter } from '../types/pwa';
+import { AccessTimeWindowFilter, DailyFlagKey, DailyFlagState, FlagFilterKey, PWAFlags, PWAItem, PWAStats, SortOption, StatusFilter } from '../types/pwa';
+import { matchesAccessTimeWindow } from './historyLogic';
 
 /**
  * Returns the date in YYYY-MM-DD format in the user's local timezone
@@ -678,6 +679,7 @@ export function filterAndSortPWAs(
     statusFilter?: StatusFilter;
     starFilter?: string;
     flagFilters?: FlagFilterKey[];
+    timeWindow?: AccessTimeWindowFilter | null;
     sortBy?: SortOption;
     todayStr?: string;
   }
@@ -693,6 +695,7 @@ export function filterAndSortPWAs(
     statusFilter = 'all',
     starFilter = 'all',
     flagFilters = [],
+    timeWindow = null,
     sortBy = 'pinned',
     todayStr = getTodayString(),
   } = options;
@@ -746,6 +749,13 @@ export function filterAndSortPWAs(
           isPWAFlagActive(item, flagKey, todayStr)
         );
         if (!matchesAllSelectedFlags) {
+          return false;
+        }
+      }
+
+      // Time window filter ("acessadas hoje entre X e Y hora" or any day)
+      if (timeWindow && timeWindow.enabled) {
+        if (!matchesAccessTimeWindow(item, timeWindow, todayStr)) {
           return false;
         }
       }

@@ -25,10 +25,11 @@ import {
   Check,
   LayoutGrid,
 } from 'lucide-react';
-import { DailyFlagKey, DailyFlagState, FlagFilterKey, PWAFolder, SortOption, StatusFilter, StarFilter, ViewDensity } from '../types/pwa';
+import { AccessTimeWindowFilter, DailyFlagKey, DailyFlagState, FlagFilterKey, PWAFolder, SortOption, StatusFilter, StarFilter, ViewDensity } from '../types/pwa';
 import { getGroupTheme, GROUP_COLOR_THEMES } from '../utils/groupLogic';
 import { flattenFoldersHierarchy } from '../utils/folderLogic';
 import { PWAFlagBreakdown } from '../utils/pwaLogic';
+import { buildRelativeTimeWindow } from '../utils/historyLogic';
 import { DAILY_FLAG_META, MoneySymbolIcon } from './PWAFlagsControl';
 
 interface ControlToolbarProps {
@@ -56,6 +57,9 @@ interface ControlToolbarProps {
   flagBreakdown?: PWAFlagBreakdown;
   onToggleFlagFilter?: (flag: FlagFilterKey) => void;
   onClearFlagFilters?: () => void;
+  timeWindow?: AccessTimeWindowFilter;
+  onTimeWindowChange?: (next: AccessTimeWindowFilter) => void;
+  timeWindowMatchCount?: number;
   density: ViewDensity;
   onDensityChange: (mode: ViewDensity) => void;
   sortBy: SortOption;
@@ -103,6 +107,9 @@ export const ControlToolbar: React.FC<ControlToolbarProps> = ({
   flagBreakdown,
   onToggleFlagFilter,
   onClearFlagFilters,
+  timeWindow,
+  onTimeWindowChange,
+  timeWindowMatchCount = 0,
   density,
   onDensityChange,
   sortBy,
@@ -127,6 +134,7 @@ export const ControlToolbar: React.FC<ControlToolbarProps> = ({
   const bulkMenuRef = useRef<HTMLDivElement>(null);
   const [dragOverFolderId, setDragOverFolderId] = useState<string | null>(null);
   const [isBulkMenuOpen, setIsBulkMenuOpen] = useState(false);
+  const [isTimePanelOpen, setIsTimePanelOpen] = useState(false);
 
   const flatFolders = useMemo(() => flattenFoldersHierarchy(folders), [folders]);
 
@@ -240,6 +248,48 @@ export const ControlToolbar: React.FC<ControlToolbarProps> = ({
 
         {/* Star Rating & Sorting Selectors */}
         <div className="flex items-center gap-2 flex-wrap">
+          {/* Time Window Filter Trigger ("Acessadas hoje entre X e Y hora") */}
+          {onTimeWindowChange && timeWindow && (
+            <div className="inline-flex items-center">
+              <button
+                type="button"
+                data-testid="time-window-toggle-btn"
+                aria-expanded={isTimePanelOpen || timeWindow.enabled}
+                onClick={() => setIsTimePanelOpen((prev) => !prev)}
+                title="Filtrar PWAs acessadas por janela de horário (ex: hoje entre X e Y hora)"
+                className={`inline-flex items-center gap-1.5 px-2.5 py-2 text-xs font-medium border transition-colors cursor-pointer whitespace-nowrap ${
+                  timeWindow.enabled
+                    ? 'bg-emerald-950/80 border-emerald-500/75 text-emerald-200 font-semibold rounded-l-lg'
+                    : isTimePanelOpen
+                    ? 'bg-[#1f212a] border-emerald-500/60 text-white rounded-lg'
+                    : 'bg-[#14151a] hover:bg-[#1f212a] border-[#242633] text-neutral-200 hover:text-white rounded-lg'
+                }`}
+              >
+                <Clock className={`w-3.5 h-3.5 ${timeWindow.enabled ? 'text-emerald-400' : 'text-sky-400'}`} />
+                <span>
+                  {timeWindow.enabled
+                    ? `${timeWindow.dayScope === 'today' ? 'Hoje' : 'Qualquer dia'} ${timeWindow.startTime}–${timeWindow.endTime}`
+                    : 'Janela Horário'}
+                </span>
+              </button>
+              {timeWindow.enabled && (
+                <button
+                  type="button"
+                  data-testid="time-window-quick-clear"
+                  aria-label="Limpar filtro de horário"
+                  title="Desativar filtro de horário"
+                  onClick={() => {
+                    onTimeWindowChange({ ...timeWindow, enabled: false });
+                    setIsTimePanelOpen(false);
+                  }}
+                  className="px-1.5 py-2 rounded-r-lg bg-emerald-950/80 hover:bg-rose-950/80 border border-l-0 border-emerald-500/75 hover:border-rose-500/75 text-emerald-300 hover:text-rose-200 transition-colors cursor-pointer"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+          )}
+
           {/* Star Filter Dropdown */}
           <div className="relative flex items-center">
             <Star className="w-3.5 h-3.5 text-amber-400 absolute left-2.5 pointer-events-none fill-amber-400" />
@@ -609,6 +659,189 @@ export const ControlToolbar: React.FC<ControlToolbarProps> = ({
           )}
         </div>
       </div>
+
+      {/* Expandable Time Window Filter Bar ("Acessadas hoje entre X e Y hora") */}
+      {onTimeWindowChange && timeWindow && (isTimePanelOpen || timeWindow.enabled) && (
+        <div
+          data-testid="time-window-panel"
+          className="px-3 py-2 rounded-xl bg-[#14151a] border border-[#242633] flex flex-wrap items-center justify-between gap-2.5 text-xs animate-in fade-in duration-100"
+        >
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="inline-flex items-center gap-1.5 text-sky-300 font-semibold shrink-0">
+              <Clock className="w-3.5 h-3.5 text-sky-400" />
+              <span>Janela de Horário:</span>
+            </div>
+
+            {/* Day Scope Toggle */}
+            <div className="inline-flex items-center p-0.5 rounded-lg bg-neutral-950 border border-neutral-800">
+              <button
+                type="button"
+                data-testid="time-window-scope-today"
+                onClick={() =>
+                  onTimeWindowChange({ ...timeWindow, enabled: true, dayScope: 'today' })
+                }
+                className={`px-2 py-1 rounded-md text-[11px] font-semibold transition-colors cursor-pointer ${
+                  timeWindow.dayScope === 'today'
+                    ? 'bg-emerald-500/20 text-emerald-300'
+                    : 'text-neutral-400 hover:text-neutral-200'
+                }`}
+              >
+                Acessadas hoje
+              </button>
+              <button
+                type="button"
+                data-testid="time-window-scope-any"
+                onClick={() =>
+                  onTimeWindowChange({ ...timeWindow, enabled: true, dayScope: 'any' })
+                }
+                className={`px-2 py-1 rounded-md text-[11px] font-semibold transition-colors cursor-pointer ${
+                  timeWindow.dayScope === 'any'
+                    ? 'bg-sky-500/20 text-sky-300'
+                    : 'text-neutral-400 hover:text-neutral-200'
+                }`}
+              >
+                Qualquer dia
+              </button>
+            </div>
+
+            {/* Start / End Time Inputs */}
+            <div className="inline-flex items-center gap-1.5">
+              <label htmlFor="time-window-start-input" className="text-[11px] text-neutral-400">
+                Das
+              </label>
+              <input
+                id="time-window-start-input"
+                data-testid="time-window-start"
+                type="time"
+                aria-label="Horário inicial"
+                value={timeWindow.startTime}
+                onChange={(e) =>
+                  onTimeWindowChange({
+                    ...timeWindow,
+                    enabled: true,
+                    startTime: e.target.value || '00:00',
+                  })
+                }
+                className="bg-neutral-950 border border-neutral-700 focus:border-emerald-500 rounded-lg px-2 py-1 text-xs font-mono text-white focus:outline-none"
+              />
+              <label htmlFor="time-window-end-input" className="text-[11px] text-neutral-400">
+                às
+              </label>
+              <input
+                id="time-window-end-input"
+                data-testid="time-window-end"
+                type="time"
+                aria-label="Horário final"
+                value={timeWindow.endTime}
+                onChange={(e) =>
+                  onTimeWindowChange({
+                    ...timeWindow,
+                    enabled: true,
+                    endTime: e.target.value || '23:59',
+                  })
+                }
+                className="bg-neutral-950 border border-neutral-700 focus:border-emerald-500 rounded-lg px-2 py-1 text-xs font-mono text-white focus:outline-none"
+              />
+            </div>
+
+            {/* Quick Presets */}
+            <div className="flex flex-wrap items-center gap-1">
+              {[
+                {
+                  id: 'last1h',
+                  label: 'Última 1h',
+                  getRange: () => buildRelativeTimeWindow(1),
+                },
+                {
+                  id: 'last3h',
+                  label: 'Últimas 3h',
+                  getRange: () => buildRelativeTimeWindow(3),
+                },
+                {
+                  id: 'morning',
+                  label: 'Manhã (06–12h)',
+                  getRange: () => ({ startTime: '06:00', endTime: '11:59' }),
+                },
+                {
+                  id: 'afternoon',
+                  label: 'Tarde (12–18h)',
+                  getRange: () => ({ startTime: '12:00', endTime: '17:59' }),
+                },
+                {
+                  id: 'night',
+                  label: 'Noite (18–00h)',
+                  getRange: () => ({ startTime: '18:00', endTime: '23:59' }),
+                },
+              ].map((preset) => {
+                const presetRange = preset.getRange();
+                const isActive =
+                  timeWindow.enabled &&
+                  timeWindow.startTime === presetRange.startTime &&
+                  timeWindow.endTime === presetRange.endTime;
+
+                return (
+                  <button
+                    key={preset.id}
+                    type="button"
+                    data-testid={`time-window-preset-${preset.id}`}
+                    onClick={() =>
+                      onTimeWindowChange({
+                        ...timeWindow,
+                        enabled: true,
+                        startTime: presetRange.startTime,
+                        endTime: presetRange.endTime,
+                      })
+                    }
+                    className={`px-2 py-1 rounded-md text-[11px] font-medium border transition-colors cursor-pointer whitespace-nowrap ${
+                      isActive
+                        ? 'bg-emerald-500/20 border-emerald-400/70 text-emerald-200 font-semibold'
+                        : 'bg-neutral-950/80 hover:bg-neutral-800 border-neutral-800 text-neutral-300 hover:text-white'
+                    }`}
+                  >
+                    {preset.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Right Status + Clear */}
+          <div className="flex items-center gap-2 shrink-0">
+            {timeWindow.enabled ? (
+              <span
+                data-testid="time-window-match-count"
+                className="px-2 py-0.5 rounded-full bg-emerald-950/70 border border-emerald-700/70 text-emerald-300 font-mono text-[11px] font-semibold"
+              >
+                {timeWindowMatchCount} na janela
+              </span>
+            ) : (
+              <button
+                type="button"
+                onClick={() => onTimeWindowChange({ ...timeWindow, enabled: true })}
+                className="px-2.5 py-1 rounded-lg bg-emerald-400 hover:bg-emerald-300 text-neutral-950 text-[11px] font-bold transition-colors cursor-pointer"
+              >
+                Aplicar janela
+              </button>
+            )}
+
+            <button
+              type="button"
+              data-testid="time-window-clear"
+              onClick={() => {
+                onTimeWindowChange({
+                  ...timeWindow,
+                  enabled: false,
+                });
+                setIsTimePanelOpen(false);
+              }}
+              className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors cursor-pointer"
+            >
+              <X className="w-3 h-3" />
+              <span>{timeWindow.enabled ? 'Limpar' : 'Fechar'}</span>
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Marcações Filter Strip ($ Data, COM, RB, BON) */}
       {onToggleFlagFilter && (

@@ -299,3 +299,127 @@ export function groupAccessHistoryByDay(
 
   return Array.from(groupsMap.values());
 }
+
+/**
+ * Parses an "HH:mm" (or "HH:mm:ss") string into minutes since midnight (0..1439).
+ */
+export function parseTimeToMinutes(timeStr?: string | null): number | null {
+  if (!timeStr || typeof timeStr !== 'string') return null;
+  const m = timeStr.trim().match(/^(\d{1,2}):(\d{2})(?::\d{2})?$/);
+  if (!m) return null;
+  const hh = Number(m[1]);
+  const mm = Number(m[2]);
+  if (!Number.isInteger(hh) || !Number.isInteger(mm) || hh < 0 || hh > 23 || mm < 0 || mm > 59) {
+    return null;
+  }
+  return hh * 60 + mm;
+}
+
+/**
+ * Extracts local wall-clock calendar date (YYYY-MM-DD) and minutes since midnight from an access timestamp.
+ * Only timestamps that include an explicit time part ("THH:mm") match hour-based filters.
+ */
+export function extractLocalDateAndMinutes(ts?: string | null): { dateStr: string; minutes: number } | null {
+  if (!ts || typeof ts !== 'string') return null;
+  const clean = ts.trim();
+  const m = clean.match(/^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})/);
+  if (!m) return null;
+  const hh = Number(m[2]);
+  const mm = Number(m[3]);
+  if (hh < 0 || hh > 23 || mm < 0 || mm > 59) return null;
+  return {
+    dateStr: m[1],
+    minutes: hh * 60 + mm,
+  };
+}
+
+/**
+ * Checks whether a single access timestamp falls within a day & HH:mm..HH:mm window (supports wrap-around past midnight).
+ */
+export function isTimestampInTimeWindow(
+  ts: string | null | undefined,
+  startTime: string,
+  endTime: string,
+  dayScope: 'today' | 'any' = 'today',
+  todayStr: string = getTodayString()
+): boolean {
+  const startMin = parseTimeToMinutes(startTime);
+  const endMin = parseTimeToMinutes(endTime);
+  if (startMin === null || endMin === null) return false;
+
+  const parsed = extractLocalDateAndMinutes(ts);
+  if (!parsed) return false;
+
+  if (dayScope === 'today' && parsed.dateStr !== todayStr) {
+    return false;
+  }
+
+  if (startMin <= endMin) {
+    return parsed.minutes >= startMin && parsed.minutes <= endMin;
+  }
+
+  // Wrap-around window (e.g. 22:00 to 02:00)
+  return parsed.minutes >= startMin || parsed.minutes <= endMin;
+}
+
+/**
+ * Checks whether a PWA item has at least one recorded access (lastAccessedDate, accessLogs, or accessHistory)
+ * inside the configured time window.
+ */
+export function matchesAccessTimeWindow(
+  item: Pick<PWAItem, 'lastAccessedDate' | 'accessLogs' | 'accessHistory'>,
+  windowFilter?: {
+    enabled?: boolean;
+    startTime?: string;
+    endTime?: string;
+    dayScope?: 'today' | 'any';
+  } | null,
+  todayStr: string = getTodayString()
+): boolean {
+  if (!windowFilter || !windowFilter.enabled) return true;
+  const startTime = windowFilter.startTime || '00:00';
+  const endTime = windowFilter.endTime || '23:59';
+  const dayScope = windowFilter.dayScope === 'any' ? 'any' : 'today';
+
+  const candidates = new Set<string>();
+  if (item.lastAccessedDate) candidates.add(item.lastAccessedDate);
+  if (Array.isArray(item.accessLogs)) {
+    for (const l of item.accessLogs) {
+      if (l) candidates.add(l);
+    }
+  }
+  if (Array.isArray(item.accessHistory)) {
+    for (const h of item.accessHistory) {
+      if (h?.timestamp) candidates.add(h.timestamp);
+    }
+  }
+
+  for (const ts of candidates) {
+    if (isTimestampInTimeWindow(ts, startTime, endTime, dayScope, todayStr)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Builds an HH:mm start/end pair for the last N hours relative to `now`.
+ */
+export function buildRelativeTimeWindow(
+  hoursBack: number,
+  now: Date = new Date()
+): { startTime: string; endTime: string } {
+  const endMin = now.getHours() * 60 + now.getMinutes();
+  const clampedBack = Math.max(1, Math.round(hoursBack * 60));
+  const startMin = Math.max(0, endMin - clampedBack);
+
+  const fmt = (mins: number) =>
+    `${String(Math.floor(mins / 60)).padStart(2, '0')}:${String(mins % 60).padStart(2, '0')}`;
+
+  return {
+    startTime: fmt(startMin),
+    endTime: fmt(endMin),
+  };
+}
+

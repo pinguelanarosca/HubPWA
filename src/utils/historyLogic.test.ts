@@ -1,16 +1,20 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  buildRelativeTimeWindow,
   chromeWebkitTimeToDate,
   chromeWebkitTimeToLocalIso,
   collapseRapidChromeVisits,
   formatDateToLocalLogIso,
   groupAccessHistoryByDay,
+  isTimestampInTimeWindow,
+  matchesAccessTimeWindow,
   matchesVisitUrlForPWA,
   mergeAccessHistoryRecords,
+  parseTimeToMinutes,
   resolveHistoryProfileDirectory,
 } from './historyLogic';
-import { AccessHistoryEntry } from '../types/pwa';
+import { AccessHistoryEntry, PWAItem } from '../types/pwa';
 
 test('chromeWebkitTimeToDate and chromeWebkitTimeToLocalIso convert Chrome microseconds accurately', () => {
   // Exact Unix epoch 2026-11-19T14:30:05.000Z in Chrome WebKit microseconds:
@@ -115,3 +119,48 @@ test('resolveHistoryProfileDirectory derives target Chrome profile accurately', 
   assert.equal(resolveHistoryProfileDirectory({ rawFileName: 'chrome-abc-Profile_2.desktop' }), 'Profile 2');
   assert.equal(resolveHistoryProfileDirectory({}), 'Default');
 });
+
+test('time window filter matches PWAs accessed today between X and Y hours across accessHistory/logs', () => {
+  assert.equal(parseTimeToMinutes('09:30'), 570);
+  assert.equal(parseTimeToMinutes('25:00'), null);
+
+  assert.equal(isTimestampInTimeWindow('2026-11-19T10:15:44.000Z', '09:00', '12:00', 'today', '2026-11-19'), true);
+  assert.equal(isTimestampInTimeWindow('2026-11-18T10:15:44.000Z', '09:00', '12:00', 'today', '2026-11-19'), false);
+  assert.equal(isTimestampInTimeWindow('2026-11-18T10:15:44.000Z', '09:00', '12:00', 'any', '2026-11-19'), true);
+  assert.equal(isTimestampInTimeWindow('2026-11-19T23:30:00.000Z', '22:00', '02:00', 'today', '2026-11-19'), true);
+  assert.equal(isTimestampInTimeWindow('2026-11-19T01:45:00.000Z', '22:00', '02:00', 'today', '2026-11-19'), true);
+  assert.equal(isTimestampInTimeWindow('2026-11-19T15:00:00.000Z', '22:00', '02:00', 'today', '2026-11-19'), false);
+
+  const pwaAccessedMorningAndEvening: Pick<PWAItem, 'lastAccessedDate' | 'accessLogs' | 'accessHistory'> = {
+    lastAccessedDate: '2026-11-19T20:10:00.000Z',
+    accessLogs: ['2026-11-19T20:10:00.000Z', '2026-11-19T09:45:12.000Z'],
+    accessHistory: [
+      { timestamp: '2026-11-19T20:10:00.000Z', source: 'hub' },
+      { timestamp: '2026-11-19T09:45:12.000Z', source: 'chrome' },
+    ],
+  };
+
+  // Matches earlier 09:45 visit today even though latest access was 20:10
+  assert.equal(
+    matchesAccessTimeWindow(
+      pwaAccessedMorningAndEvening,
+      { enabled: true, startTime: '09:00', endTime: '11:00', dayScope: 'today' },
+      '2026-11-19'
+    ),
+    true
+  );
+
+  // Outside afternoon window
+  assert.equal(
+    matchesAccessTimeWindow(
+      pwaAccessedMorningAndEvening,
+      { enabled: true, startTime: '13:00', endTime: '17:00', dayScope: 'today' },
+      '2026-11-19'
+    ),
+    false
+  );
+
+  const rel = buildRelativeTimeWindow(2, new Date(2026, 10, 19, 14, 15, 0));
+  assert.deepEqual(rel, { startTime: '12:15', endTime: '14:15' });
+});
+

@@ -34,6 +34,13 @@ export interface AccessHistoryEntry {
   title?: string;
 }
 
+export interface AccessTimeWindowFilter {
+  enabled: boolean;
+  startTime: string; // HH:mm
+  endTime: string; // HH:mm
+  dayScope: 'today' | 'any';
+}
+
 export interface PWAItem {
   id: string;
   name: string;
