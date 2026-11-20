@@ -35,6 +35,7 @@ import {
   decodeLaunchBridgePayload,
   extractExecFromDesktopContent,
   buildLinuxLaunchCandidates,
+  shouldUseWaylandCloneBridge,
 } from './src/utils/launchConfig.js';
 
 const execFileAsync = promisify(execFile);
@@ -1177,11 +1178,20 @@ app.post('/api/launch-pwa', (req, res) => {
     }
 
     const x11ScriptPath = path.resolve(__dirname, 'scripts', 'x11_resize_chrome.py');
-    const canUsePythonX11 = hasPython3 && fs.existsSync(x11ScriptPath);
+    const isWaylandClone = shouldUseWaylandCloneBridge(
+      { clonedFromId: req.body?.clonedFromId, appId, url },
+      process.env
+    );
+    // Keep the working X11 launcher for installed PWAs and all other apps.
+    // URL-based Wayland clones cannot be observed/resized by libX11.
+    const canUsePythonX11 = !isWaylandClone && hasPython3 && fs.existsSync(x11ScriptPath);
     const desktopEnv = { ...process.env, DISPLAY: process.env.DISPLAY || ':0' };
 
-    // Only detour through /api/launch-bridge on pure Wayland without X11; on X11/XWayland open direct URL with 0ms redirect delay
-    const useBridge = !canUsePythonX11 && !process.env.DISPLAY && Boolean(process.env.WAYLAND_DISPLAY);
+    // Only URL-based clones use the existing self-sizing bridge on Wayland.
+    // The normal launcher path for installed PWA app IDs remains untouched.
+    const useBridge =
+      isWaylandClone ||
+      (!canUsePythonX11 && !process.env.DISPLAY && Boolean(process.env.WAYLAND_DISPLAY));
     const localPort = req.socket?.localPort || Number(process.env.PORT) || 3000;
     const bridgeOrigin = useBridge ? `http://127.0.0.1:${localPort}` : undefined;
 

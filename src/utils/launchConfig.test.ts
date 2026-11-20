@@ -12,6 +12,7 @@ import {
   extractExecFromDesktopContent,
   applyWindowSizeToChromeExec,
   buildLinuxLaunchCandidates,
+  shouldUseWaylandCloneBridge,
 } from './launchConfig';
 
 test('default PWA launch dimensions match 539x993 reference size', () => {
@@ -129,4 +130,15 @@ test('buildLinuxLaunchCandidates limits Chrome binaries when chromeBinaries is s
     chromeCmds[0],
     'google-chrome --profile-directory="Profile 3" --app="https://35c.com/" --window-size=539,993 2>/dev/null'
   );
+});
+
+test('Wayland clone bridge applies only to real URL clones', () => {
+  const wayland = { XDG_SESSION_TYPE: 'wayland', WAYLAND_DISPLAY: 'wayland-0' };
+  const x11 = { XDG_SESSION_TYPE: 'x11', WAYLAND_DISPLAY: '' };
+  const clone = { clonedFromId: 'original-pwa', url: 'https://53h.com', appId: undefined };
+  assert.equal(shouldUseWaylandCloneBridge(clone, wayland), true);
+  assert.equal(shouldUseWaylandCloneBridge(clone, x11), false);
+  assert.equal(shouldUseWaylandCloneBridge({ ...clone, appId: 'installed-id' }, wayland), false);
+  assert.equal(shouldUseWaylandCloneBridge({ url: clone.url }, wayland), false);
+  assert.equal(shouldUseWaylandCloneBridge({ ...clone, url: 'javascript:alert(1)' }, wayland), false);
 });
