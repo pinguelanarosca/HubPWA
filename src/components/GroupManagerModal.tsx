@@ -34,6 +34,7 @@ export const GroupManagerModal: React.FC<GroupManagerModalProps> = ({
 
   // Color picker popover active group
   const [pickerTargetGroup, setPickerTargetGroup] = useState<string | null>(null);
+  const [confirmingDeleteGroup, setConfirmingDeleteGroup] = useState<string | null>(null);
 
   if (!isOpen) return null;
 
@@ -256,18 +257,36 @@ export const GroupManagerModal: React.FC<GroupManagerModalProps> = ({
                           </button>
 
                           {groupName !== 'Geral' && (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                if (window.confirm(`Excluir o grupo "${groupName}"? As PWAs deste grupo serão reatribuídas para "Geral".`)) {
-                                  onDeleteGroup(groupName);
-                                }
-                              }}
-                              className="p-1.5 rounded-lg text-neutral-400 hover:text-rose-400 hover:bg-neutral-800 transition-colors cursor-pointer"
-                              title="Excluir grupo"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
+                            confirmingDeleteGroup === groupName ? (
+                              <div className="flex items-center gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setConfirmingDeleteGroup(null);
+                                    onDeleteGroup(groupName);
+                                  }}
+                                  className="px-2 py-1 rounded bg-rose-600 hover:bg-rose-500 text-white text-[10px] font-semibold cursor-pointer"
+                                >
+                                  Excluir
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setConfirmingDeleteGroup(null)}
+                                  className="px-2 py-1 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-[10px] cursor-pointer"
+                                >
+                                  Cancelar
+                                </button>
+                              </div>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => setConfirmingDeleteGroup(groupName)}
+                                className="p-1.5 rounded-lg text-neutral-400 hover:text-rose-400 hover:bg-neutral-800 transition-colors cursor-pointer"
+                                title="Excluir grupo"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            )
                           )}
                         </div>
                       </div>

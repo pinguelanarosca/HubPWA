@@ -42,6 +42,7 @@ import {
   appendCacheBuster,
   extractHtmlIconCandidates,
   isSameOrMatchingPWA,
+  ensureUniquePWAIds,
 } from './pwaLogic';
 import { PWAItem } from '../types/pwa';
 
@@ -789,4 +790,114 @@ test('icon URL helpers preserve web-resolved /api/icon?domain=... across rescans
     'https://aa222.bet/og-logo.png',
   ]);
 });
+
+test('ensureUniquePWAIds non-destructively repairs colliding and missing IDs while preserving all user data', () => {
+  const collidedItems: PWAItem[] = [
+    {
+      id: 'pwa_dup_1',
+      name: '03win.com (Perfil1)',
+      url: 'https://03win.com',
+      category: 'Jogos',
+      group: 'Jogos',
+      folderId: 'folder_agente',
+      notes: 'Conta principal',
+      rating: 5,
+      pinned: true,
+      profileDirectory: 'Profile 1',
+      lastAccessedDate: '2026-11-20T05:14:00.000Z',
+      accessCount: 11,
+      flags: { comDate: '2026-11-20', comState: 'check', moneyDate: '20/11' },
+      createdAt: '2026-11-01T00:00:00.000Z',
+    },
+    {
+      id: 'pwa_dup_1',
+      name: '03win.com (Perfil1)',
+      url: 'https://03win.com',
+      category: 'Jogos',
+      group: 'Jogos',
+      folderId: 'folder_agente',
+      notes: 'Copia com nota diferente',
+      rating: 3,
+      pinned: true,
+      profileDirectory: 'Profile 1',
+      lastAccessedDate: '2026-11-20T05:14:00.000Z',
+      accessCount: 9,
+      flags: { rbDate: '2026-11-20', rbState: 'x' },
+      createdAt: '2026-11-02T00:00:00.000Z',
+    },
+    {
+      id: 'pwa_dup_1',
+      name: '03win.com (Perfil1)',
+      url: 'https://03win.com',
+      category: 'Jogos',
+      notes: 'Terceira copia',
+      rating: 0,
+      lastAccessedDate: null,
+      accessCount: 10,
+      createdAt: '2026-11-03T00:00:00.000Z',
+    },
+    {
+      id: '',
+      name: '5X5X.COM',
+      url: 'https://5x5x.com',
+      category: 'Geral',
+      notes: 'Sem id original',
+      lastAccessedDate: '2026-11-20T04:56:00.000Z',
+      accessCount: 5,
+      createdAt: '2026-11-04T00:00:00.000Z',
+    },
+  ];
+
+  const repaired = ensureUniquePWAIds(collidedItems);
+
+  // Never removes or merges user's existing items
+  assert.equal(repaired.length, 4);
+
+  // Every ID is non-empty and strictly unique
+  const ids = repaired.map((it) => it.id);
+  assert.equal(new Set(ids).size, 4);
+  assert.equal(ids[0], 'pwa_dup_1');
+  assert.equal(ids[1], 'pwa_dup_1__dup_2');
+  assert.equal(ids[2], 'pwa_dup_1__dup_3');
+  assert.ok(ids[3].startsWith('pwa_repaired_5x5x_com_'));
+
+  // All user metadata preserved verbatim
+  assert.equal(repaired[0].notes, 'Conta principal');
+  assert.equal(repaired[0].flags?.moneyDate, '20/11');
+  assert.equal(repaired[1].notes, 'Copia com nota diferente');
+  assert.equal(repaired[1].accessCount, 9);
+  assert.equal(repaired[1].flags?.rbState, 'x');
+  assert.equal(repaired[2].notes, 'Terceira copia');
+  assert.equal(repaired[3].notes, 'Sem id original');
+  assert.equal(repaired[3].accessCount, 5);
+
+  // Running ensureUniquePWAIds again is idempotent
+  assert.deepEqual(ensureUniquePWAIds(repaired), repaired);
+
+  // __dup_ copies do NOT cross-match original items on URL/name in isSameOrMatchingPWA
+  assert.equal(isSameOrMatchingPWA(repaired[0], repaired[1]), false);
+  assert.equal(isSameOrMatchingPWA(repaired[1], repaired[2]), false);
+  assert.equal(isSameOrMatchingPWA(repaired[1], repaired[1]), true);
+});
+
+test('clonePWAForProfile avoids ID collisions against existingIds', () => {
+  const src: PWAItem = {
+    id: 'pwa_src_1',
+    name: 'Site Teste',
+    url: 'https://siteteste.com',
+    category: 'Geral',
+    notes: '',
+    lastAccessedDate: null,
+    accessCount: 0,
+    createdAt: '2026-11-01T00:00:00.000Z',
+  };
+  const existing = new Set<string>(['pwa_src_1']);
+  const clone1 = clonePWAForProfile(src, { profileDirectory: 'Profile 2', existingIds: existing });
+  existing.add(clone1.id);
+  const clone2 = clonePWAForProfile(src, { profileDirectory: 'Profile 3', existingIds: existing });
+  assert.notEqual(clone1.id, clone2.id);
+  assert.equal(clone1.clonedFromId, 'pwa_src_1');
+  assert.equal(clone2.clonedFromId, 'pwa_src_1');
+});
+
 

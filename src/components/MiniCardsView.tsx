@@ -22,21 +22,21 @@ export const MiniCardsView: React.FC<MiniCardsViewProps> = ({
 }) => {
   if (items.length === 0) {
     return (
-      <div className="py-20 text-center text-neutral-400">
+      <div key="minicards-empty" data-testid="minicards-empty-state" className="py-20 text-center text-neutral-400">
         <p className="text-sm font-medium text-neutral-300">Nenhuma PWA encontrada com os filtros atuais.</p>
         <p className="text-xs text-neutral-500 mt-1">Tente ajustar a busca, alterar a categoria ou cadastrar novas PWAs.</p>
       </div>
     );
   }
 
-  const renderMiniCard = (item: PWAItem) => {
+  const renderMiniCard = (item: PWAItem, renderKey: string) => {
     const isAccessed = isAccessedToday(item.lastAccessedDate, todayStr);
     const isSelected = selectedIds.has(item.id);
     const moneyDate = item.flags?.moneyDate?.trim() || '';
 
     return (
       <div
-        key={item.id}
+        key={renderKey}
         data-testid={`mini-card-${item.id}`}
         className={`group relative overflow-hidden rounded-xl bg-[#14151a] hover:bg-[#181920] transition-all flex items-stretch min-h-[78px] ${
           isAccessed
@@ -134,6 +134,16 @@ export const MiniCardsView: React.FC<MiniCardsViewProps> = ({
     );
   };
 
+  const getRenderKey = (() => {
+    const seen = new Map<string, number>();
+    return (item: PWAItem, idx: number) => {
+      const base = item.id || `idx_${idx}`;
+      const count = seen.get(base) || 0;
+      seen.set(base, count + 1);
+      return count === 0 ? base : `${base}__rk_${count}`;
+    };
+  })();
+
   if (groupByGroup) {
     const groupsMap = new Map<string, PWAItem[]>();
     items.forEach((item) => {
@@ -147,7 +157,7 @@ export const MiniCardsView: React.FC<MiniCardsViewProps> = ({
     const sortedGroupNames = Array.from(groupsMap.keys()).sort((a, b) => a.localeCompare(b, 'pt-BR'));
 
     return (
-      <div className="space-y-6">
+      <div key="minicards-grouped" className="space-y-6">
         {sortedGroupNames.map((grpName) => {
           const groupItems = groupsMap.get(grpName) || [];
           return (
@@ -164,7 +174,7 @@ export const MiniCardsView: React.FC<MiniCardsViewProps> = ({
                 </div>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2.5">
-                {groupItems.map(renderMiniCard)}
+                {groupItems.map((it, idx) => renderMiniCard(it, getRenderKey(it, idx)))}
               </div>
             </section>
           );
@@ -174,8 +184,8 @@ export const MiniCardsView: React.FC<MiniCardsViewProps> = ({
   }
 
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2.5">
-      {items.map(renderMiniCard)}
+    <div key="minicards-grid" className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2.5">
+      {items.map((it, idx) => renderMiniCard(it, getRenderKey(it, idx)))}
     </div>
   );
 };

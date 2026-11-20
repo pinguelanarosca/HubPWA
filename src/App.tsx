@@ -32,6 +32,7 @@ import {
   batchClearFlags,
   ChromeProfileOption,
   clonePWAForProfile,
+  ensureUniquePWAIds,
 } from './utils/pwaLogic';
 import {
   FOLDERS_STORAGE_KEY,
@@ -68,7 +69,8 @@ import { QuickAssignFolderModal } from './components/QuickAssignFolderModal';
 import { RatingConfirmModal } from './components/RatingConfirmModal';
 import { ClonePWAProfileModal } from './components/ClonePWAProfileModal';
 import { AccessHistoryModal } from './components/AccessHistoryModal';
-import { FolderUp, FolderOpen, Plus } from 'lucide-react';
+import { DeleteConfirmModal } from './components/DeleteConfirmModal';
+import { AlertCircle, FolderUp, FolderOpen, Plus, X } from 'lucide-react';
 
 const STORAGE_KEY = 'chrome_pwa_hub_items_empty_v1';
 const DENSITY_STORAGE_KEY = 'chrome_pwa_hub_density';
@@ -115,7 +117,16 @@ export default function App() {
       if (stored) {
         const parsed = JSON.parse(stored);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed.filter((it: PWAItem) => !isAndroidOrRedroidApp(it)).map(repairAndSanitizePWA);
+          const sanitized = parsed
+            .filter((it: PWAItem) => !isAndroidOrRedroidApp(it))
+            .map(repairAndSanitizePWA);
+          const repairedIds = ensureUniquePWAIds(sanitized);
+          if (repairedIds.some((it, i) => it.id !== sanitized[i]?.id)) {
+            try {
+              localStorage.setItem(STORAGE_KEY, JSON.stringify(repairedIds));
+            } catch {}
+          }
+          return repairedIds;
         }
       }
       // Check legacy keys to prevent data loss across updates
@@ -130,7 +141,9 @@ export default function App() {
         if (legacy) {
           const parsed = JSON.parse(legacy);
           if (Array.isArray(parsed) && parsed.length > 0) {
-            return parsed.filter((it: PWAItem) => !isAndroidOrRedroidApp(it)).map(repairAndSanitizePWA);
+            return ensureUniquePWAIds(
+              parsed.filter((it: PWAItem) => !isAndroidOrRedroidApp(it)).map(repairAndSanitizePWA)
+            );
           }
         }
       }
@@ -251,6 +264,10 @@ export default function App() {
     newRating: number;
   } | null>(null);
 
+  // Pending deletion confirmation modal (single or batch IDs)
+  const [pendingDeleteIds, setPendingDeleteIds] = useState<string[] | null>(null);
+  const [noticeMessage, setNoticeMessage] = useState<string | null>(null);
+
   // Current day string (YYYY-MM-DD)
   const [todayStr, setTodayStr] = useState(() => getTodayString());
 
@@ -284,9 +301,9 @@ export default function App() {
       const mergedList = validScanned.map((scanned) => {
         const normScannedUrl = normalizeAppUrl(scanned.url);
 
-        // Find ALL previous entries that belong to this platform (never absorb profile clones)
+        // Find ALL previous entries that belong to this platform (never absorb profile clones or preserved __dup_ copies)
         const matches = cleanPrev.filter((p) => {
-          if (p.clonedFromId || p.id.startsWith('pwa_clone_')) return false;
+          if (p.clonedFromId || p.id.startsWith('pwa_clone_') || p.id.includes('__dup_')) return false;
           if (p.id === scanned.id) return true;
           if (scanned.appId && p.appId && scanned.appId.toLowerCase() === p.appId.toLowerCase()) return true;
           if (scanned.desktopPath && p.desktopPath && (p.desktopPath === scanned.desktopPath || (scanned.alternateDesktopPaths || []).includes(p.desktopPath))) return true;
@@ -398,7 +415,9 @@ export default function App() {
 
       // Keep only manual items that weren't absorbed into any platform
       const remainingManualItems = cleanPrev.filter((p) => !absorbedPrevIds.has(p.id));
-      const finalMerged = [...mergedList, ...remainingManualItems].filter((it) => !isAndroidOrRedroidApp(it));
+      const finalMerged = ensureUniquePWAIds(
+        [...mergedList, ...remainingManualItems].filter((it) => !isAndroidOrRedroidApp(it))
+      );
 
       // Sync merged state to server disk database
       fetch('/api/pwas/state', {
@@ -534,9 +553,11 @@ export default function App() {
             const serverPwas = serverDb.pwas ? (Object.values(serverDb.pwas) as PWAItem[]) : [];
             if (!initialHadLocalItemsRef.current && serverPwas.length > 0) {
               const deletedSet = new Set<string>(Array.isArray(serverDb.deletedIds) ? serverDb.deletedIds : []);
-              const hydrated = serverPwas
-                .filter((it) => it && it.id && it.name && it.url && !deletedSet.has(it.id) && !isAndroidOrRedroidApp(it))
-                .map(repairAndSanitizePWA);
+              const hydrated = ensureUniquePWAIds(
+                serverPwas
+                  .filter((it) => it && it.id && it.name && it.url && !deletedSet.has(it.id) && !isAndroidOrRedroidApp(it))
+                  .map(repairAndSanitizePWA)
+              );
               if (hydrated.length > 0) {
                 setItems(hydrated);
                 try {
@@ -618,7 +639,7 @@ export default function App() {
       setParsedDesktopApps(parsedList);
       setIsDesktopModalOpen(true);
     } else {
-      window.alert('Nenhum atalho de PWA (.desktop) válido foi encontrado nos arquivos selecionados.');
+      setNoticeMessage('Nenhum atalho de PWA (.desktop) válido foi encontrado nos arquivos selecionados.');
     }
   }, []);
 
@@ -665,7 +686,7 @@ export default function App() {
         icon: item.icon || resolveFaviconAtInsertion(item.url),
       }));
       const filtered = withResolvedIcons.filter((i) => !existingIds.has(i.id));
-      return [...filtered, ...cleanPrev];
+      return ensureUniquePWAIds([...filtered, ...cleanPrev]);
     });
   }, []);
 
@@ -1103,20 +1124,45 @@ export default function App() {
     setPendingRatingChange({ item, newRating: nextRating });
   }, []);
 
-  // Delete item
+  // Open in-app confirmation modal to delete a single PWA
   const handleDelete = useCallback((id: string) => {
-    const target = items.find((it) => it.id === id);
-    const confirmMessage = target ? `Excluir a PWA "${target.name}"?` : 'Excluir esta PWA?';
-    if (window.confirm(confirmMessage)) {
-      setItems((prev) => prev.filter((it) => it.id !== id));
-      // Persist deletion on backend so re-scan doesn't re-introduce it
-      fetch('/api/pwas/delete', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id }),
-      }).catch((err) => console.warn('Erro ao persistir exclusão no servidor:', err));
+    if (!id) return;
+    setPendingDeleteIds([id]);
+  }, []);
+
+  // Apply confirmed single or batch deletion safely
+  const handleConfirmDelete = useCallback(() => {
+    if (!pendingDeleteIds || pendingDeleteIds.length === 0) {
+      setPendingDeleteIds(null);
+      return;
     }
-  }, [items]);
+
+    const idsToDelete = [...pendingDeleteIds];
+    const deleteSet = new Set(idsToDelete);
+
+    setItems((prev) => {
+      const next = prev.filter((it) => !deleteSet.has(it.id));
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+
+    setSelectedIds((prev) => {
+      if (prev.size === 0) return prev;
+      const next = new Set(prev);
+      idsToDelete.forEach((id) => next.delete(id));
+      return next;
+    });
+
+    setPendingDeleteIds(null);
+
+    fetch('/api/pwas/delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids: idsToDelete }),
+    }).catch((err) => console.warn('Erro ao persistir exclusão no servidor:', err));
+  }, [pendingDeleteIds]);
 
   // Save new or edited PWA
   const handleSavePWA = useCallback((data: Partial<PWAItem> & { name: string; url: string; category: string; group?: string; folderId?: string | null; notes: string }) => {
@@ -1174,7 +1220,7 @@ export default function App() {
         createdAt: new Date().toISOString(),
       };
       setItems((prev) => {
-        const nextList = [newItem, ...prev];
+        const nextList = ensureUniquePWAIds([newItem, ...prev]);
         fetch('/api/pwas/state', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -1195,13 +1241,15 @@ export default function App() {
       keepFolderAndGroup: boolean;
     }
   ) => {
-    const cloned = clonePWAForProfile(source, options);
     setItems((prev) => {
+      const existingIds = new Set(prev.map((it) => it.id));
+      const cloned = clonePWAForProfile(source, { ...options, existingIds });
       const idx = prev.findIndex((it) => it.id === source.id);
-      const nextList =
+      const nextList = ensureUniquePWAIds(
         idx >= 0
           ? [...prev.slice(0, idx + 1), cloned, ...prev.slice(idx + 1)]
-          : [cloned, ...prev];
+          : [cloned, ...prev]
+      );
       try {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(nextList));
       } catch {}
@@ -1384,24 +1432,11 @@ export default function App() {
     setIsBatchEditOpen(true);
   }, [getBulkTargetIds, selectedIds.size]);
 
-  // Batch delete selected or scoped visible items
+  // Open in-app confirmation modal for batch deleting selected or scoped visible items
   const handleBatchDelete = useCallback(() => {
     const targetIds = getBulkTargetIds();
     if (targetIds.size === 0) return;
-    const count = targetIds.size;
-    if (window.confirm(`Tem certeza que deseja excluir ${count} PWA${count > 1 ? 's' : ''} selecionada${count > 1 ? 's' : ''}?`)) {
-      const idsToDelete = Array.from(targetIds);
-      setItems((prev) => prev.filter((it) => !targetIds.has(it.id)));
-      setSelectedIds(new Set());
-
-      idsToDelete.forEach((id) => {
-        fetch('/api/pwas/delete', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ id }),
-        }).catch(() => {});
-      });
-    }
+    setPendingDeleteIds(Array.from(targetIds));
   }, [getBulkTargetIds]);
 
   // Batch edit apply
@@ -1763,24 +1798,35 @@ export default function App() {
   // Clear all items (0 PWAs default state)
   const handleClearAll = useCallback(() => {
     setItems([]);
+    setSelectedIds(new Set());
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify([]));
     } catch {
       // ignore
     }
+    fetch('/api/pwas/state', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ items: [], replaceAll: true }),
+    }).catch(() => {});
   }, []);
 
   // Import JSON items
   const handleImport = useCallback((newItems: PWAItem[], mode: 'replace' | 'merge') => {
-    const validNew = newItems.filter((i) => !isAndroidOrRedroidApp(i));
+    const validNew = ensureUniquePWAIds(newItems.filter((i) => !isAndroidOrRedroidApp(i)));
     if (mode === 'replace') {
       setItems(validNew);
+      fetch('/api/pwas/state', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ items: validNew, replaceAll: true, allowRestore: true }),
+      }).catch(() => {});
     } else {
       setItems((prev) => {
         const cleanPrev = prev.filter((p) => !isAndroidOrRedroidApp(p));
         const existingIds = new Set(cleanPrev.map((i) => i.id));
         const nonDuplicate = validNew.filter((i) => !existingIds.has(i.id));
-        return [...cleanPrev, ...nonDuplicate];
+        return ensureUniquePWAIds([...cleanPrev, ...nonDuplicate]);
       });
     }
   }, []);
@@ -1822,6 +1868,23 @@ export default function App() {
 
       {/* Main Container */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-3 sm:px-4 py-3 flex flex-col">
+        {noticeMessage && (
+          <div className="mb-3 px-3.5 py-2.5 rounded-lg bg-amber-950/70 border border-amber-800/70 text-amber-200 text-xs flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
+              <span>{noticeMessage}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setNoticeMessage(null)}
+              aria-label="Fechar aviso"
+              className="p-1 rounded hover:bg-amber-900/60 text-amber-300 cursor-pointer"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
+
         {items.length === 0 ? (
           /* Empty state by default as requested: 0 PWAs initially */
           <div className="flex-1 flex flex-col items-center justify-center py-20 px-4 text-center">
@@ -2253,6 +2316,18 @@ export default function App() {
         onClose={() => setHistoryModalItem(null)}
         onSyncProfileHistory={handleSyncSingleProfileHistory}
         onClearHistory={handleClearItemHistory}
+      />
+
+      {/* Non-blocking In-App Delete Confirmation Modal */}
+      <DeleteConfirmModal
+        isOpen={pendingDeleteIds !== null && pendingDeleteIds.length > 0}
+        itemsToDelete={
+          pendingDeleteIds
+            ? cleanItems.filter((it) => pendingDeleteIds.includes(it.id))
+            : []
+        }
+        onConfirm={handleConfirmDelete}
+        onClose={() => setPendingDeleteIds(null)}
       />
     </div>
   );

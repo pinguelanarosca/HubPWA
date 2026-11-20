@@ -783,13 +783,16 @@ app.get('/api/pwas/state', (_req, res) => {
 // POST /api/pwas/state - Save / update user state to disk
 app.post('/api/pwas/state', (req, res) => {
   try {
-    const { items, folders, deletedIds } = req.body || {};
+    const { items, folders, deletedIds, replaceAll, allowRestore } = req.body || {};
     const db = getDb();
 
     if (Array.isArray(deletedIds)) {
       deletedIds.forEach((id: string) => {
-        if (!db.deletedIds.includes(id)) {
+        if (id && !db.deletedIds.includes(id)) {
           db.deletedIds.push(id);
+        }
+        if (id) {
+          delete db.pwas[id];
         }
       });
     }
@@ -799,8 +802,12 @@ app.post('/api/pwas/state', (req, res) => {
     }
 
     if (Array.isArray(items)) {
+      if (replaceAll === true) {
+        db.pwas = {};
+      }
       for (const item of items) {
         if (!item || !item.id || isAndroidOrRedroidApp(item)) continue;
+        if (db.deletedIds.includes(item.id) && !allowRestore) continue;
         db.pwas[item.id] = {
           id: item.id,
           name: item.name,
@@ -887,18 +894,31 @@ app.post('/api/pwas/state', (req, res) => {
   }
 });
 
-// POST /api/pwas/delete - Permanently mark PWA as deleted so it does not reappear on re-scan
+// POST /api/pwas/delete - Permanently mark single or batch PWAs as deleted so they do not reappear on re-scan
 app.post('/api/pwas/delete', (req, res) => {
   try {
-    const { id } = req.body || {};
-    if (!id) return res.status(400).json({ error: 'ID obrigatório' });
-    const db = getDb();
-    if (!db.deletedIds.includes(id)) {
-      db.deletedIds.push(id);
+    const { id, ids } = req.body || {};
+    const targetIds: string[] = [];
+    if (Array.isArray(ids)) {
+      for (const entry of ids) {
+        if (typeof entry === 'string' && entry.trim()) targetIds.push(entry.trim());
+      }
     }
-    delete db.pwas[id];
+    if (typeof id === 'string' && id.trim() && !targetIds.includes(id.trim())) {
+      targetIds.push(id.trim());
+    }
+    if (targetIds.length === 0) {
+      return res.status(400).json({ error: 'ID obrigatório' });
+    }
+    const db = getDb();
+    for (const targetId of targetIds) {
+      if (!db.deletedIds.includes(targetId)) {
+        db.deletedIds.push(targetId);
+      }
+      delete db.pwas[targetId];
+    }
     saveServerDb(db);
-    return res.json({ success: true, deletedId: id });
+    return res.json({ success: true, deletedId: targetIds[0], deletedIds: targetIds });
   } catch (err) {
     return res.status(500).json({ error: (err as Error).message });
   }

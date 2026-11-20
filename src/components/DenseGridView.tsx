@@ -39,25 +39,31 @@ export const DenseGridView: React.FC<DenseGridViewProps> = ({
 }) => {
   if (items.length === 0) {
     return (
-      <div className="py-16 text-center text-neutral-400">
+      <div key="densegrid-empty" className="py-16 text-center text-neutral-400">
         <p className="text-sm font-medium">Nenhuma PWA encontrada com os filtros atuais.</p>
         <p className="text-xs text-neutral-400 mt-1">Tente ajustar a busca ou adicionar uma nova PWA.</p>
       </div>
     );
   }
 
+  const seenKeys = new Map<string, number>();
+
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2.5">
-      {items.map((item) => {
+    <div key="densegrid-grid" className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2.5">
+      {items.map((item, idx) => {
         const accessed = isAccessedToday(item.lastAccessedDate, todayStr);
         const domain = getCleanDomain(item.url);
         const currentRating = typeof item.rating === 'number' ? item.rating : (item.pinned ? 5 : 0);
         const accessLog = formatAccessDateTime(item.lastAccessedDate);
         const chromeProfile = formatChromeProfileDisplay(item);
+        const baseKey = item.id || `idx_${idx}`;
+        const keyCount = seenKeys.get(baseKey) || 0;
+        seenKeys.set(baseKey, keyCount + 1);
+        const renderKey = keyCount === 0 ? baseKey : `${baseKey}__rk_${keyCount}`;
 
         return (
           <div
-            key={item.id}
+            key={renderKey}
             className={`group relative flex flex-col justify-between p-2.5 rounded-lg border-2 bg-neutral-900/40 hover:bg-neutral-900/80 transition-all ${
               accessed
                 ? 'border-emerald-500/80 hover:border-emerald-400 shadow-[0_0_14px_-5px_rgba(16,185,129,0.35)]'

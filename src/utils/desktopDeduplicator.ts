@@ -295,6 +295,7 @@ export function deduplicateDesktopApps(rawApps: ParsedDesktopApp[]): Deduplicati
 
   let confirmedDuplicatesMerged = 0;
   const consolidated: ParsedDesktopApp[] = [];
+  const usedPlatformIds = new Set<string>();
 
   for (const cluster of clusters) {
     if (cluster.length > 1) {
@@ -376,11 +377,17 @@ export function deduplicateDesktopApps(rawApps: ParsedDesktopApp[]): Deduplicati
       ? 'Profile 5'
       : primary.profileDirectory || 'Default';
 
-    // Form stable ID for platform
+    // Form stable unique ID for platform
     const platformSeed = (primary.appId || getCleanDomain(primary.url) || bestName)
       .toLowerCase()
       .replace(/[^a-z0-9]/g, '_');
-    const stableId = `pwa_platform_${platformSeed}`;
+    const baseStableId = `pwa_platform_${platformSeed || 'app'}`;
+    let stableId = baseStableId;
+    let collisionIdx = 2;
+    while (usedPlatformIds.has(stableId)) {
+      stableId = `${baseStableId}_${collisionIdx++}`;
+    }
+    usedPlatformIds.add(stableId);
 
     consolidated.push({
       ...primary,

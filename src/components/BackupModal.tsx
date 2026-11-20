@@ -23,6 +23,7 @@ export const BackupModal: React.FC<BackupModalProps> = ({
   const [importMode, setImportMode] = useState<'merge' | 'replace'>('merge');
   const [importError, setImportError] = useState('');
   const [importSuccess, setImportSuccess] = useState('');
+  const [confirmingClear, setConfirmingClear] = useState(false);
 
   if (!isOpen) return null;
 
@@ -102,20 +103,45 @@ export const BackupModal: React.FC<BackupModalProps> = ({
               Esta aplicação opera 100% limpa por padrão. Você pode apagar todas as PWAs cadastradas a qualquer momento para retornar ao estado zerado.
             </p>
             <div className="pt-1">
-              <button
-                type="button"
-                onClick={() => {
-                  if (window.confirm('Tem certeza que deseja apagar todas as PWAs cadastradas e zerar a aplicação?')) {
-                    onClearAll();
-                    onClose();
-                  }
-                }}
-                disabled={items.length === 0}
-                className="px-3 py-1.5 rounded-md bg-rose-950/80 hover:bg-rose-900 border border-rose-800/80 text-rose-300 disabled:opacity-40 disabled:pointer-events-none text-xs font-medium transition-colors cursor-pointer inline-flex items-center gap-1.5"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-                <span>Limpar todas as PWAs (Zerar Hub)</span>
-              </button>
+              {!confirmingClear ? (
+                <button
+                  type="button"
+                  data-testid="backup-clear-all-btn"
+                  onClick={() => setConfirmingClear(true)}
+                  disabled={items.length === 0}
+                  className="px-3 py-1.5 rounded-md bg-rose-950/80 hover:bg-rose-900 border border-rose-800/80 text-rose-300 disabled:opacity-40 disabled:pointer-events-none text-xs font-medium transition-colors cursor-pointer inline-flex items-center gap-1.5"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>Limpar todas as PWAs (Zerar Hub)</span>
+                </button>
+              ) : (
+                <div className="p-2.5 rounded-lg bg-rose-950/40 border border-rose-800/70 space-y-2">
+                  <p className="text-[11px] text-rose-200 font-medium">
+                    Tem certeza que deseja apagar todas as {items.length} PWAs cadastradas e zerar a aplicação?
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      data-testid="confirm-clear-all-btn"
+                      onClick={() => {
+                        setConfirmingClear(false);
+                        onClearAll();
+                        onClose();
+                      }}
+                      className="px-3 py-1 rounded-md bg-rose-600 hover:bg-rose-500 text-white text-xs font-semibold cursor-pointer"
+                    >
+                      Confirmar Limpeza
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setConfirmingClear(false)}
+                      className="px-3 py-1 rounded-md bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-xs font-medium cursor-pointer"
+                    >
+                      Cancelar
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { X, Copy, User, Check } from 'lucide-react';
 import { PWAItem } from '../types/pwa';
 import { PWAIcon } from './PWAIcon';
@@ -53,9 +53,11 @@ export const ClonePWAProfileModal: React.FC<ClonePWAProfileModalProps> = ({
   const [keepFolderAndGroup, setKeepFolderAndGroup] = useState(true);
   const [copyNotesAndFlags, setCopyNotesAndFlags] = useState(true);
   const [error, setError] = useState('');
+  const isSubmittingRef = useRef(false);
 
   useEffect(() => {
     if (!isOpen || !sourceItem) return;
+    isSubmittingRef.current = false;
 
     const currentNorm = sourceProfileRaw ? normalizeChromeProfileInput(sourceProfileRaw).toLowerCase() : '';
     const firstDifferent =
@@ -117,6 +119,7 @@ export const ClonePWAProfileModal: React.FC<ClonePWAProfileModalProps> = ({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmittingRef.current) return;
     const norm = normalizeChromeProfileInput(selectedProfile);
     if (!norm) {
       setError('Selecione ou digite um perfil do navegador válido.');
@@ -127,6 +130,7 @@ export const ClonePWAProfileModal: React.FC<ClonePWAProfileModalProps> = ({
       return;
     }
 
+    isSubmittingRef.current = true;
     onConfirmClone(sourceItem, {
       profileDirectory: norm,
       name: cloneName.trim(),

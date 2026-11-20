@@ -45,15 +45,17 @@ export const CompactTableView: React.FC<CompactTableViewProps> = ({
 
   if (items.length === 0) {
     return (
-      <div className="py-16 text-center text-neutral-400">
+      <div key="table-empty" className="py-16 text-center text-neutral-400">
         <p className="text-sm font-medium">Nenhuma PWA encontrada com os filtros atuais.</p>
         <p className="text-xs text-neutral-400 mt-1">Tente ajustar a busca ou adicionar uma nova PWA.</p>
       </div>
     );
   }
 
+  const seenRowKeys = new Map<string, number>();
+
   return (
-    <div className="w-full overflow-x-auto border border-neutral-800 rounded-lg bg-neutral-950/60 shadow-xs">
+    <div key="table-container" className="w-full overflow-x-auto border border-neutral-800 rounded-lg bg-neutral-950/60 shadow-xs">
       <table className="w-full text-left text-xs border-collapse">
         <thead>
           <tr className="border-b border-neutral-800 bg-neutral-900/60 text-neutral-400 font-medium select-none text-[11px]">
@@ -67,17 +69,21 @@ export const CompactTableView: React.FC<CompactTableViewProps> = ({
           </tr>
         </thead>
         <tbody className="divide-y divide-neutral-900/80">
-          {items.map((item) => {
+          {items.map((item, idx) => {
             const domain = getCleanDomain(item.url);
             const currentRating = typeof item.rating === 'number' ? item.rating : (item.pinned ? 5 : 0);
             const accessLog = formatAccessDateTime(item.lastAccessedDate);
             const assignedFolder = item.folderId ? folderMap.get(item.folderId) : null;
             const chromeProfile = formatChromeProfileDisplay(item);
             const accessed = isAccessedToday(item.lastAccessedDate, todayStr);
+            const baseKey = item.id || `idx_${idx}`;
+            const keyCount = seenRowKeys.get(baseKey) || 0;
+            seenRowKeys.set(baseKey, keyCount + 1);
+            const renderKey = keyCount === 0 ? baseKey : `${baseKey}__rk_${keyCount}`;
 
             return (
               <tr
-                key={item.id}
+                key={renderKey}
                 className={`group hover:bg-neutral-900/50 transition-colors h-9 border-l-[3px] ${
                   accessed ? 'border-l-emerald-500' : 'border-l-rose-500'
                 }`}

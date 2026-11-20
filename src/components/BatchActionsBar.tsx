@@ -151,7 +151,9 @@ export const BatchActionsBar: React.FC<BatchActionsBarProps> = ({
             <Square className="w-4 h-4 text-neutral-400" />
           )}
           <span className="font-semibold text-white">
-            {selectedCount} de {totalCount} selecionada{selectedCount > 1 ? 's' : ''}
+            {totalCount > 0 && totalCount >= selectedCount
+              ? `${selectedCount} de ${totalCount} selecionada${selectedCount > 1 ? 's' : ''}`
+              : `${selectedCount} selecionada${selectedCount > 1 ? 's' : ''}`}
           </span>
         </button>
       </div>
@@ -584,6 +586,7 @@ export const BatchActionsBar: React.FC<BatchActionsBarProps> = ({
         {/* Excluir */}
         <button
           type="button"
+          data-testid="batch-delete-btn"
           onClick={onBatchDelete}
           className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-rose-950/70 hover:bg-rose-900 border border-rose-800/80 text-rose-200 hover:text-white font-medium transition-colors cursor-pointer whitespace-nowrap"
           title="Excluir PWAs selecionadas"

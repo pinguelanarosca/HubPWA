@@ -79,7 +79,7 @@ export const CardsView: React.FC<CardsViewProps> = ({
 
   if (items.length === 0) {
     return (
-      <div className="py-20 text-center text-neutral-400">
+      <div key="cards-empty" data-testid="cards-empty-state" className="py-20 text-center text-neutral-400">
         <p className="text-sm font-medium text-neutral-300">Nenhuma PWA encontrada com os filtros atuais.</p>
         <p className="text-xs text-neutral-500 mt-1">Tente ajustar a busca, alterar a categoria ou cadastrar novas PWAs.</p>
       </div>
@@ -87,7 +87,7 @@ export const CardsView: React.FC<CardsViewProps> = ({
   }
 
   // Render an individual card with translucent background elements color-coding its group
-  const renderCard = (item: PWAItem) => {
+  const renderCard = (item: PWAItem, renderKey: string) => {
     const isAccessed = isAccessedToday(item.lastAccessedDate, todayStr);
     const accessLogStr = formatAccessLogDash(item.lastAccessedDate);
     const isSelected = selectedIds.has(item.id);
@@ -99,7 +99,8 @@ export const CardsView: React.FC<CardsViewProps> = ({
 
     return (
       <div
-        key={item.id}
+        key={renderKey}
+        data-testid={`pwa-card-${item.id}`}
         draggable={Boolean(onMoveToFolder)}
         onDragStart={(e) => {
           e.dataTransfer.setData('text/pwa-id', item.id);
@@ -145,18 +146,23 @@ export const CardsView: React.FC<CardsViewProps> = ({
               {onToggleSelect && (
                 <button
                   type="button"
+                  draggable={false}
+                  onMouseDown={(e) => e.stopPropagation()}
                   onClick={(e) => {
                     e.stopPropagation();
                     onToggleSelect(item.id);
                   }}
-                  className={`mr-0.5 w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 transition-colors cursor-pointer ${
+                  data-testid={`select-pwa-${item.id}`}
+                  aria-label={`Selecionar ${item.name}`}
+                  aria-pressed={isSelected}
+                  className={`mr-0.5 w-4 h-4 rounded border flex items-center justify-center shrink-0 transition-colors cursor-pointer ${
                     isSelected
                       ? 'bg-emerald-500 border-emerald-400 text-neutral-950'
-                      : 'border-neutral-700 bg-neutral-950/80 hover:border-neutral-500 text-transparent'
+                      : 'border-neutral-600 bg-neutral-950/80 hover:border-neutral-400 text-transparent'
                   }`}
                   title={isSelected ? 'Desmarcar PWA' : 'Selecionar PWA'}
                 >
-                  <Check className="w-2.5 h-2.5 stroke-[3]" />
+                  <Check className="w-3 h-3 stroke-[3]" />
                 </button>
               )}
 
@@ -218,6 +224,7 @@ export const CardsView: React.FC<CardsViewProps> = ({
               <div className="relative">
                 <button
                   type="button"
+                  data-testid={`card-menu-btn-${item.id}`}
                   onClick={(e) => {
                     e.stopPropagation();
                     setMoveSubmenuOpen(false);
@@ -397,6 +404,7 @@ export const CardsView: React.FC<CardsViewProps> = ({
                     <div className="my-1 border-t border-neutral-800" />
                     <button
                       type="button"
+                      data-testid={`delete-pwa-menu-btn-${item.id}`}
                       onClick={() => {
                         setActiveMenuId(null);
                         onDelete(item.id);
@@ -504,6 +512,16 @@ export const CardsView: React.FC<CardsViewProps> = ({
     );
   };
 
+  const getRenderKey = (() => {
+    const seen = new Map<string, number>();
+    return (item: PWAItem, idx: number) => {
+      const base = item.id || `idx_${idx}`;
+      const count = seen.get(base) || 0;
+      seen.set(base, count + 1);
+      return count === 0 ? base : `${base}__rk_${count}`;
+    };
+  })();
+
   // Grouped layout if groupByGroup toggle is enabled
   if (groupByGroup) {
     const groupsMap = new Map<string, PWAItem[]>();
@@ -518,7 +536,7 @@ export const CardsView: React.FC<CardsViewProps> = ({
     const sortedGroupNames = Array.from(groupsMap.keys()).sort((a, b) => a.localeCompare(b, 'pt-BR'));
 
     return (
-      <div className="space-y-6">
+      <div key="cards-grouped" className="space-y-6">
         {sortedGroupNames.map((grpName) => {
           const groupItems = groupsMap.get(grpName) || [];
           return (
@@ -535,7 +553,7 @@ export const CardsView: React.FC<CardsViewProps> = ({
                 </div>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
-                {groupItems.map(renderCard)}
+                {groupItems.map((it, idx) => renderCard(it, getRenderKey(it, idx)))}
               </div>
             </section>
           );
@@ -546,8 +564,8 @@ export const CardsView: React.FC<CardsViewProps> = ({
 
   // Standard responsive cards grid (3-4 columns on desktop as requested)
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
-      {items.map(renderCard)}
+    <div key="cards-grid" className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+      {items.map((it, idx) => renderCard(it, getRenderKey(it, idx)))}
     </div>
   );
 };

@@ -73,7 +73,9 @@ export function isSameOrMatchingPWA(
     a.clonedFromId ||
     b.clonedFromId ||
     a.id?.startsWith('pwa_clone_') ||
-    b.id?.startsWith('pwa_clone_')
+    b.id?.startsWith('pwa_clone_') ||
+    a.id?.includes('__dup_') ||
+    b.id?.includes('__dup_')
   ) {
     return false;
   }
@@ -94,6 +96,60 @@ export function isSameOrMatchingPWA(
   }
 
   return false;
+}
+
+/**
+ * Non-destructively guarantees every PWAItem in a list has a unique, non-empty `id`.
+ * Never removes, merges, or alters user data (notes, flags, ratings, folders, profiles, or history).
+ * If a duplicate or empty `id` is found, subsequent copies receive a deterministic unique suffix (`__dup_2`, `__dup_3`, ...).
+ */
+export function ensureUniquePWAIds(items: PWAItem[]): PWAItem[] {
+  if (!Array.isArray(items) || items.length === 0) return [];
+
+  const seenIds = new Set<string>();
+  const result: PWAItem[] = [];
+
+  for (let idx = 0; idx < items.length; idx++) {
+    const item = items[idx];
+    if (!item || typeof item !== 'object') continue;
+
+    const rawId = typeof item.id === 'string' ? item.id.trim() : '';
+
+    if (!rawId) {
+      const slug =
+        (item.appId || item.name || 'item')
+          .toLowerCase()
+          .replace(/[^a-z0-9]/g, '_')
+          .replace(/^_+|_+$/g, '')
+          .slice(0, 24) || 'item';
+      let counter = 1;
+      let candidate = `pwa_repaired_${slug}_${idx}`;
+      while (seenIds.has(candidate)) {
+        counter++;
+        candidate = `pwa_repaired_${slug}_${idx}_${counter}`;
+      }
+      seenIds.add(candidate);
+      result.push({ ...item, id: candidate });
+      continue;
+    }
+
+    if (!seenIds.has(rawId)) {
+      seenIds.add(rawId);
+      result.push(item.id === rawId ? item : { ...item, id: rawId });
+      continue;
+    }
+
+    let counter = 2;
+    let candidate = `${rawId}__dup_${counter}`;
+    while (seenIds.has(candidate)) {
+      counter++;
+      candidate = `${rawId}__dup_${counter}`;
+    }
+    seenIds.add(candidate);
+    result.push({ ...item, id: candidate });
+  }
+
+  return result;
 }
 
 /**
@@ -1434,6 +1490,7 @@ export function clonePWAForProfile(
     copyNotesAndFlags?: boolean;
     keepFolderAndGroup?: boolean;
     now?: Date;
+    existingIds?: Set<string>;
   }
 ): PWAItem {
   const normalizedProfile = normalizeChromeProfileInput(options.profileDirectory);
@@ -1453,8 +1510,16 @@ export function clonePWAForProfile(
   const keepFolderAndGroup = options.keepFolderAndGroup !== false;
   const groupName = keepFolderAndGroup ? (source.group || source.category || 'Geral') : 'Geral';
 
+  let cloneId = `pwa_clone_${now.getTime()}_${Math.random().toString(36).substring(2, 7)}`;
+  if (options.existingIds) {
+    let suffix = 2;
+    while (options.existingIds.has(cloneId)) {
+      cloneId = `pwa_clone_${now.getTime()}_${Math.random().toString(36).substring(2, 7)}_${suffix++}`;
+    }
+  }
+
   return {
-    id: `pwa_clone_${now.getTime()}_${Math.random().toString(36).substring(2, 7)}`,
+    id: cloneId,
     clonedFromId: source.id,
     name: targetName,
     url: source.url,

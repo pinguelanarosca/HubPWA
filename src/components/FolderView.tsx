@@ -511,7 +511,7 @@ export const FolderView: React.FC<FolderViewProps> = ({
         </div>
 
         {levelItems.length === 0 ? (
-          <div className="py-12 px-4 rounded-xl border border-dashed border-[#242633] bg-[#14151a]/40 text-center space-y-3">
+          <div key="folder-level-empty" className="py-12 px-4 rounded-xl border border-dashed border-[#242633] bg-[#14151a]/40 text-center space-y-3">
             <p className="text-xs text-neutral-400">
               {currentFolder
                 ? `Nenhuma PWA diretamente dentro da pasta "${currentFolder.name}" ainda.`
@@ -534,6 +534,7 @@ export const FolderView: React.FC<FolderViewProps> = ({
           </div>
         ) : (
           <CardsView
+            key={`folder-cards-${currentFolderId || 'root'}`}
             items={levelItems}
             todayStr={todayStr}
             folders={folders}
