@@ -1140,17 +1140,11 @@ app.post('/api/launch-pwa', (req, res) => {
     }
 
     const x11ScriptPath = path.resolve(__dirname, 'scripts', 'x11_resize_chrome.py');
-    // A Wayland session often exposes DISPLAY for XWayland. That does NOT mean
-    // native Chrome Wayland windows are manageable through libX11.
-    const isWaylandSession =
-      process.env.XDG_SESSION_TYPE?.toLowerCase() === 'wayland' ||
-      (Boolean(process.env.WAYLAND_DISPLAY) && process.env.XDG_SESSION_TYPE?.toLowerCase() !== 'x11');
-    const canUsePythonX11 = !isWaylandSession && hasPython3 && fs.existsSync(x11ScriptPath);
-    const desktopEnv = isWaylandSession ? { ...process.env } : { ...process.env, DISPLAY: process.env.DISPLAY || ':0' };
+    const canUsePythonX11 = hasPython3 && fs.existsSync(x11ScriptPath);
+    const desktopEnv = { ...process.env, DISPLAY: process.env.DISPLAY || ':0' };
 
-    // Route URL-app launches through the self-sizing bridge on Wayland, even
-    // when the obsolete X11 helper happens to be installed.
-    const useBridge = isWaylandSession;
+    // Only detour through /api/launch-bridge on pure Wayland without X11; on X11/XWayland open direct URL with 0ms redirect delay
+    const useBridge = !canUsePythonX11 && !process.env.DISPLAY && Boolean(process.env.WAYLAND_DISPLAY);
     const localPort = req.socket?.localPort || Number(process.env.PORT) || 3000;
     const bridgeOrigin = useBridge ? `http://127.0.0.1:${localPort}` : undefined;
 
