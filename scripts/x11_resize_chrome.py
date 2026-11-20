@@ -156,6 +156,37 @@ def load_x11():
     x11.XResizeWindow.argtypes = [ctypes.c_void_p, ctypes.c_ulong, ctypes.c_uint, ctypes.c_uint]
     x11.XResizeWindow.restype = ctypes.c_int
 
+    x11.XMoveResizeWindow.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_ulong,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_uint,
+        ctypes.c_uint,
+    ]
+    x11.XMoveResizeWindow.restype = ctypes.c_int
+
+    x11.XDefaultScreen.argtypes = [ctypes.c_void_p]
+    x11.XDefaultScreen.restype = ctypes.c_int
+
+    x11.XDisplayWidth.argtypes = [ctypes.c_void_p, ctypes.c_int]
+    x11.XDisplayWidth.restype = ctypes.c_int
+
+    x11.XDisplayHeight.argtypes = [ctypes.c_void_p, ctypes.c_int]
+    x11.XDisplayHeight.restype = ctypes.c_int
+
+    x11.XTranslateCoordinates.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_ulong,
+        ctypes.c_ulong,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.POINTER(ctypes.c_int),
+        ctypes.POINTER(ctypes.c_int),
+        ctypes.POINTER(ctypes.c_ulong),
+    ]
+    x11.XTranslateCoordinates.restype = ctypes.c_int
+
     x11.XFlush.argtypes = [ctypes.c_void_p]
     x11.XFlush.restype = ctypes.c_int
 
@@ -213,11 +244,39 @@ def get_chrome_window_ids(x11, dpy, root, client_list_atom, wm_class_atom):
             raw = ctypes.string_at(cprop.value, ccount)
             x11.XFree(cprop)
             lower = raw.decode("utf-8", errors="ignore").lower()
-            if "chrome" in lower or "chromium" in lower:
+            if "chrome" in lower or "chromium" in lower or "crx_" in lower:
                 chrome_wids.append(wid)
         elif cprop:
             x11.XFree(cprop)
     return chrome_wids
+
+
+def get_window_geometry_abs(x11, dpy, root, wid):
+    root_ret = ctypes.c_ulong()
+    x_ret = ctypes.c_int()
+    y_ret = ctypes.c_int()
+    w_ret = ctypes.c_uint()
+    h_ret = ctypes.c_uint()
+    bw_ret = ctypes.c_uint()
+    depth_ret = ctypes.c_uint()
+    ok = x11.XGetGeometry(
+        dpy,
+        wid,
+        ctypes.byref(root_ret),
+        ctypes.byref(x_ret),
+        ctypes.byref(y_ret),
+        ctypes.byref(w_ret),
+        ctypes.byref(h_ret),
+        ctypes.byref(bw_ret),
+        ctypes.byref(depth_ret),
+    )
+    if ok == 0:
+        return None
+    abs_x = ctypes.c_int()
+    abs_y = ctypes.c_int()
+    child_ret = ctypes.c_ulong()
+    x11.XTranslateCoordinates(dpy, wid, root, 0, 0, ctypes.byref(abs_x), ctypes.byref(abs_y), ctypes.byref(child_ret))
+    return (int(abs_x.value), int(abs_y.value), int(w_ret.value), int(h_ret.value))
 
 
 def get_window_size(x11, dpy, wid):
@@ -306,7 +365,20 @@ def send_resize_commands(x11, dpy, root, wid, width, height, atoms):
         ev.xclient.data.l[4] = 0
         x11.XSendEvent(dpy, root, 0, mask, ctypes.byref(ev))
 
-    # 2. EWMH _NET_MOVERESIZE_WINDOW (honored by GNOME Mutter / XWayland)
+    x11.XSync(dpy, 0)
+    time.sleep(0.05)
+
+    # 2. Ensure target position keeps full height inside screen workarea so GNOME Mutter never clamps 993px
+    scr = x11.XDefaultScreen(dpy)
+    scr_w = max(800, int(x11.XDisplayWidth(dpy, scr)))
+    scr_h = max(600, int(x11.XDisplayHeight(dpy, scr)))
+    geom = get_window_geometry_abs(x11, dpy, root, wid)
+    cur_x = geom[0] if geom else max(40, (scr_w - int(width)) // 2)
+    cur_y = geom[1] if geom else 36
+    safe_x = max(8, min(cur_x, max(8, scr_w - int(width) - 8)))
+    safe_y = max(32, min(cur_y, max(32, scr_h - int(height) - 12)))
+
+    # 3. EWMH _NET_MOVERESIZE_WINDOW with NorthWestGravity (1) + X/Y/W/H + source=2
     mrev = XClientEventUnion()
     mrev.xclient.type = 33
     mrev.xclient.send_event = 1
@@ -314,14 +386,15 @@ def send_resize_commands(x11, dpy, root, wid, width, height, atoms):
     mrev.xclient.window = wid
     mrev.xclient.message_type = atoms["net_moveresize_window"]
     mrev.xclient.format = 32
-    mrev.xclient.data.l[0] = (1 << 10) | (1 << 11) | (2 << 12)  # width + height + source=2
-    mrev.xclient.data.l[1] = 0
-    mrev.xclient.data.l[2] = 0
+    mrev.xclient.data.l[0] = 1 | (1 << 8) | (1 << 9) | (1 << 10) | (1 << 11) | (2 << 12)
+    mrev.xclient.data.l[1] = safe_x
+    mrev.xclient.data.l[2] = safe_y
     mrev.xclient.data.l[3] = int(width)
     mrev.xclient.data.l[4] = int(height)
     x11.XSendEvent(dpy, root, 0, mask, ctypes.byref(mrev))
 
-    # 3. Direct XResizeWindow for plain WMs
+    # 4. Direct XMoveResizeWindow + XResizeWindow fallback for non-EWMH/plain WMs
+    x11.XMoveResizeWindow(dpy, wid, safe_x, safe_y, int(width), int(height))
     x11.XResizeWindow(dpy, wid, int(width), int(height))
     x11.XFlush(dpy)
 
@@ -463,7 +536,9 @@ def main():
 
             spawn_detached_shell(launch_cmd)
 
-            deadline = time.time() + 14.0
+            is_wayland = bool(os.environ.get("WAYLAND_DISPLAY")) or os.environ.get("XDG_SESSION_TYPE", "").lower() == "wayland"
+            watch_secs = 6.0 if (is_wayland and not pre_ids) else 14.0
+            deadline = time.time() + watch_secs
             target_wid = None
             while time.time() < deadline:
                 current_ids = get_chrome_window_ids(x11, dpy, root, atoms["client_list"], atoms["wm_class"])

@@ -48,7 +48,7 @@ import { parseDesktopFile, ParsedDesktopApp } from './utils/desktopParser';
 import { normalizeAppUrl } from './utils/desktopDeduplicator';
 import { matchesAccessTimeWindow, mergeAccessHistoryRecords } from './utils/historyLogic';
 import { PWA_WINDOW_WIDTH, PWA_WINDOW_HEIGHT, getPopupWindowFeatures } from './utils/launchConfig';
-import { TopBar } from './components/TopBar';
+import { TopBar, TopBarActivityStatus } from './components/TopBar';
 import { ControlToolbar } from './components/ControlToolbar';
 import { CompactTableView } from './components/CompactTableView';
 import { DenseGridView } from './components/DenseGridView';
@@ -204,6 +204,28 @@ export default function App() {
   const [cloningItem, setCloningItem] = useState<PWAItem | null>(null);
   const [historyModalItem, setHistoryModalItem] = useState<PWAItem | null>(null);
   const [isSyncingHistory, setIsSyncingHistory] = useState(false);
+  const [executionTasks, setExecutionTasks] = useState<Array<{ id: string; label: string }>>([]);
+  const [iconRefreshState, setIconRefreshState] = useState<{
+    active: boolean;
+    completed: number;
+    total: number;
+  }>({ active: false, completed: 0, total: 0 });
+  const [serverActivity, setServerActivity] = useState<{
+    executing: boolean;
+    executingLabel: string | null;
+    updatingIcons: boolean;
+    updatingIconsCount: number;
+    runningScript: boolean;
+    runningScriptLabel: string | null;
+  }>({
+    executing: false,
+    executingLabel: null,
+    updatingIcons: false,
+    updatingIconsCount: 0,
+    runningScript: false,
+    runningScriptLabel: null,
+  });
+  const [activityPollNonce, setActivityPollNonce] = useState(0);
   const [discoveredChromeProfiles, setDiscoveredChromeProfiles] = useState<ChromeProfileOption[]>([]);
   const [isBatchEditOpen, setIsBatchEditOpen] = useState(false);
   const [isBackupOpen, setIsBackupOpen] = useState(false);
@@ -434,13 +456,146 @@ export default function App() {
   const itemsRef = useRef(items);
   itemsRef.current = items;
 
+  const beginExecutionTask = useCallback((label: string) => {
+    const id = `exec_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    setExecutionTasks((prev) => [...prev, { id, label }]);
+    return id;
+  }, []);
+
+  const endExecutionTask = useCallback((id: string) => {
+    setExecutionTasks((prev) => prev.filter((t) => t.id !== id));
+  }, []);
+
+  const triggerActivityPoll = useCallback(() => {
+    setActivityPollNonce((n) => n + 1);
+  }, []);
+
+  // Poll backend /api/activity/status only while local actions, modals, or backend scripts are active
+  useEffect(() => {
+    let cancelled = false;
+    let idleTicks = 0;
+    let intervalId: ReturnType<typeof setInterval> | null = null;
+
+    const hasLocalWork =
+      executionTasks.length > 0 ||
+      iconRefreshState.active ||
+      isSyncingHistory ||
+      isUpdateModalOpen ||
+      isAutostartOpen;
+
+    const pollOnce = async () => {
+      try {
+        const res = await fetch('/api/activity/status');
+        if (!res.ok || cancelled) return;
+        const data = await res.json();
+        if (cancelled) return;
+        const snapshot = {
+          executing: Boolean(data.executing),
+          executingLabel: data.executingLabel ? String(data.executingLabel) : null,
+          updatingIcons: Boolean(data.updatingIcons),
+          updatingIconsCount: Number(data.updatingIconsCount || 0),
+          runningScript: Boolean(data.runningScript),
+          runningScriptLabel: data.runningScriptLabel ? String(data.runningScriptLabel) : null,
+        };
+        setServerActivity(snapshot);
+
+        const isBusy =
+          snapshot.executing ||
+          snapshot.updatingIcons ||
+          snapshot.runningScript ||
+          hasLocalWork;
+
+        if (isBusy) {
+          idleTicks = 0;
+        } else {
+          idleTicks += 1;
+          if (idleTicks >= 3 && intervalId) {
+            clearInterval(intervalId);
+            intervalId = null;
+          }
+        }
+      } catch {
+        // ignore transient network errors
+      }
+    };
+
+    void pollOnce();
+    if (activityPollNonce > 0 || hasLocalWork) {
+      intervalId = setInterval(() => {
+        void pollOnce();
+      }, 550);
+    }
+
+    return () => {
+      cancelled = true;
+      if (intervalId) clearInterval(intervalId);
+    };
+  }, [
+    activityPollNonce,
+    executionTasks.length,
+    iconRefreshState.active,
+    isSyncingHistory,
+    isUpdateModalOpen,
+    isAutostartOpen,
+  ]);
+
+  // Controlled concurrency queue for icon resolution so batch refresh updates live progress cleanly
+  const iconResolveRunIdRef = useRef(0);
+  const runIconResolveQueue = useCallback(
+    async (targets: Array<{ url: string; name?: string }>) => {
+      const validTargets = targets.filter((t) => Boolean(t.url));
+      if (validTargets.length === 0) return;
+
+      const runId = ++iconResolveRunIdRef.current;
+      let completed = 0;
+      const total = validTargets.length;
+
+      setIconRefreshState({ active: true, completed: 0, total });
+      triggerActivityPoll();
+
+      const concurrency = Math.min(6, validTargets.length);
+      let cursor = 0;
+
+      const worker = async () => {
+        while (cursor < validTargets.length) {
+          const idx = cursor++;
+          const target = validTargets[idx];
+          try {
+            await fetch(
+              `/api/icon/resolve?url=${encodeURIComponent(target.url)}&name=${encodeURIComponent(target.name || '')}&refresh=1`
+            );
+          } catch {
+            // continue queue on individual icon failure
+          } finally {
+            completed += 1;
+            if (iconResolveRunIdRef.current === runId) {
+              setIconRefreshState({ active: true, completed, total });
+            }
+          }
+        }
+      };
+
+      try {
+        await Promise.all(Array.from({ length: concurrency }, () => worker()));
+      } finally {
+        if (iconResolveRunIdRef.current === runId) {
+          setIconRefreshState({ active: false, completed: 0, total: 0 });
+          triggerActivityPoll();
+        }
+      }
+    },
+    [triggerActivityPoll]
+  );
+
   // Sync Chrome profile History SQLite across items
   const syncAllProfilesHistory = useCallback(async (sourceItems?: PWAItem[]) => {
-    setIsSyncingHistory(true);
-    try {
-      const targetList = sourceItems || itemsRef.current;
-      if (!targetList || targetList.length === 0) return;
+    const targetList = sourceItems || itemsRef.current;
+    if (!targetList || targetList.length === 0) return;
 
+    const execId = beginExecutionTask('Sincronizando histórico...');
+    setIsSyncingHistory(true);
+    triggerActivityPoll();
+    try {
       const payloadItems = targetList.map((it) => ({
         id: it.id,
         url: it.url,
@@ -511,11 +666,14 @@ export default function App() {
       // ignore offline or container sync fallback errors
     } finally {
       setIsSyncingHistory(false);
+      endExecutionTask(execId);
+      triggerActivityPoll();
     }
-  }, []);
+  }, [beginExecutionTask, endExecutionTask, triggerActivityPoll]);
 
   // Automatic discovery scan on launch & on demand
   const handleRescanLocalPWAs = useCallback(async () => {
+    const execId = beginExecutionTask('Buscando PWAs locais...');
     try {
       const res = await fetch('/api/pwas/scan');
       if (res.ok) {
@@ -527,13 +685,14 @@ export default function App() {
     } catch (err) {
       console.warn('Scan de PWAs locais:', err);
     } finally {
+      endExecutionTask(execId);
       setTimeout(() => {
         if (itemsRef.current.length > 0) {
           void syncAllProfilesHistory(itemsRef.current);
         }
       }, 250);
     }
-  }, [mergeScannedPWAs, syncAllProfilesHistory]);
+  }, [beginExecutionTask, endExecutionTask, mergeScannedPWAs, syncAllProfilesHistory]);
 
   // Trigger local discovery scan & hydrate persisted folders/state when app loads
   useEffect(() => {
@@ -621,28 +780,33 @@ export default function App() {
 
   // Process Ubuntu .desktop files selected via native file dialog or drag & drop
   const processDesktopFiles = useCallback(async (files: FileList | File[]) => {
-    const fileArray = Array.from(files);
-    const parsedList: ParsedDesktopApp[] = [];
+    const execId = beginExecutionTask('Lendo arquivos .desktop...');
+    try {
+      const fileArray = Array.from(files);
+      const parsedList: ParsedDesktopApp[] = [];
 
-    for (const file of fileArray) {
-      try {
-        const text = await file.text();
-        const parsed = parseDesktopFile(text, file.name);
-        if (parsed) {
-          parsedList.push(parsed);
+      for (const file of fileArray) {
+        try {
+          const text = await file.text();
+          const parsed = parseDesktopFile(text, file.name);
+          if (parsed) {
+            parsedList.push(parsed);
+          }
+        } catch (err) {
+          console.error(`Erro ao ler arquivo ${file.name}:`, err);
         }
-      } catch (err) {
-        console.error(`Erro ao ler arquivo ${file.name}:`, err);
       }
-    }
 
-    if (parsedList.length > 0) {
-      setParsedDesktopApps(parsedList);
-      setIsDesktopModalOpen(true);
-    } else {
-      setNoticeMessage('Nenhum atalho de PWA (.desktop) válido foi encontrado nos arquivos selecionados.');
+      if (parsedList.length > 0) {
+        setParsedDesktopApps(parsedList);
+        setIsDesktopModalOpen(true);
+      } else {
+        setNoticeMessage('Nenhum atalho de PWA (.desktop) válido foi encontrado nos arquivos selecionados.');
+      }
+    } finally {
+      endExecutionTask(execId);
     }
-  }, []);
+  }, [beginExecutionTask, endExecutionTask]);
 
   // Global Drag & Drop handler for Ubuntu .desktop files
   useEffect(() => {
@@ -849,6 +1013,9 @@ export default function App() {
       }
     }
 
+    const execId = beginExecutionTask(`Abrindo ${item.name || 'PWA'}...`);
+    triggerActivityPoll();
+
     try {
       // 3. Native OS launch on local Ubuntu (or recordOnly in Cloud Preview)
       const res = await fetch('/api/launch-pwa', {
@@ -934,13 +1101,17 @@ export default function App() {
           // Cross-origin popup resize/title may be restricted by browser
         }
       }
+    } finally {
+      endExecutionTask(execId);
+      triggerActivityPoll();
     }
-  }, [todayStr]);
+  }, [beginExecutionTask, endExecutionTask, todayStr, triggerActivityPoll]);
 
   // Sync Chrome profile SQLite history for a single PWA inside AccessHistoryModal
   const handleSyncSingleProfileHistory = useCallback(
     async (item: PWAItem, profileOverride?: string) => {
       const targetProfile = profileOverride || item.profileDirectory || '';
+      const execId = beginExecutionTask(`Histórico: ${item.name || 'PWA'}...`);
       try {
         const params = new URLSearchParams({
           pwaId: item.id,
@@ -998,9 +1169,11 @@ export default function App() {
           profileDirectory: targetProfile || 'Default',
           reason: 'Erro de conexão ao consultar histórico do perfil.',
         };
+      } finally {
+        endExecutionTask(execId);
       }
     },
-    []
+    [beginExecutionTask, endExecutionTask]
   );
 
   // Clear local access history entries for a specific PWA
@@ -1212,8 +1385,7 @@ export default function App() {
 
     // Trigger background icon pre-warming resolution endpoint so the server immediately fetches & caches authentic logo
     if (data.url || data.name) {
-      const refreshFlag = incomingCacheBust ? '&refresh=1' : '';
-      fetch(`/api/icon/resolve?url=${encodeURIComponent(data.url)}&name=${encodeURIComponent(data.name)}${refreshFlag}`).catch(() => {});
+      void runIconResolveQueue([{ url: data.url, name: data.name }]);
     }
 
     if (data.id) {
@@ -1428,11 +1600,6 @@ export default function App() {
       const next = prev.map((it) => {
         if (!targetIds.has(it.id)) return it;
         const repaired = repairAndSanitizePWA(it);
-        if (repaired.url) {
-          fetch(
-            `/api/icon/resolve?url=${encodeURIComponent(repaired.url)}&name=${encodeURIComponent(repaired.name || '')}&refresh=1`
-          ).catch(() => {});
-        }
         const baseIcon = resolveFaviconAtInsertion(repaired.url, undefined, repaired.name);
         return {
           ...repaired,
@@ -1452,7 +1619,17 @@ export default function App() {
       }
       return next;
     });
-  }, [getBulkTargetIds]);
+
+    const queueTargets = itemsRef.current
+      .filter((it) => targetIds.has(it.id))
+      .map(repairAndSanitizePWA)
+      .filter((it) => Boolean(it.url))
+      .map((it) => ({ url: it.url, name: it.name }));
+
+    if (queueTargets.length > 0) {
+      void runIconResolveQueue(queueTargets);
+    }
+  }, [getBulkTargetIds, runIconResolveQueue]);
 
   // Open BatchEditModal for selected PWAs or all scoped visible PWAs
   const handleBulkOpenEdit = useCallback(() => {
@@ -1739,14 +1916,14 @@ export default function App() {
   // Batch refresh icons for all PWAs based on their URLs and names
   const handleRefreshAllIcons = useCallback(() => {
     const bust = Date.now();
+    const queueTargets = itemsRef.current
+      .map(repairAndSanitizePWA)
+      .filter((it) => Boolean(it.url))
+      .map((it) => ({ url: it.url, name: it.name }));
+
     setItems((prev) => {
       const refreshed = prev.map((it) => {
         const repaired = repairAndSanitizePWA(it);
-        if (repaired.url) {
-          fetch(
-            `/api/icon/resolve?url=${encodeURIComponent(repaired.url)}&name=${encodeURIComponent(repaired.name || '')}&refresh=1`
-          ).catch(() => {});
-        }
         const baseIcon = resolveFaviconAtInsertion(repaired.url, undefined, repaired.name);
         return {
           ...repaired,
@@ -1760,19 +1937,22 @@ export default function App() {
       }).catch(() => {});
       return refreshed;
     });
-  }, []);
+
+    if (queueTargets.length > 0) {
+      void runIconResolveQueue(queueTargets);
+    }
+  }, [runIconResolveQueue]);
 
   // Refresh icon for a single PWA
   const handleRefreshSingleIcon = useCallback((item: PWAItem) => {
     const bust = Date.now();
+    const repairedTarget = repairAndSanitizePWA(item);
+
     setItems((prev) => {
       const updatedList = prev.map((it) => {
         if (it.id === item.id) {
           const repaired = repairAndSanitizePWA(it);
           const baseIcon = resolveFaviconAtInsertion(repaired.url, undefined, repaired.name);
-          if (repaired.url) {
-            fetch(`/api/icon/resolve?url=${encodeURIComponent(repaired.url)}&name=${encodeURIComponent(repaired.name || '')}&refresh=1`).catch(() => {});
-          }
           return {
             ...repaired,
             icon: baseIcon ? appendCacheBuster(baseIcon, bust) : baseIcon,
@@ -1787,7 +1967,11 @@ export default function App() {
       }).catch(() => {});
       return updatedList;
     });
-  }, []);
+
+    if (repairedTarget.url) {
+      void runIconResolveQueue([{ url: repairedTarget.url, name: repairedTarget.name }]);
+    }
+  }, [runIconResolveQueue]);
 
   // Save custom image upload for a single PWA icon
   const handleSaveCustomIcon = useCallback((item: PWAItem, iconDataUrl: string) => {
@@ -1863,6 +2047,41 @@ export default function App() {
     }
   }, []);
 
+  const topBarActivityStatus: TopBarActivityStatus = useMemo(() => {
+    const currentExecTask = executionTasks[executionTasks.length - 1];
+    const isExecuting =
+      executionTasks.length > 0 || isSyncingHistory || serverActivity.executing;
+    const executingLabel =
+      currentExecTask?.label ||
+      (isSyncingHistory ? 'Sincronizando histórico...' : null) ||
+      serverActivity.executingLabel ||
+      null;
+
+    const isUpdatingIcons =
+      iconRefreshState.active || serverActivity.updatingIcons;
+    const iconsLabel = iconRefreshState.active
+      ? iconRefreshState.total > 1
+        ? `Íc. ${iconRefreshState.completed}/${iconRefreshState.total}`
+        : 'Ícone...'
+      : serverActivity.updatingIcons
+        ? serverActivity.updatingIconsCount > 1
+          ? `Íc. (${serverActivity.updatingIconsCount})`
+          : 'Ícone...'
+        : null;
+
+    const isRunningScript = serverActivity.runningScript;
+    const scriptLabel = serverActivity.runningScriptLabel || null;
+
+    return {
+      isExecuting,
+      executingLabel,
+      isUpdatingIcons,
+      iconsLabel,
+      isRunningScript,
+      scriptLabel,
+    };
+  }, [executionTasks, isSyncingHistory, iconRefreshState, serverActivity]);
+
   return (
     <div className="min-h-screen bg-neutral-950 text-neutral-100 flex flex-col font-sans selection:bg-emerald-500/20 selection:text-emerald-300 relative">
       {/* Drag & Drop Visual Overlay for Ubuntu .desktop files */}
@@ -1900,6 +2119,7 @@ export default function App() {
           onRescanLocalPWAs={handleRescanLocalPWAs}
           onSyncProfileHistory={() => void syncAllProfilesHistory()}
           isSyncingHistory={isSyncingHistory}
+          activityStatus={topBarActivityStatus}
         />
 
         {items.length > 0 && (

@@ -1,6 +1,32 @@
 import React, { useRef } from 'react';
-import { Plus, Upload, CheckCircle2, RotateCcw, RotateCw, FolderOpen, ChevronDown, Link, Calendar, Target, Power, History } from 'lucide-react';
+import {
+  Plus,
+  Upload,
+  CheckCircle2,
+  RotateCcw,
+  RotateCw,
+  FolderOpen,
+  ChevronDown,
+  Link,
+  Calendar,
+  Target,
+  Power,
+  History,
+  Loader2,
+  RefreshCw,
+  Terminal,
+  Image as ImageIcon,
+} from 'lucide-react';
 import { PWAStats } from '../types/pwa';
+
+export interface TopBarActivityStatus {
+  isExecuting: boolean;
+  executingLabel?: string | null;
+  isUpdatingIcons: boolean;
+  iconsLabel?: string | null;
+  isRunningScript: boolean;
+  scriptLabel?: string | null;
+}
 
 interface TopBarProps {
   stats: PWAStats;
@@ -16,6 +42,7 @@ interface TopBarProps {
   onRescanLocalPWAs?: () => void;
   onSyncProfileHistory?: () => void;
   isSyncingHistory?: boolean;
+  activityStatus?: TopBarActivityStatus;
 }
 
 export const TopBar: React.FC<TopBarProps> = ({
@@ -32,6 +59,7 @@ export const TopBar: React.FC<TopBarProps> = ({
   onRescanLocalPWAs,
   onSyncProfileHistory,
   isSyncingHistory = false,
+  activityStatus,
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -45,6 +73,13 @@ export const TopBar: React.FC<TopBarProps> = ({
   const handleOpenExplorer = () => {
     fileInputRef.current?.click();
   };
+
+  const isExecuting = Boolean(activityStatus?.isExecuting || isSyncingHistory);
+  const executingText = activityStatus?.executingLabel || (isSyncingHistory ? 'Sincronizando...' : 'Executando...');
+  const isUpdatingIcons = Boolean(activityStatus?.isUpdatingIcons);
+  const iconsText = activityStatus?.iconsLabel || 'Atualizando...';
+  const isRunningScript = Boolean(activityStatus?.isRunningScript);
+  const scriptText = activityStatus?.scriptLabel || 'Rodando...';
 
   return (
     <header
@@ -79,9 +114,74 @@ export const TopBar: React.FC<TopBarProps> = ({
           </a>
         </div>
 
+        {/* Real-time Activity Status Indicators (Executing, Updating Icons, Running Script) */}
+        <div
+          data-testid="topbar-activity-status"
+          aria-live="polite"
+          className="hidden md:inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-[#14151a] border border-[#242633] text-[10px] font-medium whitespace-nowrap min-w-0 shrink max-w-[230px] xl:max-w-[265px] overflow-hidden"
+        >
+          {/* Executing Action Status */}
+          <span
+            data-testid="topbar-status-executing"
+            title={isExecuting ? `Executando: ${executingText}` : 'Execução: nenhuma ação ativa'}
+            className={`inline-flex items-center gap-1 min-w-0 transition-colors ${
+              isExecuting ? 'text-amber-300 font-semibold' : 'text-neutral-500'
+            }`}
+          >
+            {isExecuting ? (
+              <Loader2 className="w-3 h-3 text-amber-400 animate-spin shrink-0" />
+            ) : (
+              <span className="w-1.5 h-1.5 rounded-full bg-neutral-600 shrink-0" />
+            )}
+            <span className="truncate max-w-[72px] xl:max-w-[84px]">
+              {isExecuting ? executingText : 'Exec.'}
+            </span>
+          </span>
+
+          <span aria-hidden="true" className="h-3 w-px bg-[#242633] shrink-0" />
+
+          {/* Updating Icons Status */}
+          <span
+            data-testid="topbar-status-icons"
+            title={isUpdatingIcons ? `Ícones: ${iconsText}` : 'Ícones: atualização inativa'}
+            className={`inline-flex items-center gap-1 min-w-0 transition-colors ${
+              isUpdatingIcons ? 'text-sky-300 font-semibold' : 'text-neutral-500'
+            }`}
+          >
+            {isUpdatingIcons ? (
+              <RefreshCw className="w-3 h-3 text-sky-400 animate-spin shrink-0" />
+            ) : (
+              <ImageIcon className="w-3 h-3 text-neutral-600 shrink-0" />
+            )}
+            <span className="truncate max-w-[66px] xl:max-w-[76px]">
+              {isUpdatingIcons ? iconsText : 'Ícones'}
+            </span>
+          </span>
+
+          <span aria-hidden="true" className="h-3 w-px bg-[#242633] shrink-0" />
+
+          {/* Running Script Status */}
+          <span
+            data-testid="topbar-status-script"
+            title={isRunningScript ? `Script ativo: ${scriptText}` : 'Script: nenhum em execução'}
+            className={`inline-flex items-center gap-1 min-w-0 transition-colors ${
+              isRunningScript ? 'text-violet-300 font-semibold' : 'text-neutral-500'
+            }`}
+          >
+            <Terminal
+              className={`w-3 h-3 shrink-0 ${
+                isRunningScript ? 'text-violet-400 animate-pulse' : 'text-neutral-600'
+              }`}
+            />
+            <span className="truncate max-w-[72px] xl:max-w-[84px]">
+              {isRunningScript ? scriptText : 'Script'}
+            </span>
+          </span>
+        </div>
+
         {/* Compact Single-Row Stats & Progress Bar */}
         <div
-          className="hidden lg:flex items-center gap-1.5 text-[11px] text-neutral-300 whitespace-nowrap min-w-0 notranslate"
+          className="hidden lg:flex items-center gap-1.5 text-[11px] text-neutral-300 whitespace-nowrap shrink-0 notranslate"
           translate="no"
         >
           {/* Current Date */}

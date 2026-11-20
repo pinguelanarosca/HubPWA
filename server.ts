@@ -236,6 +236,38 @@ const iconBufferCache = new Map<string, { buffer: Buffer; contentType: string }>
 // Cache for local Ubuntu system icon path lookups
 const localIconCache = new Map<string, string | null>();
 
+// Real-time activity tracker for top-bar status indicators
+const serverActivity = {
+  activeIcons: 0,
+  activeHistorySyncs: 0,
+  activeUpdates: 0,
+  activeScripts: new Map<string, { label: string; startedAt: number; expiresAt: number }>(),
+};
+
+function registerRunningScript(label: string, maxActiveMs: number = 4500): string {
+  const id = `scr_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+  const now = Date.now();
+  serverActivity.activeScripts.set(id, {
+    label,
+    startedAt: now,
+    expiresAt: now + maxActiveMs,
+  });
+  return id;
+}
+
+function getActiveScriptsSnapshot(): Array<{ id: string; label: string }> {
+  const now = Date.now();
+  const active: Array<{ id: string; label: string }> = [];
+  for (const [id, entry] of serverActivity.activeScripts.entries()) {
+    if (now > entry.expiresAt) {
+      serverActivity.activeScripts.delete(id);
+    } else {
+      active.push({ id, label: entry.label });
+    }
+  }
+  return active;
+}
+
 // Helper to validate whether a buffer contains a true image (PNG, JPG, GIF, WEBP, ICO, SVG)
 function isValidImageBuffer(buf: Buffer, contentType?: string): boolean {
   if (!buf || buf.length < 100) return false;
@@ -593,28 +625,33 @@ app.get('/api/icon/resolve', async (req, res) => {
     return res.status(400).json({ success: false, error: 'Domain or URL required' });
   }
 
-  if (forceRefresh) {
-    iconBufferCache.delete(domain);
-  }
-
-  // Pre-warm web icon into cache cleanly
-  if (!iconBufferCache.has(domain)) {
-    const webIcon = await fetchAuthenticWebIcon(domain);
-    if (webIcon) {
-      iconBufferCache.set(domain, webIcon);
+  serverActivity.activeIcons += 1;
+  try {
+    if (forceRefresh) {
+      iconBufferCache.delete(domain);
     }
+
+    // Pre-warm web icon into cache cleanly
+    if (!iconBufferCache.has(domain)) {
+      const webIcon = await fetchAuthenticWebIcon(domain);
+      if (webIcon) {
+        iconBufferCache.set(domain, webIcon);
+      }
+    }
+
+    const local = findLocalIconCached(nameParam) || findLocalIconCached(domain);
+    const iconUrl = `/api/icon?domain=${encodeURIComponent(domain)}&name=${encodeURIComponent(nameParam)}`;
+
+    return res.json({
+      success: true,
+      domain,
+      hasLocalIcon: Boolean(local),
+      hasWebIcon: iconBufferCache.has(domain),
+      iconUrl,
+    });
+  } finally {
+    serverActivity.activeIcons = Math.max(0, serverActivity.activeIcons - 1);
   }
-
-  const local = findLocalIconCached(nameParam) || findLocalIconCached(domain);
-  const iconUrl = `/api/icon?domain=${encodeURIComponent(domain)}&name=${encodeURIComponent(nameParam)}`;
-
-  return res.json({
-    success: true,
-    domain,
-    hasLocalIcon: Boolean(local),
-    hasWebIcon: iconBufferCache.has(domain),
-    iconUrl,
-  });
 });
 
 // Helper to compute perceptual/content hash for local icon file
@@ -1191,6 +1228,10 @@ app.post('/api/launch-pwa', (req, res) => {
 
     if (canUsePythonX11) {
       // Single detached background helper: snapshots X11 windows -> spawns Chrome immediately -> enforces 539x993 + Hub title
+      const scriptId = registerRunningScript(
+        resolvedTitle ? `Script X11 (${resolvedTitle})` : 'Script X11',
+        4000
+      );
       const launcher = spawn(
         'python3',
         [
@@ -1203,13 +1244,23 @@ app.post('/api/launch-pwa', (req, res) => {
         ],
         { env: desktopEnv, stdio: 'ignore', detached: true }
       );
+      launcher.on('exit', () => {
+        serverActivity.activeScripts.delete(scriptId);
+      });
       launcher.on('error', () => {
+        serverActivity.activeScripts.delete(scriptId);
         const direct = spawn('sh', ['-c', fullCommand], { env: desktopEnv, stdio: 'ignore', detached: true });
         direct.unref();
       });
       launcher.unref();
     } else {
+      const scriptId = registerRunningScript(
+        resolvedTitle ? `Abrindo (${resolvedTitle})` : 'Script navegador',
+        1800
+      );
       const direct = spawn('sh', ['-c', fullCommand], { env: desktopEnv, stdio: 'ignore', detached: true });
+      direct.on('exit', () => serverActivity.activeScripts.delete(scriptId));
+      direct.on('error', () => serverActivity.activeScripts.delete(scriptId));
       direct.unref();
     }
 
@@ -1231,19 +1282,53 @@ app.post('/api/launch-pwa', (req, res) => {
   });
 });
 
+// Live server activity endpoint for TopBar status indicators
+app.get('/api/activity/status', (_req, res) => {
+  const scripts = getActiveScriptsSnapshot();
+  const updatingIcons = serverActivity.activeIcons > 0;
+  const runningScript = scripts.length > 0;
+  const executing =
+    serverActivity.activeHistorySyncs > 0 || serverActivity.activeUpdates > 0 || runningScript;
+
+  let executingLabel: string | null = null;
+  if (serverActivity.activeUpdates > 0) executingLabel = 'Atualizando via GitHub...';
+  else if (serverActivity.activeHistorySyncs > 0) executingLabel = 'Sincronizando histórico...';
+  else if (runningScript) executingLabel = scripts[scripts.length - 1].label;
+
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({
+    executing,
+    executingLabel,
+    updatingIcons,
+    updatingIconsCount: serverActivity.activeIcons,
+    runningScript,
+    runningScriptLabel: runningScript ? scripts[scripts.length - 1].label : null,
+  });
+});
+
 // Ubuntu Autostart Management Endpoints
 app.get('/api/autostart/status', (_req, res) => {
   res.json(getAutostartStatus());
 });
 
 app.post('/api/autostart/enable', (_req, res) => {
-  const result = enableAutostartOnUbuntu();
-  res.json(result);
+  const sid = registerRunningScript('Autostart Ubuntu', 1500);
+  try {
+    const result = enableAutostartOnUbuntu();
+    res.json(result);
+  } finally {
+    setTimeout(() => serverActivity.activeScripts.delete(sid), 400);
+  }
 });
 
 app.post('/api/autostart/disable', (_req, res) => {
-  const result = disableAutostartOnUbuntu();
-  res.json(result);
+  const sid = registerRunningScript('Remover Autostart', 1500);
+  try {
+    const result = disableAutostartOnUbuntu();
+    res.json(result);
+  } finally {
+    setTimeout(() => serverActivity.activeScripts.delete(sid), 400);
+  }
 });
 
 // GET /api/chrome-profiles - Discover Chrome/Chromium profile directories and display names on Linux/Ubuntu
@@ -1489,6 +1574,7 @@ app.get('/api/pwas/profile-history', async (req, res) => {
 
 // POST /api/pwas/history/sync - Batch sync Chrome profile History SQLite across all configured PWAs
 app.post('/api/pwas/history/sync', async (req, res) => {
+  serverActivity.activeHistorySyncs += 1;
   try {
     const reqItems = Array.isArray(req.body?.items) ? req.body.items : [];
     const db = getDb();
@@ -1571,6 +1657,8 @@ app.post('/api/pwas/history/sync', async (req, res) => {
     });
   } catch (err) {
     return res.status(500).json({ success: false, error: (err as Error).message });
+  } finally {
+    serverActivity.activeHistorySyncs = Math.max(0, serverActivity.activeHistorySyncs - 1);
   }
 });
 
@@ -1623,6 +1711,8 @@ app.get('/api/updater/status', async (_req, res) => {
 
 // 2. POST /api/updater/apply - Download and apply files from GitHub
 app.post('/api/updater/apply', async (_req, res) => {
+  serverActivity.activeUpdates += 1;
+  const updateScriptId = registerRunningScript('Atualização GitHub', 60000);
   try {
     const localVersion = getLocalVersion();
 
@@ -1724,7 +1814,7 @@ app.post('/api/updater/apply', async (_req, res) => {
     // Seamlessly spawn detached background server process on the same PORT and exit old process
     setTimeout(() => {
       const currentPort = String(process.env.PORT || '3000');
-      
+
       try {
         const child = spawn('npm', ['run', 'dev'], {
           cwd: __dirname,
@@ -1749,6 +1839,9 @@ app.post('/api/updater/apply', async (_req, res) => {
       error: 'Falha durante o download e instalação da atualização.',
       details: (err as Error).message,
     });
+  } finally {
+    serverActivity.activeUpdates = Math.max(0, serverActivity.activeUpdates - 1);
+    serverActivity.activeScripts.delete(updateScriptId);
   }
 });
 
