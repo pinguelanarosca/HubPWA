@@ -31,6 +31,7 @@ import { getAutostartStatus, enableAutostartOnUbuntu, disableAutostartOnUbuntu }
 import {
   PWA_WINDOW_WIDTH,
   PWA_WINDOW_HEIGHT,
+  decodeLaunchBridgePayload,
   extractExecFromDesktopContent,
   buildLinuxLaunchCandidates,
 } from './src/utils/launchConfig.js';
@@ -951,6 +952,49 @@ function getLocalVersion() {
   };
 }
 
+// 0a. GET /api/launch-bridge/:payload - Resizes Chrome standalone --app windows from inside before redirecting to target URL
+app.get('/api/launch-bridge/:payload', (req, res) => {
+  const targetUrl = decodeLaunchBridgePayload(String(req.params.payload || ''));
+  if (!targetUrl) {
+    return res.status(400).send('URL inválida.');
+  }
+
+  const rawW = Number(req.query.w);
+  const rawH = Number(req.query.h);
+  const width = Number.isFinite(rawW) && rawW >= 240 && rawW <= 3840 ? Math.round(rawW) : PWA_WINDOW_WIDTH;
+  const height = Number.isFinite(rawH) && rawH >= 320 && rawH <= 2160 ? Math.round(rawH) : PWA_WINDOW_HEIGHT;
+  const serializedUrl = JSON.stringify(targetUrl);
+  const safeMetaUrl = targetUrl.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-store');
+  return res.send(`<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="referrer" content="no-referrer" />
+  <meta http-equiv="refresh" content="1;url=${safeMetaUrl}" />
+  <title>Abrindo PWA...</title>
+  <script>
+    (function () {
+      try {
+        window.resizeTo(${width}, ${height});
+      } catch (e) {}
+      setTimeout(function () {
+        try {
+          window.resizeTo(${width}, ${height});
+        } catch (e) {}
+        window.location.replace(${serializedUrl});
+      }, 60);
+    })();
+  </script>
+</head>
+<body style="margin:0;background:#0d0e12;color:#a3a3a3;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;font-size:12px;">
+  Abrindo aplicativo (${width}x${height})...
+</body>
+</html>`);
+});
+
 // 0. POST /api/launch-pwa - Launches PWA in native Chrome Standalone App Window on Ubuntu/Linux preserving profile
 app.post('/api/launch-pwa', (req, res) => {
   const { id, url, rawFileName, appId, profileDirectory, execLine, desktopPath, todayStr } = req.body || {};
@@ -1009,6 +1053,7 @@ app.post('/api/launch-pwa', (req, res) => {
     const hasGio = hasCommand('gio');
     const hasWmctrl = hasCommand('wmctrl');
     const hasXdotool = hasCommand('xdotool');
+    const hasPython3 = hasCommand('python3');
     const hasChrome =
       hasCommand('google-chrome') ||
       hasCommand('google-chrome-stable') ||
@@ -1046,6 +1091,9 @@ app.post('/api/launch-pwa', (req, res) => {
       }
     }
 
+    const localPort = req.socket?.localPort || Number(process.env.PORT) || 3000;
+    const bridgeOrigin = `http://127.0.0.1:${localPort}`;
+
     const commandCandidates = buildLinuxLaunchCandidates({
       desktopExecLine,
       execLine,
@@ -1055,6 +1103,7 @@ app.post('/api/launch-pwa', (req, res) => {
       appId,
       profileDirectory,
       url,
+      bridgeOrigin,
       hasGtkLaunch,
       hasGio,
       hasChrome,
@@ -1072,11 +1121,36 @@ app.post('/api/launch-pwa', (req, res) => {
       });
     }
 
-    // Snapshot existing Chrome window IDs on X11 so if Chrome IPC reuses saved placement we only resize the new window
+    const desktopEnv = { ...process.env, DISPLAY: process.env.DISPLAY || ':0' };
+    const x11ScriptPath = path.resolve(__dirname, 'scripts', 'x11_resize_chrome.py');
+    const canUsePythonX11 = hasPython3 && fs.existsSync(x11ScriptPath);
+
+    // 1. Snapshot current X11 Chrome windows BEFORE launch (prefers zero-dep Python libX11, falls back to wmctrl/xdotool)
+    let pythonPreIds: number[] | null = null;
+    if (canUsePythonX11) {
+      try {
+        const out = execSync(`python3 "${x11ScriptPath}" --snapshot 2>/dev/null || echo "[]"`, {
+          encoding: 'utf8',
+          timeout: 800,
+          env: desktopEnv,
+        });
+        const parsed = JSON.parse(out.trim() || '[]');
+        if (Array.isArray(parsed)) {
+          pythonPreIds = parsed.map((n) => Number(n)).filter((n) => Number.isFinite(n));
+        }
+      } catch {
+        pythonPreIds = null;
+      }
+    }
+
     const getVisibleChromeWindowIds = (): string[] => {
       try {
         if (hasWmctrl) {
-          const out = execSync('wmctrl -l -x 2>/dev/null || true', { encoding: 'utf8', timeout: 800 });
+          const out = execSync('wmctrl -l -x 2>/dev/null || true', {
+            encoding: 'utf8',
+            timeout: 800,
+            env: desktopEnv,
+          });
           return out
             .split('\n')
             .filter((line) => /chrome|chromium/i.test(line))
@@ -1087,6 +1161,7 @@ app.post('/api/launch-pwa', (req, res) => {
           const out = execSync('xdotool search --onlyvisible --class "chrome|chromium" 2>/dev/null || true', {
             encoding: 'utf8',
             timeout: 800,
+            env: desktopEnv,
           });
           return out.split('\n').map((l) => l.trim()).filter(Boolean);
         }
@@ -1099,15 +1174,23 @@ app.post('/api/launch-pwa', (req, res) => {
     const preLaunchWindowIds = hasWmctrl || hasXdotool ? new Set(getVisibleChromeWindowIds()) : null;
     const fullCommand = commandCandidates.join(' || ');
 
-    // Execute silently without logging warnings to console
-    exec(fullCommand, () => {
+    // Execute Chrome launch silently with DISPLAY set
+    exec(fullCommand, { env: desktopEnv }, () => {
       // Chrome IPC process delegation handled silently
     });
 
-    // Enforce 539x993 on newly created Chrome X11 window (in case Chrome IPC overrides --window-size from saved prefs)
-    if (preLaunchWindowIds && (hasWmctrl || hasXdotool)) {
+    // 2. Enforce 539x993 on newly created Chrome X11/XWayland window using zero-dependency Python libX11
+    if (canUsePythonX11) {
+      const preIdsArg = (pythonPreIds || []).join(',');
+      const watcher = spawn(
+        'python3',
+        [x11ScriptPath, '--watch-new', String(PWA_WINDOW_WIDTH), String(PWA_WINDOW_HEIGHT), preIdsArg],
+        { env: desktopEnv, stdio: 'ignore', detached: true }
+      );
+      watcher.unref();
+    } else if (preLaunchWindowIds && (hasWmctrl || hasXdotool)) {
       let attempts = 0;
-      const pollDelays = [250, 350, 500, 700, 900];
+      const pollDelays = [250, 350, 500, 700, 900, 1200];
       const checkAndResizeNewWindow = () => {
         const currentIds = getVisibleChromeWindowIds();
         const newIds = currentIds.filter((wid) => !preLaunchWindowIds.has(wid));
@@ -1116,11 +1199,13 @@ app.post('/api/launch-pwa', (req, res) => {
           if (hasWmctrl) {
             exec(
               `wmctrl -i -r "${targetId}" -b remove,maximized_vert,maximized_horz 2>/dev/null; wmctrl -i -r "${targetId}" -e 0,-1,-1,${PWA_WINDOW_WIDTH},${PWA_WINDOW_HEIGHT} 2>/dev/null`,
+              { env: desktopEnv },
               () => {}
             );
           } else if (hasXdotool) {
             exec(
               `xdotool windowsize "${targetId}" ${PWA_WINDOW_WIDTH} ${PWA_WINDOW_HEIGHT} 2>/dev/null`,
+              { env: desktopEnv },
               () => {}
             );
           }

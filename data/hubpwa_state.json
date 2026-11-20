@@ -13,8 +13,18 @@
       "rating": 0,
       "pinned": false,
       "lastAccessedDate": "2026-11-10T02:32:41.000Z",
+      "accessLogs": [
+        "2026-11-10T02:32:41.000Z"
+      ],
+      "accessHistory": [
+        {
+          "timestamp": "2026-11-10T02:32:41.000Z",
+          "source": "hub",
+          "profileDirectory": "Default"
+        }
+      ],
       "accessCount": 2,
-      "updatedAt": "2026-11-17T10:28:57.796Z"
+      "updatedAt": "2026-11-20T12:13:21.118Z"
     },
     "pwa_1794303611971_2t98m": {
       "id": "pwa_1794303611971_2t98m",
@@ -29,7 +39,7 @@
       "pinned": true,
       "lastAccessedDate": null,
       "accessCount": 0,
-      "updatedAt": "2026-11-17T10:28:57.796Z"
+      "updatedAt": "2026-11-20T12:13:21.118Z"
     }
   },
   "folders": [],

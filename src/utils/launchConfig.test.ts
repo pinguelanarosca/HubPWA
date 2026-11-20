@@ -4,6 +4,9 @@ import {
   PWA_WINDOW_WIDTH,
   PWA_WINDOW_HEIGHT,
   getPopupWindowFeatures,
+  encodeLaunchBridgePayload,
+  decodeLaunchBridgePayload,
+  buildLaunchBridgeUrl,
   extractExecFromDesktopContent,
   applyWindowSizeToChromeExec,
   buildLinuxLaunchCandidates,
@@ -18,14 +21,26 @@ test('default PWA launch dimensions match 539x993 reference size', () => {
   assert.match(features, /popup=yes/);
 });
 
-test('applyWindowSizeToChromeExec strips placeholders/old sizes and appends 539,993', () => {
+test('launch bridge payload encodes and decodes valid http/https URLs and rejects unsafe schemes', () => {
+  const url = 'https://37a.com/lobby?ref=hub&tab=1';
+  const payload = encodeLaunchBridgePayload(url);
+  assert.ok(payload);
+  assert.equal(payload.includes('&'), false);
+  assert.equal(payload.includes('?'), false);
+  assert.equal(decodeLaunchBridgePayload(payload), url);
+  assert.equal(encodeLaunchBridgePayload('javascript:alert(1)'), null);
+  assert.equal(decodeLaunchBridgePayload('aW52YWxpZA'), null);
+});
+
+test('applyWindowSizeToChromeExec strips placeholders/old sizes, rewrites --app URL via bridge, and appends 539,993', () => {
   const result = applyWindowSizeToChromeExec(
-    '/opt/google/chrome/google-chrome --profile-directory="Profile 1" --window-size=1280,800 --app-id=abc %U'
+    '/opt/google/chrome/google-chrome --profile-directory="Profile 1" --window-size=1280,800 --app="https://37a.com/?a=1" %U',
+    539,
+    993,
+    'http://127.0.0.1:3000'
   );
-  assert.equal(
-    result,
-    '/opt/google/chrome/google-chrome --profile-directory="Profile 1" --app-id=abc --window-size=539,993'
-  );
+  assert.match(result, /--app="http:\/\/127\.0\.0\.1:3000\/api\/launch-bridge\//);
+  assert.match(result, /--window-size=539,993$/);
   assert.equal(result.includes('1280,800'), false);
   assert.equal(result.includes('%U'), false);
 });
@@ -41,6 +56,23 @@ Type=Application`;
   );
 });
 
+test('buildLinuxLaunchCandidates routes cloned URL PWAs through self-resizing launch bridge with --window-size=539,993', () => {
+  const cloneCandidates = buildLinuxLaunchCandidates({
+    profileDirectory: 'Profile 1',
+    url: 'https://37a.com/game',
+    bridgeOrigin: 'http://127.0.0.1:3000',
+    hasGtkLaunch: true,
+    hasGio: true,
+    hasChrome: true,
+  });
+
+  const expectedBridge = buildLaunchBridgeUrl('https://37a.com/game', 'http://127.0.0.1:3000', 539, 993);
+  assert.ok(expectedBridge);
+  assert.match(cloneCandidates[0], /--profile-directory="Profile 1"/);
+  assert.ok(cloneCandidates[0].includes(`--app="${expectedBridge}"`));
+  assert.match(cloneCandidates[0], /--window-size=539,993/);
+});
+
 test('buildLinuxLaunchCandidates prioritizes Chrome CLI with --window-size=539,993 ahead of gio/gtk-launch', () => {
   const candidates = buildLinuxLaunchCandidates({
     desktopExecLine: '/opt/google/chrome/google-chrome --profile-directory="Profile 2" --app-id=myid',
@@ -50,6 +82,7 @@ test('buildLinuxLaunchCandidates prioritizes Chrome CLI with --window-size=539,9
     appId: 'myid',
     profileDirectory: 'Profile 2',
     url: 'https://example.com',
+    bridgeOrigin: 'http://127.0.0.1:3000',
     hasGtkLaunch: true,
     hasGio: true,
     hasChrome: true,

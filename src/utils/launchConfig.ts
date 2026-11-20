@@ -8,6 +8,45 @@ export function getPopupWindowFeatures(
   return `popup=yes,width=${width},height=${height},menubar=no,toolbar=no,location=no,status=no,resizable=yes,scrollbars=yes`;
 }
 
+export function encodeLaunchBridgePayload(targetUrl: string): string | null {
+  if (!/^https?:\/\//i.test((targetUrl || '').trim())) return null;
+  const bytes = new TextEncoder().encode(targetUrl.trim());
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += 1) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  const base64 = btoa(binary);
+  return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+
+export function decodeLaunchBridgePayload(payload: string): string | null {
+  if (!payload || !/^[A-Za-z0-9_-]+$/.test(payload)) return null;
+  try {
+    const padded = payload.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((payload.length + 3) % 4);
+    const binary = atob(padded);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i += 1) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    const decoded = new TextDecoder().decode(bytes).trim();
+    return /^https?:\/\//i.test(decoded) ? decoded : null;
+  } catch {
+    return null;
+  }
+}
+
+export function buildLaunchBridgeUrl(
+  targetUrl: string,
+  origin: string,
+  width: number = PWA_WINDOW_WIDTH,
+  height: number = PWA_WINDOW_HEIGHT
+): string | null {
+  const payload = encodeLaunchBridgePayload(targetUrl);
+  if (!payload || !origin) return null;
+  const cleanOrigin = origin.replace(/\/+$/g, '');
+  return `${cleanOrigin}/api/launch-bridge/${payload}?w=${width}&h=${height}`;
+}
+
 export function extractExecFromDesktopContent(content: string): string | null {
   if (!content) return null;
   const lines = content.split(/\r?\n/);
@@ -26,7 +65,6 @@ export function extractExecFromDesktopContent(content: string): string | null {
     }
   }
 
-  // Fallback scan if [Desktop Entry] header wasn't present
   for (const rawLine of lines) {
     const trimmed = rawLine.trim();
     if (/^Exec\s*=/i.test(trimmed)) {
@@ -47,9 +85,10 @@ export function isChromeExecCommand(execLine: string): boolean {
 export function applyWindowSizeToChromeExec(
   execLine: string,
   width: number = PWA_WINDOW_WIDTH,
-  height: number = PWA_WINDOW_HEIGHT
+  height: number = PWA_WINDOW_HEIGHT,
+  bridgeOrigin?: string
 ): string {
-  const sanitized = execLine
+  let sanitized = execLine
     .replace(/\s*%[uUfFdDnNickvm]/g, '')
     .replace(/\s*--window-size=(?:"[^"]*"|'[^']*'|\S+)/gi, '')
     .replace(/\s+/g, ' ')
@@ -57,6 +96,17 @@ export function applyWindowSizeToChromeExec(
 
   if (!sanitized) return '';
   if (!isChromeExecCommand(sanitized)) return sanitized;
+
+  if (bridgeOrigin) {
+    sanitized = sanitized.replace(
+      /--app=(?:"([^"]+)"|'([^']+)'|([^\s"']+))/i,
+      (full, q1, q2, q3) => {
+        const rawUrl = q1 || q2 || q3 || '';
+        const bridge = buildLaunchBridgeUrl(rawUrl, bridgeOrigin, width, height);
+        return bridge ? `--app="${bridge}"` : full;
+      }
+    );
+  }
 
   return `${sanitized} --window-size=${width},${height}`;
 }
@@ -70,6 +120,7 @@ export interface LinuxLaunchCandidateOptions {
   appId?: string;
   profileDirectory?: string;
   url?: string;
+  bridgeOrigin?: string;
   hasGtkLaunch: boolean;
   hasGio: boolean;
   hasChrome: boolean;
@@ -88,6 +139,7 @@ export function buildLinuxLaunchCandidates(options: LinuxLaunchCandidateOptions)
     appId,
     profileDirectory,
     url,
+    bridgeOrigin,
     hasGtkLaunch,
     hasGio,
     hasChrome,
@@ -110,7 +162,7 @@ export function buildLinuxLaunchCandidates(options: LinuxLaunchCandidateOptions)
 
   // 1. Prefer Chrome Exec parsed from the .desktop file with explicit --window-size
   if (desktopExecLine) {
-    const sizedDesktopExec = applyWindowSizeToChromeExec(desktopExecLine, width, height);
+    const sizedDesktopExec = applyWindowSizeToChromeExec(desktopExecLine, width, height, bridgeOrigin);
     if (sizedDesktopExec) {
       pushUnique(`${sizedDesktopExec} 2>/dev/null`);
     }
@@ -118,7 +170,7 @@ export function buildLinuxLaunchCandidates(options: LinuxLaunchCandidateOptions)
 
   // 2. Direct saved execLine with explicit --window-size
   if (execLine) {
-    const sizedExec = applyWindowSizeToChromeExec(execLine, width, height);
+    const sizedExec = applyWindowSizeToChromeExec(execLine, width, height, bridgeOrigin);
     if (sizedExec) {
       pushUnique(`${sizedExec} 2>/dev/null`);
     }
@@ -131,13 +183,16 @@ export function buildLinuxLaunchCandidates(options: LinuxLaunchCandidateOptions)
     pushUnique(`chromium ${profileArg} --app-id="${appId}" ${sizeArg} 2>/dev/null`.replace(/\s+/g, ' '));
   }
 
-  // 4. URL App Mode with Profile and explicit --window-size
+  // 4. URL App Mode with Profile (clones & URL PWAs): use self-resizing launch bridge when origin is available
+  // so window.resizeTo(539, 993) executes inside Chrome even when Chrome IPC ignores --window-size!
   if (url && hasChrome) {
-    pushUnique(`google-chrome ${profileArg} --app="${url}" ${sizeArg} 2>/dev/null`.replace(/\s+/g, ' '));
-    pushUnique(`google-chrome-stable ${profileArg} --app="${url}" ${sizeArg} 2>/dev/null`.replace(/\s+/g, ' '));
-    pushUnique(`chromium-browser ${profileArg} --app="${url}" ${sizeArg} 2>/dev/null`.replace(/\s+/g, ' '));
-    pushUnique(`chromium ${profileArg} --app="${url}" ${sizeArg} 2>/dev/null`.replace(/\s+/g, ' '));
-    pushUnique(`chrome ${profileArg} --app="${url}" ${sizeArg} 2>/dev/null`.replace(/\s+/g, ' '));
+    const appTarget =
+      (bridgeOrigin && buildLaunchBridgeUrl(url, bridgeOrigin, width, height)) || url;
+    pushUnique(`google-chrome ${profileArg} --app="${appTarget}" ${sizeArg} 2>/dev/null`.replace(/\s+/g, ' '));
+    pushUnique(`google-chrome-stable ${profileArg} --app="${appTarget}" ${sizeArg} 2>/dev/null`.replace(/\s+/g, ' '));
+    pushUnique(`chromium-browser ${profileArg} --app="${appTarget}" ${sizeArg} 2>/dev/null`.replace(/\s+/g, ' '));
+    pushUnique(`chromium ${profileArg} --app="${appTarget}" ${sizeArg} 2>/dev/null`.replace(/\s+/g, ' '));
+    pushUnique(`chrome ${profileArg} --app="${appTarget}" ${sizeArg} 2>/dev/null`.replace(/\s+/g, ' '));
   }
 
   // 5. Fallback to native .desktop launchers if direct Chrome launch wasn't possible
