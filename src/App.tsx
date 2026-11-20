@@ -1846,25 +1846,99 @@ export default function App() {
         </div>
       )}
 
-      {/* Top Header */}
-      <TopBar
-        stats={stats}
-        todayDisplay={todayDisplay}
-        onSelectDesktopFiles={processDesktopFiles}
-        onOpenManualAddModal={() => {
-          setEditingItem(null);
-          setIsAddEditOpen(true);
-        }}
-        onOpenBackupModal={() => setIsBackupOpen(true)}
-        onOpenUpdateModal={() => setIsUpdateModalOpen(true)}
-        onOpenAutostartModal={() => setIsAutostartOpen(true)}
-        onMarkAllToday={handleMarkAllToday}
-        onResetToday={handleResetToday}
-        onRefreshAllIcons={handleRefreshAllIcons}
-        onRescanLocalPWAs={handleRescanLocalPWAs}
-        onSyncProfileHistory={() => void syncAllProfilesHistory()}
-        isSyncingHistory={isSyncingHistory}
-      />
+      {/* Unified Sticky Top Header & Control Toolbar */}
+      <div
+        data-testid="sticky-hub-header"
+        className="sticky top-0 z-30 bg-[#0d0e12]/95 backdrop-blur-md border-b border-[#242633] shadow-[0_8px_24px_-12px_rgba(0,0,0,0.85)]"
+      >
+        <TopBar
+          stats={stats}
+          todayDisplay={todayDisplay}
+          onSelectDesktopFiles={processDesktopFiles}
+          onOpenManualAddModal={() => {
+            setEditingItem(null);
+            setIsAddEditOpen(true);
+          }}
+          onOpenBackupModal={() => setIsBackupOpen(true)}
+          onOpenUpdateModal={() => setIsUpdateModalOpen(true)}
+          onOpenAutostartModal={() => setIsAutostartOpen(true)}
+          onMarkAllToday={handleMarkAllToday}
+          onResetToday={handleResetToday}
+          onRefreshAllIcons={handleRefreshAllIcons}
+          onRescanLocalPWAs={handleRescanLocalPWAs}
+          onSyncProfileHistory={() => void syncAllProfilesHistory()}
+          isSyncingHistory={isSyncingHistory}
+        />
+
+        {items.length > 0 && (
+          <div className="max-w-7xl w-full mx-auto px-3 sm:px-4 py-1.5 border-t border-[#242633]/60">
+            <ControlToolbar
+              search={search}
+              onSearchChange={setSearch}
+              selectedGroup={selectedGroup}
+              onGroupChange={setSelectedGroup}
+              groups={groups}
+              groupConfigs={groupConfigs}
+              groupColors={groupColors}
+              onOpenGroupManager={() => setIsGroupManagerOpen(true)}
+              folders={folders}
+              selectedFolder={density === 'folders' ? (currentExplorerFolderId || 'all') : selectedFolder}
+              onFolderChange={(folderId) => {
+                if (density === 'folders') {
+                  if (folderId === 'unfiled') {
+                    setSelectedFolder('unfiled');
+                    handleDensityChange('cards');
+                  } else {
+                    setCurrentExplorerFolderId(folderId === 'all' ? null : folderId);
+                  }
+                } else {
+                  setSelectedFolder(folderId);
+                }
+              }}
+              onOpenFolderManager={() => {
+                setFolderManagerParentId(density === 'folders' ? currentExplorerFolderId : null);
+                setIsFolderManagerOpen(true);
+              }}
+              onDropPwaOnFolder={handleMovePWAsToFolder}
+              unfiledCount={unfiledCount}
+              folderItemCounts={folderItemCounts}
+              statusFilter={statusFilter}
+              onStatusFilterChange={setStatusFilter}
+              starFilter={starFilter}
+              onStarFilterChange={setStarFilter}
+              flagFilters={flagFilters}
+              flagCounts={flagCounts}
+              flagBreakdown={flagBreakdown}
+              onToggleFlagFilter={handleToggleFlagFilter}
+              onClearFlagFilters={handleClearFlagFilters}
+              timeWindow={timeWindow}
+              onTimeWindowChange={setTimeWindow}
+              timeWindowMatchCount={timeWindowMatchCount}
+              density={density}
+              onDensityChange={handleDensityChange}
+              sortBy={sortBy}
+              onSortByChange={setSortBy}
+              totalCount={cleanItems.length}
+              pendingCount={stats.pendingTodayCount}
+              accessedCount={stats.accessedTodayCount}
+              groupByGroup={groupByGroup}
+              onToggleGroupByGroup={handleToggleGroupByGroup}
+              selectableCount={selectableItems.length}
+              selectedCount={selectedIds.size}
+              allSelected={allSelectableSelected}
+              onToggleSelectAll={handleToggleSelectAll}
+              onDeselectAll={handleDeselectAll}
+              onBulkSetRating={handleBatchSetRating}
+              onBulkSetStatus={(mode) => handleBatchSetStatus(mode)}
+              onBulkSetDailyFlag={handleBatchSetDailyFlag}
+              onBulkClearFlags={() => handleBatchClearFlags({ clearDaily: true, clearMoneyDate: false })}
+              onBulkRefreshIcons={handleBatchRefreshIcons}
+              onBulkOpenEdit={handleBulkOpenEdit}
+              onBulkDelete={handleBatchDelete}
+            />
+          </div>
+        )}
+      </div>
 
       {/* Main Container */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-3 sm:px-4 py-3 flex flex-col">
@@ -1932,102 +2006,6 @@ export default function App() {
           </div>
         ) : (
           <>
-            {/* Compact Daily Status Banner & Progress Bar */}
-            <div className="mb-3 px-3.5 py-2 rounded-lg bg-neutral-900/50 border border-neutral-800/80 flex flex-col sm:flex-row sm:items-center justify-between gap-2 notranslate" translate="no">
-              <div className="flex items-center gap-3">
-                {/* Indicator explanation */}
-                <div className="flex items-center gap-2 text-xs">
-                  <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-emerald-950/60 text-emerald-300 border border-emerald-700/50">
-                    <span className="w-2 h-2 rounded-full bg-emerald-400" />
-                    <span>Verde: Acessado hoje ({stats.accessedTodayCount})</span>
-                  </span>
-                  <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-rose-950/60 text-rose-300 border border-rose-700/50">
-                    <span className="w-2 h-2 rounded-full bg-rose-500" />
-                    <span>Vermelho: Pendente hoje ({stats.pendingTodayCount})</span>
-                  </span>
-                </div>
-              </div>
-
-              {/* Progress bar */}
-              <div className="flex items-center gap-2.5 sm:w-64">
-                <div className="flex-1 bg-neutral-800 rounded-full h-1.5 overflow-hidden">
-                  <div
-                    className="bg-emerald-400 h-full rounded-full transition-all duration-300"
-                    style={{ width: `${stats.completionPercentage}%` }}
-                  />
-                </div>
-                <span className="text-[11px] font-mono text-neutral-400 whitespace-nowrap">
-                  {stats.completionPercentage}% do dia
-                </span>
-              </div>
-            </div>
-
-            {/* Search, Filter, Density & Sort Controls */}
-            <ControlToolbar
-              search={search}
-              onSearchChange={setSearch}
-              selectedGroup={selectedGroup}
-              onGroupChange={setSelectedGroup}
-              groups={groups}
-              groupConfigs={groupConfigs}
-              groupColors={groupColors}
-              onOpenGroupManager={() => setIsGroupManagerOpen(true)}
-              folders={folders}
-              selectedFolder={density === 'folders' ? (currentExplorerFolderId || 'all') : selectedFolder}
-              onFolderChange={(folderId) => {
-                if (density === 'folders') {
-                  if (folderId === 'unfiled') {
-                    setSelectedFolder('unfiled');
-                    handleDensityChange('cards');
-                  } else {
-                    setCurrentExplorerFolderId(folderId === 'all' ? null : folderId);
-                  }
-                } else {
-                  setSelectedFolder(folderId);
-                }
-              }}
-              onOpenFolderManager={() => {
-                setFolderManagerParentId(density === 'folders' ? currentExplorerFolderId : null);
-                setIsFolderManagerOpen(true);
-              }}
-              onDropPwaOnFolder={handleMovePWAsToFolder}
-              unfiledCount={unfiledCount}
-              folderItemCounts={folderItemCounts}
-              statusFilter={statusFilter}
-              onStatusFilterChange={setStatusFilter}
-              starFilter={starFilter}
-              onStarFilterChange={setStarFilter}
-              flagFilters={flagFilters}
-              flagCounts={flagCounts}
-              flagBreakdown={flagBreakdown}
-              onToggleFlagFilter={handleToggleFlagFilter}
-              onClearFlagFilters={handleClearFlagFilters}
-              timeWindow={timeWindow}
-              onTimeWindowChange={setTimeWindow}
-              timeWindowMatchCount={timeWindowMatchCount}
-              density={density}
-              onDensityChange={handleDensityChange}
-              sortBy={sortBy}
-              onSortByChange={setSortBy}
-              totalCount={cleanItems.length}
-              pendingCount={stats.pendingTodayCount}
-              accessedCount={stats.accessedTodayCount}
-              groupByGroup={groupByGroup}
-              onToggleGroupByGroup={handleToggleGroupByGroup}
-              selectableCount={selectableItems.length}
-              selectedCount={selectedIds.size}
-              allSelected={allSelectableSelected}
-              onToggleSelectAll={handleToggleSelectAll}
-              onDeselectAll={handleDeselectAll}
-              onBulkSetRating={handleBatchSetRating}
-              onBulkSetStatus={(mode) => handleBatchSetStatus(mode)}
-              onBulkSetDailyFlag={handleBatchSetDailyFlag}
-              onBulkClearFlags={() => handleBatchClearFlags({ clearDaily: true, clearMoneyDate: false })}
-              onBulkRefreshIcons={handleBatchRefreshIcons}
-              onBulkOpenEdit={handleBulkOpenEdit}
-              onBulkDelete={handleBatchDelete}
-            />
-
             {/* View Render */}
             <div className="flex-1">
               {density === 'folders' && (

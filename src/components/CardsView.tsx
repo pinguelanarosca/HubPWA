@@ -107,7 +107,7 @@ export const CardsView: React.FC<CardsViewProps> = ({
           e.dataTransfer.effectAllowed = 'move';
         }}
         className={`group relative p-3.5 rounded-xl bg-[#14151a] hover:bg-[#181920] transition-all flex flex-col justify-between ${
-          activeMenuId === item.id ? 'z-30' : ''
+          activeMenuId === item.id ? 'z-20' : ''
         } ${
           isAccessed
             ? 'border-2 border-emerald-500/80 hover:border-emerald-400 shadow-[0_0_18px_-6px_rgba(16,185,129,0.45),inset_0_0_16px_-12px_rgba(16,185,129,0.28)]'
