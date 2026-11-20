@@ -1,6 +1,27 @@
 export const PWA_WINDOW_WIDTH = 539;
 export const PWA_WINDOW_HEIGHT = 993;
 
+/**
+ * The Chrome process in an existing Wayland session can ignore --window-size
+ * when opening an URL-based clone in the same profile. Installed PWAs with
+ * app IDs must keep their original launch path.
+ */
+export function shouldUseWaylandCloneBridge(
+  item: { clonedFromId?: string; appId?: string; url?: string },
+  env: { XDG_SESSION_TYPE?: string; WAYLAND_DISPLAY?: string }
+): boolean {
+  const session = (env.XDG_SESSION_TYPE || '').toLowerCase();
+  const onWayland = session === 'wayland' || (session !== 'x11' && Boolean(env.WAYLAND_DISPLAY));
+  return Boolean(
+    onWayland &&
+    typeof item.clonedFromId === 'string' &&
+    item.clonedFromId.trim() &&
+    !item.appId &&
+    typeof item.url === 'string' &&
+    /^https?:\/\//i.test(item.url.trim())
+  );
+}
+
 export function getPopupWindowFeatures(
   width: number = PWA_WINDOW_WIDTH,
   height: number = PWA_WINDOW_HEIGHT
