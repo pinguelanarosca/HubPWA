@@ -28,6 +28,12 @@ import {
   resolveHistoryProfileDirectory,
 } from './src/utils/historyLogic.js';
 import { getAutostartStatus, enableAutostartOnUbuntu, disableAutostartOnUbuntu } from './scripts/setup-autostart.js';
+import {
+  PWA_WINDOW_WIDTH,
+  PWA_WINDOW_HEIGHT,
+  extractExecFromDesktopContent,
+  buildLinuxLaunchCandidates,
+} from './src/utils/launchConfig.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -1001,6 +1007,8 @@ app.post('/api/launch-pwa', (req, res) => {
   if (process.platform === 'linux') {
     const hasGtkLaunch = hasCommand('gtk-launch');
     const hasGio = hasCommand('gio');
+    const hasWmctrl = hasCommand('wmctrl');
+    const hasXdotool = hasCommand('xdotool');
     const hasChrome =
       hasCommand('google-chrome') ||
       hasCommand('google-chrome-stable') ||
@@ -1010,53 +1018,85 @@ app.post('/api/launch-pwa', (req, res) => {
 
     if (!hasGtkLaunch && !hasGio && !hasChrome) {
       // In headless/container preview with no browser installed, return fallback gracefully
-      return res.json({ success: true, launchedNative: false, fallbackUrl: url, lastAccessedDate: localTimeStr });
+      return res.json({
+        success: true,
+        launchedNative: false,
+        fallbackUrl: url,
+        windowSize: { width: PWA_WINDOW_WIDTH, height: PWA_WINDOW_HEIGHT },
+        lastAccessedDate: localTimeStr,
+      });
     }
 
-    const profileArg = profileDirectory ? `--profile-directory="${profileDirectory}"` : '';
-    const commandCandidates: string[] = [];
+    // Read Exec= directly from .desktop file when present so we can inject --window-size=539,993
+    const homeDir = process.env.HOME || os.homedir();
+    const resolvedDesktopFile =
+      desktopPath && fs.existsSync(desktopPath)
+        ? desktopPath
+        : rawFileName && fs.existsSync(path.join(homeDir, '.local/share/applications', rawFileName))
+        ? path.join(homeDir, '.local/share/applications', rawFileName)
+        : undefined;
 
-    // 1. Direct GIO launch of full .desktop file (exact match on Ubuntu desktop)
-    if (desktopPath && fs.existsSync(desktopPath)) {
-      if (hasGio) commandCandidates.push(`gio launch "${desktopPath}" 2>/dev/null`);
-      if (hasGtkLaunch) commandCandidates.push(`gtk-launch "${path.basename(desktopPath, '.desktop')}" 2>/dev/null`);
-    }
-
-    // 2. If we have the exact .desktop file in ~/.local/share/applications/
-    if (rawFileName) {
-      const desktopName = rawFileName.replace(/\.desktop$/i, '');
-      if (hasGtkLaunch) commandCandidates.push(`gtk-launch "${desktopName}" 2>/dev/null`);
-      if (hasGio) commandCandidates.push(`gio launch "$HOME/.local/share/applications/${rawFileName}" 2>/dev/null`);
-    }
-
-    // 3. Direct execLine if saved
-    if (execLine) {
-      const sanitizedExec = execLine.replace(/%[uUfF]/g, '').trim();
-      if (sanitizedExec) {
-        commandCandidates.push(`${sanitizedExec} 2>/dev/null`);
+    let desktopExecLine: string | null = null;
+    if (resolvedDesktopFile) {
+      try {
+        const content = fs.readFileSync(resolvedDesktopFile, 'utf8');
+        desktopExecLine = extractExecFromDesktopContent(content);
+      } catch {
+        desktopExecLine = null;
       }
     }
 
-    // 4. App-ID with Profile
-    if (appId && hasChrome) {
-      commandCandidates.push(`google-chrome ${profileArg} --app-id="${appId}" 2>/dev/null`);
-      commandCandidates.push(`google-chrome-stable ${profileArg} --app-id="${appId}" 2>/dev/null`);
-      commandCandidates.push(`chromium ${profileArg} --app-id="${appId}" 2>/dev/null`);
-    }
-
-    // 5. URL App Mode with Profile
-    if (url && hasChrome) {
-      commandCandidates.push(`google-chrome ${profileArg} --app="${url}" 2>/dev/null`);
-      commandCandidates.push(`google-chrome-stable ${profileArg} --app="${url}" 2>/dev/null`);
-      commandCandidates.push(`chromium-browser ${profileArg} --app="${url}" 2>/dev/null`);
-      commandCandidates.push(`chromium ${profileArg} --app="${url}" 2>/dev/null`);
-      commandCandidates.push(`chrome ${profileArg} --app="${url}" 2>/dev/null`);
-    }
+    const commandCandidates = buildLinuxLaunchCandidates({
+      desktopExecLine,
+      execLine,
+      desktopPath,
+      desktopPathExists: Boolean(desktopPath && fs.existsSync(desktopPath)),
+      rawFileName,
+      appId,
+      profileDirectory,
+      url,
+      hasGtkLaunch,
+      hasGio,
+      hasChrome,
+      width: PWA_WINDOW_WIDTH,
+      height: PWA_WINDOW_HEIGHT,
+    });
 
     if (commandCandidates.length === 0) {
-      return res.json({ success: true, launchedNative: false, fallbackUrl: url, lastAccessedDate: localTimeStr });
+      return res.json({
+        success: true,
+        launchedNative: false,
+        fallbackUrl: url,
+        windowSize: { width: PWA_WINDOW_WIDTH, height: PWA_WINDOW_HEIGHT },
+        lastAccessedDate: localTimeStr,
+      });
     }
 
+    // Snapshot existing Chrome window IDs on X11 so if Chrome IPC reuses saved placement we only resize the new window
+    const getVisibleChromeWindowIds = (): string[] => {
+      try {
+        if (hasWmctrl) {
+          const out = execSync('wmctrl -l -x 2>/dev/null || true', { encoding: 'utf8', timeout: 800 });
+          return out
+            .split('\n')
+            .filter((line) => /chrome|chromium/i.test(line))
+            .map((line) => line.trim().split(/\s+/)[0])
+            .filter(Boolean);
+        }
+        if (hasXdotool) {
+          const out = execSync('xdotool search --onlyvisible --class "chrome|chromium" 2>/dev/null || true', {
+            encoding: 'utf8',
+            timeout: 800,
+          });
+          return out.split('\n').map((l) => l.trim()).filter(Boolean);
+        }
+      } catch {
+        // Ignore on Wayland / headless
+      }
+      return [];
+    };
+
+    const preLaunchWindowIds = hasWmctrl || hasXdotool ? new Set(getVisibleChromeWindowIds()) : null;
     const fullCommand = commandCandidates.join(' || ');
 
     // Execute silently without logging warnings to console
@@ -1064,15 +1104,52 @@ app.post('/api/launch-pwa', (req, res) => {
       // Chrome IPC process delegation handled silently
     });
 
+    // Enforce 539x993 on newly created Chrome X11 window (in case Chrome IPC overrides --window-size from saved prefs)
+    if (preLaunchWindowIds && (hasWmctrl || hasXdotool)) {
+      let attempts = 0;
+      const pollDelays = [250, 350, 500, 700, 900];
+      const checkAndResizeNewWindow = () => {
+        const currentIds = getVisibleChromeWindowIds();
+        const newIds = currentIds.filter((wid) => !preLaunchWindowIds.has(wid));
+        if (newIds.length > 0) {
+          const targetId = newIds[newIds.length - 1];
+          if (hasWmctrl) {
+            exec(
+              `wmctrl -i -r "${targetId}" -b remove,maximized_vert,maximized_horz 2>/dev/null; wmctrl -i -r "${targetId}" -e 0,-1,-1,${PWA_WINDOW_WIDTH},${PWA_WINDOW_HEIGHT} 2>/dev/null`,
+              () => {}
+            );
+          } else if (hasXdotool) {
+            exec(
+              `xdotool windowsize "${targetId}" ${PWA_WINDOW_WIDTH} ${PWA_WINDOW_HEIGHT} 2>/dev/null`,
+              () => {}
+            );
+          }
+          return;
+        }
+        if (attempts < pollDelays.length) {
+          const delay = pollDelays[attempts++];
+          setTimeout(checkAndResizeNewWindow, delay);
+        }
+      };
+      setTimeout(checkAndResizeNewWindow, pollDelays[attempts++]);
+    }
+
     return res.json({
       success: true,
       launchedNative: true,
+      windowSize: { width: PWA_WINDOW_WIDTH, height: PWA_WINDOW_HEIGHT },
       lastAccessedDate: localTimeStr,
-      message: `PWA lançada no perfil '${profileDirectory || 'padrão'}' em modo standalone!`,
+      message: `PWA lançada no perfil '${profileDirectory || 'padrão'}' em ${PWA_WINDOW_WIDTH}x${PWA_WINDOW_HEIGHT}!`,
     });
   }
 
-  return res.json({ success: true, launchedNative: false, fallbackUrl: url, lastAccessedDate: localTimeStr });
+  return res.json({
+    success: true,
+    launchedNative: false,
+    fallbackUrl: url,
+    windowSize: { width: PWA_WINDOW_WIDTH, height: PWA_WINDOW_HEIGHT },
+    lastAccessedDate: localTimeStr,
+  });
 });
 
 // Ubuntu Autostart Management Endpoints

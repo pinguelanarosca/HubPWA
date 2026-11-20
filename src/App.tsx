@@ -47,6 +47,7 @@ import {
 import { parseDesktopFile, ParsedDesktopApp } from './utils/desktopParser';
 import { normalizeAppUrl } from './utils/desktopDeduplicator';
 import { matchesAccessTimeWindow, mergeAccessHistoryRecords } from './utils/historyLogic';
+import { PWA_WINDOW_WIDTH, PWA_WINDOW_HEIGHT, getPopupWindowFeatures } from './utils/launchConfig';
 import { TopBar } from './components/TopBar';
 import { ControlToolbar } from './components/ControlToolbar';
 import { CompactTableView } from './components/CompactTableView';
@@ -886,21 +887,31 @@ export default function App() {
       }
 
       if (!data.launchedNative && item.url) {
-        // Fallback: Open in a standalone App Window without browser tabs or address bar
-        window.open(
+        // Fallback: Open in a standalone App Window at 539x993 portrait size
+        const popup = window.open(
           item.url,
           `pwa_${item.id.replace(/[^a-zA-Z0-9]/g, '_')}`,
-          'popup=yes,width=1280,height=800,menubar=no,toolbar=no,location=no,status=no,resizable=yes,scrollbars=yes'
+          getPopupWindowFeatures(PWA_WINDOW_WIDTH, PWA_WINDOW_HEIGHT)
         );
+        try {
+          popup?.resizeTo(PWA_WINDOW_WIDTH, PWA_WINDOW_HEIGHT);
+        } catch {
+          // Cross-origin popup resize may be restricted by browser
+        }
       }
     } catch {
       // Fallback for cloud preview
       if (item.url) {
-        window.open(
+        const popup = window.open(
           item.url,
           `pwa_${item.id.replace(/[^a-zA-Z0-9]/g, '_')}`,
-          'popup=yes,width=1280,height=800,menubar=no,toolbar=no,location=no,status=no,resizable=yes,scrollbars=yes'
+          getPopupWindowFeatures(PWA_WINDOW_WIDTH, PWA_WINDOW_HEIGHT)
         );
+        try {
+          popup?.resizeTo(PWA_WINDOW_WIDTH, PWA_WINDOW_HEIGHT);
+        } catch {
+          // Cross-origin popup resize may be restricted by browser
+        }
       }
     }
   }, [todayStr]);
