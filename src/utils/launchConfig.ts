@@ -8,18 +8,16 @@ export function getPopupWindowFeatures(
   return `popup=yes,width=${width},height=${height},menubar=no,toolbar=no,location=no,status=no,resizable=yes,scrollbars=yes`;
 }
 
-export function encodeLaunchBridgePayload(targetUrl: string): string | null {
-  if (!/^https?:\/\//i.test((targetUrl || '').trim())) return null;
-  const bytes = new TextEncoder().encode(targetUrl.trim());
+export function encodeBase64Url(value: string): string {
+  const bytes = new TextEncoder().encode(value);
   let binary = '';
   for (let i = 0; i < bytes.length; i += 1) {
     binary += String.fromCharCode(bytes[i]);
   }
-  const base64 = btoa(binary);
-  return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
 }
 
-export function decodeLaunchBridgePayload(payload: string): string | null {
+export function decodeBase64Url(payload: string): string | null {
   if (!payload || !/^[A-Za-z0-9_-]+$/.test(payload)) return null;
   try {
     const padded = payload.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((payload.length + 3) % 4);
@@ -28,23 +26,39 @@ export function decodeLaunchBridgePayload(payload: string): string | null {
     for (let i = 0; i < binary.length; i += 1) {
       bytes[i] = binary.charCodeAt(i);
     }
-    const decoded = new TextDecoder().decode(bytes).trim();
-    return /^https?:\/\//i.test(decoded) ? decoded : null;
+    return new TextDecoder().decode(bytes);
   } catch {
     return null;
   }
+}
+
+export function encodeLaunchBridgePayload(targetUrl: string): string | null {
+  if (!/^https?:\/\//i.test((targetUrl || '').trim())) return null;
+  return encodeBase64Url(targetUrl.trim());
+}
+
+export function decodeLaunchBridgePayload(payload: string): string | null {
+  const decoded = decodeBase64Url(payload);
+  if (!decoded) return null;
+  const trimmed = decoded.trim();
+  return /^https?:\/\//i.test(trimmed) ? trimmed : null;
 }
 
 export function buildLaunchBridgeUrl(
   targetUrl: string,
   origin: string,
   width: number = PWA_WINDOW_WIDTH,
-  height: number = PWA_WINDOW_HEIGHT
+  height: number = PWA_WINDOW_HEIGHT,
+  windowTitle?: string
 ): string | null {
   const payload = encodeLaunchBridgePayload(targetUrl);
   if (!payload || !origin) return null;
   const cleanOrigin = origin.replace(/\/+$/g, '');
-  return `${cleanOrigin}/api/launch-bridge/${payload}?w=${width}&h=${height}`;
+  const titleQuery =
+    windowTitle && windowTitle.trim()
+      ? `&t=${encodeBase64Url(windowTitle.trim())}`
+      : '';
+  return `${cleanOrigin}/api/launch-bridge/${payload}?w=${width}&h=${height}${titleQuery}`;
 }
 
 export function extractExecFromDesktopContent(content: string): string | null {
@@ -86,7 +100,8 @@ export function applyWindowSizeToChromeExec(
   execLine: string,
   width: number = PWA_WINDOW_WIDTH,
   height: number = PWA_WINDOW_HEIGHT,
-  bridgeOrigin?: string
+  bridgeOrigin?: string,
+  windowTitle?: string
 ): string {
   let sanitized = execLine
     .replace(/\s*%[uUfFdDnNickvm]/g, '')
@@ -102,7 +117,7 @@ export function applyWindowSizeToChromeExec(
       /--app=(?:"([^"]+)"|'([^']+)'|([^\s"']+))/i,
       (full, q1, q2, q3) => {
         const rawUrl = q1 || q2 || q3 || '';
-        const bridge = buildLaunchBridgeUrl(rawUrl, bridgeOrigin, width, height);
+        const bridge = buildLaunchBridgeUrl(rawUrl, bridgeOrigin, width, height, windowTitle);
         return bridge ? `--app="${bridge}"` : full;
       }
     );
@@ -120,6 +135,7 @@ export interface LinuxLaunchCandidateOptions {
   appId?: string;
   profileDirectory?: string;
   url?: string;
+  windowTitle?: string;
   bridgeOrigin?: string;
   hasGtkLaunch: boolean;
   hasGio: boolean;
@@ -139,6 +155,7 @@ export function buildLinuxLaunchCandidates(options: LinuxLaunchCandidateOptions)
     appId,
     profileDirectory,
     url,
+    windowTitle,
     bridgeOrigin,
     hasGtkLaunch,
     hasGio,
@@ -162,7 +179,13 @@ export function buildLinuxLaunchCandidates(options: LinuxLaunchCandidateOptions)
 
   // 1. Prefer Chrome Exec parsed from the .desktop file with explicit --window-size
   if (desktopExecLine) {
-    const sizedDesktopExec = applyWindowSizeToChromeExec(desktopExecLine, width, height, bridgeOrigin);
+    const sizedDesktopExec = applyWindowSizeToChromeExec(
+      desktopExecLine,
+      width,
+      height,
+      bridgeOrigin,
+      windowTitle
+    );
     if (sizedDesktopExec) {
       pushUnique(`${sizedDesktopExec} 2>/dev/null`);
     }
@@ -170,7 +193,7 @@ export function buildLinuxLaunchCandidates(options: LinuxLaunchCandidateOptions)
 
   // 2. Direct saved execLine with explicit --window-size
   if (execLine) {
-    const sizedExec = applyWindowSizeToChromeExec(execLine, width, height, bridgeOrigin);
+    const sizedExec = applyWindowSizeToChromeExec(execLine, width, height, bridgeOrigin, windowTitle);
     if (sizedExec) {
       pushUnique(`${sizedExec} 2>/dev/null`);
     }
@@ -184,10 +207,9 @@ export function buildLinuxLaunchCandidates(options: LinuxLaunchCandidateOptions)
   }
 
   // 4. URL App Mode with Profile (clones & URL PWAs): use self-resizing launch bridge when origin is available
-  // so window.resizeTo(539, 993) executes inside Chrome even when Chrome IPC ignores --window-size!
   if (url && hasChrome) {
     const appTarget =
-      (bridgeOrigin && buildLaunchBridgeUrl(url, bridgeOrigin, width, height)) || url;
+      (bridgeOrigin && buildLaunchBridgeUrl(url, bridgeOrigin, width, height, windowTitle)) || url;
     pushUnique(`google-chrome ${profileArg} --app="${appTarget}" ${sizeArg} 2>/dev/null`.replace(/\s+/g, ' '));
     pushUnique(`google-chrome-stable ${profileArg} --app="${appTarget}" ${sizeArg} 2>/dev/null`.replace(/\s+/g, ' '));
     pushUnique(`chromium-browser ${profileArg} --app="${appTarget}" ${sizeArg} 2>/dev/null`.replace(/\s+/g, ' '));

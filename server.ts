@@ -31,6 +31,7 @@ import { getAutostartStatus, enableAutostartOnUbuntu, disableAutostartOnUbuntu }
 import {
   PWA_WINDOW_WIDTH,
   PWA_WINDOW_HEIGHT,
+  decodeBase64Url,
   decodeLaunchBridgePayload,
   extractExecFromDesktopContent,
   buildLinuxLaunchCandidates,
@@ -963,6 +964,15 @@ app.get('/api/launch-bridge/:payload', (req, res) => {
   const rawH = Number(req.query.h);
   const width = Number.isFinite(rawW) && rawW >= 240 && rawW <= 3840 ? Math.round(rawW) : PWA_WINDOW_WIDTH;
   const height = Number.isFinite(rawH) && rawH >= 320 && rawH <= 2160 ? Math.round(rawH) : PWA_WINDOW_HEIGHT;
+  const decodedTitle = (decodeBase64Url(String(req.query.t || '')) || '').trim();
+  const bridgeTitle = decodedTitle || 'Abrindo PWA...';
+  const safeHtmlTitle = bridgeTitle
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+  const serializedTitle = JSON.stringify(bridgeTitle);
   const serializedUrl = JSON.stringify(targetUrl);
   const safeMetaUrl = targetUrl.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
 
@@ -974,14 +984,16 @@ app.get('/api/launch-bridge/:payload', (req, res) => {
   <meta charset="utf-8" />
   <meta name="referrer" content="no-referrer" />
   <meta http-equiv="refresh" content="1;url=${safeMetaUrl}" />
-  <title>Abrindo PWA...</title>
+  <title>${safeHtmlTitle}</title>
   <script>
     (function () {
       try {
+        document.title = ${serializedTitle};
         window.resizeTo(${width}, ${height});
       } catch (e) {}
       setTimeout(function () {
         try {
+          document.title = ${serializedTitle};
           window.resizeTo(${width}, ${height});
         } catch (e) {}
         window.location.replace(${serializedUrl});
@@ -990,17 +1002,19 @@ app.get('/api/launch-bridge/:payload', (req, res) => {
   </script>
 </head>
 <body style="margin:0;background:#0d0e12;color:#a3a3a3;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;font-size:12px;">
-  Abrindo aplicativo (${width}x${height})...
+  Abrindo ${safeHtmlTitle} (${width}x${height})...
 </body>
 </html>`);
 });
 
 // 0. POST /api/launch-pwa - Launches PWA in native Chrome Standalone App Window on Ubuntu/Linux preserving profile
 app.post('/api/launch-pwa', (req, res) => {
-  const { id, url, rawFileName, appId, profileDirectory, execLine, desktopPath, todayStr } = req.body || {};
+  const { id, name, url, rawFileName, appId, profileDirectory, execLine, desktopPath, todayStr } = req.body || {};
   if (!url && !rawFileName && !execLine && !desktopPath) {
     return res.status(400).json({ error: 'URL ou atalho é obrigatório para lançar a PWA.' });
   }
+
+  let resolvedTitle = typeof name === 'string' ? name.trim() : '';
 
   // Automatically record access in server in-memory & disk database
   let localTimeStr = '';
@@ -1014,6 +1028,9 @@ app.post('/api/launch-pwa', (req, res) => {
     localTimeStr = `${effectiveToday}T${hours}:${minutes}:${seconds}.000Z`;
 
     const matched = findStoredState({ id, clonedFromId: req.body?.clonedFromId, appId, url, rawFileName }, db);
+    if (!resolvedTitle && matched?.name) {
+      resolvedTitle = String(matched.name).trim();
+    }
     const key = id || (matched ? matched.id : `pwa_${(appId || (rawFileName ? rawFileName.replace(/\.desktop$/i, '') : Date.now().toString())).toLowerCase().replace(/[^a-z0-9]/g, '_')}`);
 
     const prevLogs = Array.isArray(matched?.accessLogs) ? matched.accessLogs : [];
@@ -1032,6 +1049,7 @@ app.post('/api/launch-pwa', (req, res) => {
     db.pwas[key] = {
       ...(matched || {}),
       id: key,
+      name: resolvedTitle || (matched ? matched.name : undefined),
       url: url || (matched ? matched.url : ''),
       appId: appId || (matched ? matched.appId : undefined),
       rawFileName: rawFileName || (matched ? matched.rawFileName : undefined),
@@ -1104,6 +1122,7 @@ app.post('/api/launch-pwa', (req, res) => {
       profileDirectory,
       url,
       bridgeOrigin,
+      windowTitle: resolvedTitle || undefined,
       hasGtkLaunch,
       hasGio,
       hasChrome,
@@ -1179,32 +1198,39 @@ app.post('/api/launch-pwa', (req, res) => {
       // Chrome IPC process delegation handled silently
     });
 
-    // 2. Enforce 539x993 on newly created Chrome X11/XWayland window using zero-dependency Python libX11
+    // 2. Enforce 539x993 and keep window title synced to Hub PWA name via zero-dependency Python libX11
     if (canUsePythonX11) {
       const preIdsArg = (pythonPreIds || []).join(',');
-      const watcher = spawn(
-        'python3',
-        [x11ScriptPath, '--watch-new', String(PWA_WINDOW_WIDTH), String(PWA_WINDOW_HEIGHT), preIdsArg],
-        { env: desktopEnv, stdio: 'ignore', detached: true }
-      );
+      const x11Args = [
+        x11ScriptPath,
+        '--watch-new',
+        String(PWA_WINDOW_WIDTH),
+        String(PWA_WINDOW_HEIGHT),
+        preIdsArg,
+        ...(resolvedTitle ? [resolvedTitle] : []),
+      ];
+      const watcher = spawn('python3', x11Args, { env: desktopEnv, stdio: 'ignore', detached: true });
       watcher.unref();
     } else if (preLaunchWindowIds && (hasWmctrl || hasXdotool)) {
       let attempts = 0;
       const pollDelays = [250, 350, 500, 700, 900, 1200];
+      const safeShellTitle = resolvedTitle ? resolvedTitle.replace(/'/g, `'\\''`) : '';
       const checkAndResizeNewWindow = () => {
         const currentIds = getVisibleChromeWindowIds();
         const newIds = currentIds.filter((wid) => !preLaunchWindowIds.has(wid));
         if (newIds.length > 0) {
           const targetId = newIds[newIds.length - 1];
           if (hasWmctrl) {
+            const renameCmd = safeShellTitle ? `; wmctrl -i -r "${targetId}" -N '${safeShellTitle}' 2>/dev/null` : '';
             exec(
-              `wmctrl -i -r "${targetId}" -b remove,maximized_vert,maximized_horz 2>/dev/null; wmctrl -i -r "${targetId}" -e 0,-1,-1,${PWA_WINDOW_WIDTH},${PWA_WINDOW_HEIGHT} 2>/dev/null`,
+              `wmctrl -i -r "${targetId}" -b remove,maximized_vert,maximized_horz 2>/dev/null; wmctrl -i -r "${targetId}" -e 0,-1,-1,${PWA_WINDOW_WIDTH},${PWA_WINDOW_HEIGHT} 2>/dev/null${renameCmd}`,
               { env: desktopEnv },
               () => {}
             );
           } else if (hasXdotool) {
+            const renameCmd = safeShellTitle ? `; xdotool set_window --name '${safeShellTitle}' "${targetId}" 2>/dev/null` : '';
             exec(
-              `xdotool windowsize "${targetId}" ${PWA_WINDOW_WIDTH} ${PWA_WINDOW_HEIGHT} 2>/dev/null`,
+              `xdotool windowsize "${targetId}" ${PWA_WINDOW_WIDTH} ${PWA_WINDOW_HEIGHT} 2>/dev/null${renameCmd}`,
               { env: desktopEnv },
               () => {}
             );

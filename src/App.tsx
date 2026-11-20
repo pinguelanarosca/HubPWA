@@ -842,6 +842,7 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           id: item.id,
+          name: item.name,
           clonedFromId: item.clonedFromId,
           url: item.url,
           rawFileName: item.rawFileName,
@@ -895,8 +896,11 @@ export default function App() {
         );
         try {
           popup?.resizeTo(PWA_WINDOW_WIDTH, PWA_WINDOW_HEIGHT);
+          if (popup && item.name) {
+            popup.document.title = item.name;
+          }
         } catch {
-          // Cross-origin popup resize may be restricted by browser
+          // Cross-origin popup resize/title may be restricted by browser
         }
       }
     } catch {
@@ -909,8 +913,11 @@ export default function App() {
         );
         try {
           popup?.resizeTo(PWA_WINDOW_WIDTH, PWA_WINDOW_HEIGHT);
+          if (popup && item.name) {
+            popup.document.title = item.name;
+          }
         } catch {
-          // Cross-origin popup resize may be restricted by browser
+          // Cross-origin popup resize/title may be restricted by browser
         }
       }
     }

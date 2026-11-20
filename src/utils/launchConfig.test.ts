@@ -4,6 +4,8 @@ import {
   PWA_WINDOW_WIDTH,
   PWA_WINDOW_HEIGHT,
   getPopupWindowFeatures,
+  encodeBase64Url,
+  decodeBase64Url,
   encodeLaunchBridgePayload,
   decodeLaunchBridgePayload,
   buildLaunchBridgeUrl,
@@ -21,7 +23,7 @@ test('default PWA launch dimensions match 539x993 reference size', () => {
   assert.match(features, /popup=yes/);
 });
 
-test('launch bridge payload encodes and decodes valid http/https URLs and rejects unsafe schemes', () => {
+test('launch bridge payload and title encode/decode cleanly and reject unsafe schemes', () => {
   const url = 'https://37a.com/lobby?ref=hub&tab=1';
   const payload = encodeLaunchBridgePayload(url);
   assert.ok(payload);
@@ -30,16 +32,21 @@ test('launch bridge payload encodes and decodes valid http/https URLs and reject
   assert.equal(decodeLaunchBridgePayload(payload), url);
   assert.equal(encodeLaunchBridgePayload('javascript:alert(1)'), null);
   assert.equal(decodeLaunchBridgePayload('aW52YWxpZA'), null);
+
+  const hubName = '37A.COM (Perfil 1) - Promoção';
+  const encodedTitle = encodeBase64Url(hubName);
+  assert.equal(decodeBase64Url(encodedTitle), hubName);
 });
 
-test('applyWindowSizeToChromeExec strips placeholders/old sizes, rewrites --app URL via bridge, and appends 539,993', () => {
+test('applyWindowSizeToChromeExec strips placeholders/old sizes, rewrites --app URL via bridge with title, and appends 539,993', () => {
   const result = applyWindowSizeToChromeExec(
     '/opt/google/chrome/google-chrome --profile-directory="Profile 1" --window-size=1280,800 --app="https://37a.com/?a=1" %U',
     539,
     993,
-    'http://127.0.0.1:3000'
+    'http://127.0.0.1:3000',
+    '37A.COM (Perfil 1)'
   );
-  assert.match(result, /--app="http:\/\/127\.0\.0\.1:3000\/api\/launch-bridge\//);
+  assert.match(result, /--app="http:\/\/127\.0\.0\.1:3000\/api\/launch-bridge\/[^"]+&t=[^"]+"/);
   assert.match(result, /--window-size=539,993$/);
   assert.equal(result.includes('1280,800'), false);
   assert.equal(result.includes('%U'), false);
@@ -56,17 +63,24 @@ Type=Application`;
   );
 });
 
-test('buildLinuxLaunchCandidates routes cloned URL PWAs through self-resizing launch bridge with --window-size=539,993', () => {
+test('buildLinuxLaunchCandidates routes cloned URL PWAs through self-resizing launch bridge with --window-size=539,993 and Hub title', () => {
   const cloneCandidates = buildLinuxLaunchCandidates({
     profileDirectory: 'Profile 1',
     url: 'https://37a.com/game',
+    windowTitle: '37A.COM (Perfil 1)',
     bridgeOrigin: 'http://127.0.0.1:3000',
     hasGtkLaunch: true,
     hasGio: true,
     hasChrome: true,
   });
 
-  const expectedBridge = buildLaunchBridgeUrl('https://37a.com/game', 'http://127.0.0.1:3000', 539, 993);
+  const expectedBridge = buildLaunchBridgeUrl(
+    'https://37a.com/game',
+    'http://127.0.0.1:3000',
+    539,
+    993,
+    '37A.COM (Perfil 1)'
+  );
   assert.ok(expectedBridge);
   assert.match(cloneCandidates[0], /--profile-directory="Profile 1"/);
   assert.ok(cloneCandidates[0].includes(`--app="${expectedBridge}"`));
@@ -82,6 +96,7 @@ test('buildLinuxLaunchCandidates prioritizes Chrome CLI with --window-size=539,9
     appId: 'myid',
     profileDirectory: 'Profile 2',
     url: 'https://example.com',
+    windowTitle: 'Meu App',
     bridgeOrigin: 'http://127.0.0.1:3000',
     hasGtkLaunch: true,
     hasGio: true,
