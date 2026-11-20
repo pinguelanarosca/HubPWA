@@ -110,12 +110,12 @@ export const CardsView: React.FC<CardsViewProps> = ({
           activeMenuId === item.id ? 'z-20' : ''
         } ${
           isAccessed
-            ? 'border-2 border-emerald-500/80 hover:border-emerald-400 shadow-[0_0_18px_-6px_rgba(16,185,129,0.45),inset_0_0_16px_-12px_rgba(16,185,129,0.28)]'
-            : 'border-2 border-rose-500/75 hover:border-rose-400 shadow-[0_0_18px_-6px_rgba(244,63,94,0.42),inset_0_0_16px_-12px_rgba(244,63,94,0.24)]'
+            ? 'border-[3px] border-emerald-400/90 hover:border-emerald-300 shadow-[0_0_20px_-4px_rgba(16,185,129,0.5),inset_0_0_30px_4px_rgba(16,185,129,0.34)]'
+            : 'border-[3px] border-rose-500/90 hover:border-rose-400 shadow-[0_0_20px_-4px_rgba(244,63,94,0.48),inset_0_0_30px_4px_rgba(244,63,94,0.32)]'
         } ${isSelected ? 'ring-2 ring-emerald-400 bg-[#1a1c24]' : ''}`}
       >
-        {/* Inner Clipped Wrapper for Ambient Background Glows */}
-        <div className="absolute inset-0 overflow-hidden rounded-[10px] pointer-events-none">
+        {/* Inner Clipped Wrapper for Ambient Background Glows & Inward Border Smoke */}
+        <div className="absolute inset-0 overflow-hidden rounded-[9px] pointer-events-none">
           {/* Translucent Top Edge Accent Bar for Group Identification */}
           <div
             className={`absolute top-0 left-0 right-0 h-0.5 ${groupTheme.accentBar} opacity-80 group-hover:opacity-100 transition-opacity`}
@@ -123,17 +123,26 @@ export const CardsView: React.FC<CardsViewProps> = ({
 
           {/* Translucent Background Element 1: Vibrant Top-Right Ambient Radial Glow Orb */}
           <div
-            className={`absolute -top-10 -right-10 w-40 h-40 rounded-full blur-2xl transition-all duration-300 opacity-80 group-hover:opacity-100 ${groupTheme.glow}`}
+            className={`absolute -top-10 -right-10 w-40 h-40 rounded-full blur-2xl transition-all duration-300 opacity-75 group-hover:opacity-95 ${groupTheme.glow}`}
           />
 
           {/* Translucent Background Element 2: High-Contrast Corner Accent Gradient Overlay */}
           <div
-            className={`absolute inset-0 bg-gradient-to-br ${groupTheme.gradient} opacity-60 group-hover:opacity-90 transition-opacity`}
+            className={`absolute inset-0 bg-gradient-to-br ${groupTheme.gradient} opacity-55 group-hover:opacity-85 transition-opacity`}
           />
 
           {/* Translucent Background Element 3: Bottom-Left Ambient Glow Orb */}
           <div
-            className={`absolute -bottom-10 -left-10 w-32 h-32 rounded-full blur-xl opacity-35 group-hover:opacity-70 transition-opacity ${groupTheme.secondaryGlow}`}
+            className={`absolute -bottom-10 -left-10 w-32 h-32 rounded-full blur-xl opacity-35 group-hover:opacity-65 transition-opacity ${groupTheme.secondaryGlow}`}
+          />
+
+          {/* Status Border Inward Smoke/Fade Gradient */}
+          <div
+            className={`absolute inset-0 rounded-[9px] transition-opacity ${
+              isAccessed
+                ? 'shadow-[inset_0_0_26px_4px_rgba(16,185,129,0.32)] bg-[radial-gradient(ellipse_at_center,transparent_48%,rgba(16,185,129,0.22)_100%)]'
+                : 'shadow-[inset_0_0_26px_4px_rgba(244,63,94,0.3)] bg-[radial-gradient(ellipse_at_center,transparent_48%,rgba(244,63,94,0.22)_100%)]'
+            }`}
           />
         </div>
 

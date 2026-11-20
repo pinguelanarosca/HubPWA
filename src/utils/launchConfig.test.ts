@@ -111,3 +111,22 @@ test('buildLinuxLaunchCandidates prioritizes Chrome CLI with --window-size=539,9
     'Sized Chrome command must run before raw gio launch fallback'
   );
 });
+
+test('buildLinuxLaunchCandidates limits Chrome binaries when chromeBinaries is specified and skips bridge hop when bridgeOrigin is omitted', () => {
+  const directCandidates = buildLinuxLaunchCandidates({
+    profileDirectory: 'Profile 3',
+    url: 'https://35c.com/',
+    windowTitle: '35C.COM',
+    chromeBinaries: ['google-chrome'],
+    hasGtkLaunch: true,
+    hasGio: true,
+    hasChrome: true,
+  });
+
+  const chromeCmds = directCandidates.filter((c) => !c.startsWith('gtk-launch') && !c.startsWith('gio'));
+  assert.equal(chromeCmds.length, 1);
+  assert.equal(
+    chromeCmds[0],
+    'google-chrome --profile-directory="Profile 3" --app="https://35c.com/" --window-size=539,993 2>/dev/null'
+  );
+});

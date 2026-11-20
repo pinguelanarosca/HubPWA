@@ -64,14 +64,22 @@ export const DenseGridView: React.FC<DenseGridViewProps> = ({
         return (
           <div
             key={renderKey}
-            className={`group relative flex flex-col justify-between p-2.5 rounded-lg border-2 bg-neutral-900/40 hover:bg-neutral-900/80 transition-all ${
+            className={`group relative overflow-hidden flex flex-col justify-between p-2.5 rounded-lg border-[3px] bg-neutral-900/40 hover:bg-neutral-900/80 transition-all ${
               accessed
-                ? 'border-emerald-500/80 hover:border-emerald-400 shadow-[0_0_14px_-5px_rgba(16,185,129,0.35)]'
-                : 'border-rose-500/75 hover:border-rose-400 shadow-[0_0_14px_-5px_rgba(244,63,94,0.32)]'
+                ? 'border-emerald-400/90 hover:border-emerald-300 shadow-[0_0_18px_-4px_rgba(16,185,129,0.46),inset_0_0_24px_3px_rgba(16,185,129,0.3)]'
+                : 'border-rose-500/90 hover:border-rose-400 shadow-[0_0_18px_-4px_rgba(244,63,94,0.44),inset_0_0_24px_3px_rgba(244,63,94,0.28)]'
             }`}
           >
+            <div
+              aria-hidden="true"
+              className={`pointer-events-none absolute inset-0 rounded-[5px] ${
+                accessed
+                  ? 'bg-[radial-gradient(ellipse_at_center,transparent_45%,rgba(16,185,129,0.2)_100%)]'
+                  : 'bg-[radial-gradient(ellipse_at_center,transparent_45%,rgba(244,63,94,0.2)_100%)]'
+              }`}
+            />
             {/* Header: Icon, Name, Pin/Rating, Status */}
-            <div>
+            <div className="relative z-10">
               <div className="flex items-start justify-between gap-1.5 mb-1.5">
                 <div className="flex items-center gap-2 min-w-0">
                   <div
@@ -195,7 +203,7 @@ export const DenseGridView: React.FC<DenseGridViewProps> = ({
             </div>
 
             {/* Bottom Actions: Editar, Excluir, Abrir */}
-            <div className="flex items-center justify-between pt-1 border-t border-neutral-800/60 mt-1 gap-1">
+            <div className="relative z-10 flex items-center justify-between pt-1 border-t border-neutral-800/60 mt-1 gap-1">
               <div className="flex items-center gap-1">
                 {onClone && (
                   <button

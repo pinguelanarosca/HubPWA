@@ -137,6 +137,7 @@ export interface LinuxLaunchCandidateOptions {
   url?: string;
   windowTitle?: string;
   bridgeOrigin?: string;
+  chromeBinaries?: string[];
   hasGtkLaunch: boolean;
   hasGio: boolean;
   hasChrome: boolean;
@@ -157,6 +158,7 @@ export function buildLinuxLaunchCandidates(options: LinuxLaunchCandidateOptions)
     url,
     windowTitle,
     bridgeOrigin,
+    chromeBinaries,
     hasGtkLaunch,
     hasGio,
     hasChrome,
@@ -169,6 +171,11 @@ export function buildLinuxLaunchCandidates(options: LinuxLaunchCandidateOptions)
   const sizeArg = `--window-size=${width},${height}`;
   const candidates: string[] = [];
   const seen = new Set<string>();
+
+  const bins =
+    Array.isArray(chromeBinaries) && chromeBinaries.length > 0
+      ? chromeBinaries
+      : ['google-chrome', 'google-chrome-stable', 'chromium-browser', 'chromium', 'chrome'];
 
   const pushUnique = (cmd: string) => {
     const normalized = cmd.trim();
@@ -201,20 +208,18 @@ export function buildLinuxLaunchCandidates(options: LinuxLaunchCandidateOptions)
 
   // 3. App-ID with Profile and explicit --window-size
   if (appId && hasChrome) {
-    pushUnique(`google-chrome ${profileArg} --app-id="${appId}" ${sizeArg} 2>/dev/null`.replace(/\s+/g, ' '));
-    pushUnique(`google-chrome-stable ${profileArg} --app-id="${appId}" ${sizeArg} 2>/dev/null`.replace(/\s+/g, ' '));
-    pushUnique(`chromium ${profileArg} --app-id="${appId}" ${sizeArg} 2>/dev/null`.replace(/\s+/g, ' '));
+    for (const bin of bins) {
+      pushUnique(`${bin} ${profileArg} --app-id="${appId}" ${sizeArg} 2>/dev/null`.replace(/\s+/g, ' '));
+    }
   }
 
-  // 4. URL App Mode with Profile (clones & URL PWAs): use self-resizing launch bridge when origin is available
+  // 4. URL App Mode with Profile (clones & URL PWAs)
   if (url && hasChrome) {
     const appTarget =
       (bridgeOrigin && buildLaunchBridgeUrl(url, bridgeOrigin, width, height, windowTitle)) || url;
-    pushUnique(`google-chrome ${profileArg} --app="${appTarget}" ${sizeArg} 2>/dev/null`.replace(/\s+/g, ' '));
-    pushUnique(`google-chrome-stable ${profileArg} --app="${appTarget}" ${sizeArg} 2>/dev/null`.replace(/\s+/g, ' '));
-    pushUnique(`chromium-browser ${profileArg} --app="${appTarget}" ${sizeArg} 2>/dev/null`.replace(/\s+/g, ' '));
-    pushUnique(`chromium ${profileArg} --app="${appTarget}" ${sizeArg} 2>/dev/null`.replace(/\s+/g, ' '));
-    pushUnique(`chrome ${profileArg} --app="${appTarget}" ${sizeArg} 2>/dev/null`.replace(/\s+/g, ' '));
+    for (const bin of bins) {
+      pushUnique(`${bin} ${profileArg} --app="${appTarget}" ${sizeArg} 2>/dev/null`.replace(/\s+/g, ' '));
+    }
   }
 
   // 5. Fallback to native .desktop launchers if direct Chrome launch wasn't possible

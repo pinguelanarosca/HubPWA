@@ -40,15 +40,23 @@ export const MiniCardsView: React.FC<MiniCardsViewProps> = ({
         data-testid={`mini-card-${item.id}`}
         className={`group relative overflow-hidden rounded-xl bg-[#14151a] hover:bg-[#181920] transition-all flex items-stretch min-h-[78px] ${
           isAccessed
-            ? 'border-2 border-emerald-500/80 hover:border-emerald-400 shadow-[0_0_16px_-6px_rgba(16,185,129,0.42)]'
-            : 'border-2 border-rose-500/75 hover:border-rose-400 shadow-[0_0_16px_-6px_rgba(244,63,94,0.38)]'
+            ? 'border-[3px] border-emerald-400/90 hover:border-emerald-300 shadow-[0_0_18px_-4px_rgba(16,185,129,0.48),inset_0_0_24px_3px_rgba(16,185,129,0.32)]'
+            : 'border-[3px] border-rose-500/90 hover:border-rose-400 shadow-[0_0_18px_-4px_rgba(244,63,94,0.45),inset_0_0_24px_3px_rgba(244,63,94,0.3)]'
         } ${isSelected ? 'ring-2 ring-emerald-400 bg-[#1a1c24]' : ''}`}
       >
+        <div
+          aria-hidden="true"
+          className={`pointer-events-none absolute inset-0 rounded-[9px] ${
+            isAccessed
+              ? 'bg-[radial-gradient(ellipse_at_center,transparent_45%,rgba(16,185,129,0.2)_100%)]'
+              : 'bg-[radial-gradient(ellipse_at_center,transparent_45%,rgba(244,63,94,0.2)_100%)]'
+          }`}
+        />
         {/* Left: Full-height prominent Icon occupying top to bottom */}
         <button
           type="button"
           onClick={() => onLaunch(item)}
-          className="w-[76px] sm:w-[82px] self-stretch shrink-0 p-1.5 bg-neutral-950/75 hover:bg-neutral-900/95 border-r border-white/[0.08] flex items-center justify-center transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-emerald-400"
+          className="relative z-10 w-[76px] sm:w-[82px] self-stretch shrink-0 p-1.5 bg-neutral-950/75 hover:bg-neutral-900/95 border-r border-white/[0.08] flex items-center justify-center transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-emerald-400"
           title={`Abrir ${item.name}`}
           aria-label={`Abrir ${item.name}`}
         >
@@ -62,7 +70,7 @@ export const MiniCardsView: React.FC<MiniCardsViewProps> = ({
         </button>
 
         {/* Right: Name + optional read-only $ date on top, read-only COM/RB/BON status dots below */}
-        <div className="flex-1 min-w-0 px-3 py-2 flex flex-col justify-center gap-2">
+        <div className="relative z-10 flex-1 min-w-0 px-3 py-2 flex flex-col justify-center gap-2">
           <div className="flex items-center justify-between gap-2 min-w-0">
             <h3
               onClick={() => onLaunch(item)}

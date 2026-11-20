@@ -828,15 +828,29 @@ export default function App() {
       return updatedList;
     });
 
-    // 2. Persist immediately to server disk database to prevent background throttling drops
-    fetch('/api/pwas/state', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ items: [accessedItem] }),
-    }).catch(() => {});
+    // 2. If not running on local Ubuntu Express server (e.g. Cloud Preview iframe), open synchronously to preserve user gesture
+    const isLocalHost =
+      typeof window !== 'undefined' &&
+      ['localhost', '127.0.0.1', '::1'].includes(window.location.hostname);
+
+    if (!isLocalHost && item.url) {
+      const popup = window.open(
+        item.url,
+        `pwa_${item.id.replace(/[^a-zA-Z0-9]/g, '_')}`,
+        getPopupWindowFeatures(PWA_WINDOW_WIDTH, PWA_WINDOW_HEIGHT)
+      );
+      try {
+        popup?.resizeTo(PWA_WINDOW_WIDTH, PWA_WINDOW_HEIGHT);
+        if (popup && item.name) {
+          popup.document.title = item.name;
+        }
+      } catch {
+        // Cross-origin popup resize/title may be restricted by browser
+      }
+    }
 
     try {
-      // 3. Attempt native OS launch on Ubuntu (opens standalone Chrome App window or gtk-launch)
+      // 3. Native OS launch on local Ubuntu (or recordOnly in Cloud Preview)
       const res = await fetch('/api/launch-pwa', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -851,6 +865,7 @@ export default function App() {
           execLine: item.execLine,
           desktopPath: item.desktopPath,
           todayStr,
+          recordOnly: !isLocalHost,
         }),
       });
 
@@ -887,8 +902,8 @@ export default function App() {
         );
       }
 
-      if (!data.launchedNative && item.url) {
-        // Fallback: Open in a standalone App Window at 539x993 portrait size
+      if (isLocalHost && !data.launchedNative && item.url) {
+        // Fallback on local host if no Chrome binary is available: open in App Window at 539x993
         const popup = window.open(
           item.url,
           `pwa_${item.id.replace(/[^a-zA-Z0-9]/g, '_')}`,
@@ -904,8 +919,7 @@ export default function App() {
         }
       }
     } catch {
-      // Fallback for cloud preview
-      if (item.url) {
+      if (isLocalHost && item.url) {
         const popup = window.open(
           item.url,
           `pwa_${item.id.replace(/[^a-zA-Z0-9]/g, '_')}`,

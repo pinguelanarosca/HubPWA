@@ -201,20 +201,33 @@ const DEFAULT_BRANCH = 'main';
 
 app.use(express.json());
 
-// Memoize command existence checks to avoid running execSync on every launch
+// Memoize executable lookups via fs.accessSync (0 shell forks, <0.05ms)
 const commandCache = new Map<string, boolean>();
 function hasCommand(cmd: string): boolean {
   if (commandCache.has(cmd)) {
     return commandCache.get(cmd)!;
   }
-  try {
-    execSync(`command -v ${cmd} 2>/dev/null`, { stdio: 'ignore' });
-    commandCache.set(cmd, true);
-    return true;
-  } catch {
-    commandCache.set(cmd, false);
-    return false;
+  const searchDirs = [
+    ...(process.env.PATH || '').split(path.delimiter).filter(Boolean),
+    '/usr/local/bin',
+    '/usr/bin',
+    '/bin',
+    '/opt/google/chrome',
+    '/snap/bin',
+  ];
+  let found = false;
+  for (const dir of searchDirs) {
+    try {
+      const candidate = path.join(dir, cmd);
+      fs.accessSync(candidate, fs.constants.X_OK);
+      found = true;
+      break;
+    } catch {
+      // continue searching PATH
+    }
   }
+  commandCache.set(cmd, found);
+  return found;
 }
 
 // In-memory cache for web-fetched icon buffers
@@ -953,7 +966,7 @@ function getLocalVersion() {
   };
 }
 
-// 0a. GET /api/launch-bridge/:payload - Resizes Chrome standalone --app windows from inside before redirecting to target URL
+// 0a. GET /api/launch-bridge/:payload - Instant bridge fallback when running pure Wayland without X11
 app.get('/api/launch-bridge/:payload', (req, res) => {
   const targetUrl = decodeLaunchBridgePayload(String(req.params.payload || ''));
   if (!targetUrl) {
@@ -982,8 +995,7 @@ app.get('/api/launch-bridge/:payload', (req, res) => {
 <html lang="pt-BR">
 <head>
   <meta charset="utf-8" />
-  <meta name="referrer" content="no-referrer" />
-  <meta http-equiv="refresh" content="1;url=${safeMetaUrl}" />
+  <meta http-equiv="refresh" content="0;url=${safeMetaUrl}" />
   <title>${safeHtmlTitle}</title>
   <script>
     (function () {
@@ -991,13 +1003,7 @@ app.get('/api/launch-bridge/:payload', (req, res) => {
         document.title = ${serializedTitle};
         window.resizeTo(${width}, ${height});
       } catch (e) {}
-      setTimeout(function () {
-        try {
-          document.title = ${serializedTitle};
-          window.resizeTo(${width}, ${height});
-        } catch (e) {}
-        window.location.replace(${serializedUrl});
-      }, 60);
+      window.location.replace(${serializedUrl});
     })();
   </script>
 </head>
@@ -1007,16 +1013,17 @@ app.get('/api/launch-bridge/:payload', (req, res) => {
 </html>`);
 });
 
-// 0. POST /api/launch-pwa - Launches PWA in native Chrome Standalone App Window on Ubuntu/Linux preserving profile
+// 0. POST /api/launch-pwa - Launches PWA immediately on Ubuntu/Linux without blocking Node's event loop
 app.post('/api/launch-pwa', (req, res) => {
-  const { id, name, url, rawFileName, appId, profileDirectory, execLine, desktopPath, todayStr } = req.body || {};
+  const { id, name, url, rawFileName, appId, profileDirectory, execLine, desktopPath, todayStr, recordOnly } =
+    req.body || {};
   if (!url && !rawFileName && !execLine && !desktopPath) {
     return res.status(400).json({ error: 'URL ou atalho é obrigatório para lançar a PWA.' });
   }
 
   let resolvedTitle = typeof name === 'string' ? name.trim() : '';
 
-  // Automatically record access in server in-memory & disk database
+  // Record access immediately in memory and defer disk flush so Chrome launch has 0ms I/O delay
   let localTimeStr = '';
   try {
     const db = getDb();
@@ -1031,7 +1038,13 @@ app.post('/api/launch-pwa', (req, res) => {
     if (!resolvedTitle && matched?.name) {
       resolvedTitle = String(matched.name).trim();
     }
-    const key = id || (matched ? matched.id : `pwa_${(appId || (rawFileName ? rawFileName.replace(/\.desktop$/i, '') : Date.now().toString())).toLowerCase().replace(/[^a-z0-9]/g, '_')}`);
+    const key =
+      id ||
+      (matched
+        ? matched.id
+        : `pwa_${(appId || (rawFileName ? rawFileName.replace(/\.desktop$/i, '') : Date.now().toString()))
+            .toLowerCase()
+            .replace(/[^a-z0-9]/g, '_')}`);
 
     const prevLogs = Array.isArray(matched?.accessLogs) ? matched.accessLogs : [];
     const nextLogs = [localTimeStr, ...prevLogs.filter((l) => l !== localTimeStr)].slice(0, 60);
@@ -1060,27 +1073,36 @@ app.post('/api/launch-pwa', (req, res) => {
       accessCount: ((matched && matched.accessCount) || 0) + 1,
       updatedAt: now.toISOString(),
     };
-    saveServerDb(db);
+    setImmediate(() => saveServerDb(db));
   } catch (err) {
     console.warn('Aviso ao registrar acesso no servidor:', err);
   }
 
-  // Only execute native desktop launch if running on Linux/Ubuntu with a browser installed
+  if (recordOnly) {
+    return res.json({
+      success: true,
+      launchedNative: false,
+      fallbackUrl: url,
+      windowSize: { width: PWA_WINDOW_WIDTH, height: PWA_WINDOW_HEIGHT },
+      lastAccessedDate: localTimeStr,
+    });
+  }
+
+  // Only execute native desktop launch on Linux/Ubuntu when a browser/launcher exists
   if (process.platform === 'linux') {
     const hasGtkLaunch = hasCommand('gtk-launch');
     const hasGio = hasCommand('gio');
-    const hasWmctrl = hasCommand('wmctrl');
-    const hasXdotool = hasCommand('xdotool');
     const hasPython3 = hasCommand('python3');
-    const hasChrome =
-      hasCommand('google-chrome') ||
-      hasCommand('google-chrome-stable') ||
-      hasCommand('chromium') ||
-      hasCommand('chromium-browser') ||
-      hasCommand('chrome');
+    const installedChromeBins = [
+      'google-chrome',
+      'google-chrome-stable',
+      'chromium-browser',
+      'chromium',
+      'chrome',
+    ].filter(hasCommand);
+    const hasChrome = installedChromeBins.length > 0;
 
     if (!hasGtkLaunch && !hasGio && !hasChrome) {
-      // In headless/container preview with no browser installed, return fallback gracefully
       return res.json({
         success: true,
         launchedNative: false,
@@ -1090,7 +1112,7 @@ app.post('/api/launch-pwa', (req, res) => {
       });
     }
 
-    // Read Exec= directly from .desktop file when present so we can inject --window-size=539,993
+    // Read Exec= from .desktop file when present
     const homeDir = process.env.HOME || os.homedir();
     const resolvedDesktopFile =
       desktopPath && fs.existsSync(desktopPath)
@@ -1103,16 +1125,30 @@ app.post('/api/launch-pwa', (req, res) => {
     if (resolvedDesktopFile) {
       try {
         const content = fs.readFileSync(resolvedDesktopFile, 'utf8');
-        desktopExecLine = extractExecFromDesktopContent(content);
+        const extracted = extractExecFromDesktopContent(content);
+        if (extracted) {
+          // Verify absolute executable path if present so nonexistent paths don't stall fallback
+          const firstToken = extracted.match(/^(?:"([^"]+)"|'([^']+)'|(\S+))/);
+          const exePath = firstToken ? firstToken[1] || firstToken[2] || firstToken[3] : '';
+          if (!exePath.startsWith('/') || fs.existsSync(exePath)) {
+            desktopExecLine = extracted;
+          }
+        }
       } catch {
         desktopExecLine = null;
       }
     }
 
-    const localPort = req.socket?.localPort || Number(process.env.PORT) || 3000;
-    const bridgeOrigin = `http://127.0.0.1:${localPort}`;
+    const x11ScriptPath = path.resolve(__dirname, 'scripts', 'x11_resize_chrome.py');
+    const canUsePythonX11 = hasPython3 && fs.existsSync(x11ScriptPath);
+    const desktopEnv = { ...process.env, DISPLAY: process.env.DISPLAY || ':0' };
 
-    const commandCandidates = buildLinuxLaunchCandidates({
+    // Only detour through /api/launch-bridge on pure Wayland without X11; on X11/XWayland open direct URL with 0ms redirect delay
+    const useBridge = !canUsePythonX11 && !process.env.DISPLAY && Boolean(process.env.WAYLAND_DISPLAY);
+    const localPort = req.socket?.localPort || Number(process.env.PORT) || 3000;
+    const bridgeOrigin = useBridge ? `http://127.0.0.1:${localPort}` : undefined;
+
+    let commandCandidates = buildLinuxLaunchCandidates({
       desktopExecLine,
       execLine,
       desktopPath,
@@ -1123,12 +1159,23 @@ app.post('/api/launch-pwa', (req, res) => {
       url,
       bridgeOrigin,
       windowTitle: resolvedTitle || undefined,
+      chromeBinaries: installedChromeBins.slice(0, 1),
       hasGtkLaunch,
       hasGio,
       hasChrome,
       width: PWA_WINDOW_WIDTH,
       height: PWA_WINDOW_HEIGHT,
     });
+
+    // When a verified Chrome binary command exists, do NOT append slow gio/gtk-launch D-Bus fallbacks after it
+    if (hasChrome) {
+      const chromeOnly = commandCandidates.filter(
+        (cmd) => !cmd.startsWith('gio launch') && !cmd.startsWith('gtk-launch')
+      );
+      if (chromeOnly.length > 0) {
+        commandCandidates = chromeOnly;
+      }
+    }
 
     if (commandCandidates.length === 0) {
       return res.json({
@@ -1140,109 +1187,30 @@ app.post('/api/launch-pwa', (req, res) => {
       });
     }
 
-    const desktopEnv = { ...process.env, DISPLAY: process.env.DISPLAY || ':0' };
-    const x11ScriptPath = path.resolve(__dirname, 'scripts', 'x11_resize_chrome.py');
-    const canUsePythonX11 = hasPython3 && fs.existsSync(x11ScriptPath);
+    const fullCommand = commandCandidates.slice(0, 3).join(' || ');
 
-    // 1. Snapshot current X11 Chrome windows BEFORE launch (prefers zero-dep Python libX11, falls back to wmctrl/xdotool)
-    let pythonPreIds: number[] | null = null;
     if (canUsePythonX11) {
-      try {
-        const out = execSync(`python3 "${x11ScriptPath}" --snapshot 2>/dev/null || echo "[]"`, {
-          encoding: 'utf8',
-          timeout: 800,
-          env: desktopEnv,
-        });
-        const parsed = JSON.parse(out.trim() || '[]');
-        if (Array.isArray(parsed)) {
-          pythonPreIds = parsed.map((n) => Number(n)).filter((n) => Number.isFinite(n));
-        }
-      } catch {
-        pythonPreIds = null;
-      }
-    }
-
-    const getVisibleChromeWindowIds = (): string[] => {
-      try {
-        if (hasWmctrl) {
-          const out = execSync('wmctrl -l -x 2>/dev/null || true', {
-            encoding: 'utf8',
-            timeout: 800,
-            env: desktopEnv,
-          });
-          return out
-            .split('\n')
-            .filter((line) => /chrome|chromium/i.test(line))
-            .map((line) => line.trim().split(/\s+/)[0])
-            .filter(Boolean);
-        }
-        if (hasXdotool) {
-          const out = execSync('xdotool search --onlyvisible --class "chrome|chromium" 2>/dev/null || true', {
-            encoding: 'utf8',
-            timeout: 800,
-            env: desktopEnv,
-          });
-          return out.split('\n').map((l) => l.trim()).filter(Boolean);
-        }
-      } catch {
-        // Ignore on Wayland / headless
-      }
-      return [];
-    };
-
-    const preLaunchWindowIds = hasWmctrl || hasXdotool ? new Set(getVisibleChromeWindowIds()) : null;
-    const fullCommand = commandCandidates.join(' || ');
-
-    // Execute Chrome launch silently with DISPLAY set
-    exec(fullCommand, { env: desktopEnv }, () => {
-      // Chrome IPC process delegation handled silently
-    });
-
-    // 2. Enforce 539x993 and keep window title synced to Hub PWA name via zero-dependency Python libX11
-    if (canUsePythonX11) {
-      const preIdsArg = (pythonPreIds || []).join(',');
-      const x11Args = [
-        x11ScriptPath,
-        '--watch-new',
-        String(PWA_WINDOW_WIDTH),
-        String(PWA_WINDOW_HEIGHT),
-        preIdsArg,
-        ...(resolvedTitle ? [resolvedTitle] : []),
-      ];
-      const watcher = spawn('python3', x11Args, { env: desktopEnv, stdio: 'ignore', detached: true });
-      watcher.unref();
-    } else if (preLaunchWindowIds && (hasWmctrl || hasXdotool)) {
-      let attempts = 0;
-      const pollDelays = [250, 350, 500, 700, 900, 1200];
-      const safeShellTitle = resolvedTitle ? resolvedTitle.replace(/'/g, `'\\''`) : '';
-      const checkAndResizeNewWindow = () => {
-        const currentIds = getVisibleChromeWindowIds();
-        const newIds = currentIds.filter((wid) => !preLaunchWindowIds.has(wid));
-        if (newIds.length > 0) {
-          const targetId = newIds[newIds.length - 1];
-          if (hasWmctrl) {
-            const renameCmd = safeShellTitle ? `; wmctrl -i -r "${targetId}" -N '${safeShellTitle}' 2>/dev/null` : '';
-            exec(
-              `wmctrl -i -r "${targetId}" -b remove,maximized_vert,maximized_horz 2>/dev/null; wmctrl -i -r "${targetId}" -e 0,-1,-1,${PWA_WINDOW_WIDTH},${PWA_WINDOW_HEIGHT} 2>/dev/null${renameCmd}`,
-              { env: desktopEnv },
-              () => {}
-            );
-          } else if (hasXdotool) {
-            const renameCmd = safeShellTitle ? `; xdotool set_window --name '${safeShellTitle}' "${targetId}" 2>/dev/null` : '';
-            exec(
-              `xdotool windowsize "${targetId}" ${PWA_WINDOW_WIDTH} ${PWA_WINDOW_HEIGHT} 2>/dev/null${renameCmd}`,
-              { env: desktopEnv },
-              () => {}
-            );
-          }
-          return;
-        }
-        if (attempts < pollDelays.length) {
-          const delay = pollDelays[attempts++];
-          setTimeout(checkAndResizeNewWindow, delay);
-        }
-      };
-      setTimeout(checkAndResizeNewWindow, pollDelays[attempts++]);
+      // Single detached background helper: snapshots X11 windows -> spawns Chrome immediately -> enforces 539x993 + Hub title
+      const launcher = spawn(
+        'python3',
+        [
+          x11ScriptPath,
+          '--launch-and-watch',
+          String(PWA_WINDOW_WIDTH),
+          String(PWA_WINDOW_HEIGHT),
+          resolvedTitle,
+          fullCommand,
+        ],
+        { env: desktopEnv, stdio: 'ignore', detached: true }
+      );
+      launcher.on('error', () => {
+        const direct = spawn('sh', ['-c', fullCommand], { env: desktopEnv, stdio: 'ignore', detached: true });
+        direct.unref();
+      });
+      launcher.unref();
+    } else {
+      const direct = spawn('sh', ['-c', fullCommand], { env: desktopEnv, stdio: 'ignore', detached: true });
+      direct.unref();
     }
 
     return res.json({

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Zero-dependency X11/XWayland window detector, resizer, and title keeper for Ubuntu Chrome PWA Hub.
-Uses ctypes + libX11.so.6 (pre-installed on Ubuntu Desktop) so neither wmctrl nor xdotool is required.
+Zero-dependency X11/XWayland launcher, window resizer, and title keeper for Ubuntu Chrome PWA Hub.
+Uses ctypes + libX11.so.6 directly (pre-installed on Ubuntu Desktop) so neither wmctrl nor xdotool is required.
 """
 
 import ctypes
@@ -9,6 +9,7 @@ import ctypes.util
 import json
 import os
 import select
+import subprocess
 import sys
 import time
 
@@ -59,8 +60,16 @@ def _noop_x11_error_handler(_dpy, _err):
 
 def load_x11():
     global _ERR_HANDLER_REF
-    lib_path = ctypes.util.find_library("X11") or "libX11.so.6"
-    x11 = ctypes.cdll.LoadLibrary(lib_path)
+    x11 = None
+    for candidate in ("libX11.so.6", "libX11.so"):
+        try:
+            x11 = ctypes.cdll.LoadLibrary(candidate)
+            break
+        except OSError:
+            continue
+    if x11 is None:
+        lib_path = ctypes.util.find_library("X11") or "libX11.so.6"
+        x11 = ctypes.cdll.LoadLibrary(lib_path)
 
     _ERR_HANDLER_REF = ERROR_HANDLER_TYPE(_noop_x11_error_handler)
     x11.XSetErrorHandler.argtypes = [ERROR_HANDLER_TYPE]
@@ -109,6 +118,19 @@ def load_x11():
         ctypes.c_int,
     ]
     x11.XChangeProperty.restype = ctypes.c_int
+
+    x11.XGetGeometry.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_ulong,
+        ctypes.POINTER(ctypes.c_ulong),
+        ctypes.POINTER(ctypes.c_int),
+        ctypes.POINTER(ctypes.c_int),
+        ctypes.POINTER(ctypes.c_uint),
+        ctypes.POINTER(ctypes.c_uint),
+        ctypes.POINTER(ctypes.c_uint),
+        ctypes.POINTER(ctypes.c_uint),
+    ]
+    x11.XGetGeometry.restype = ctypes.c_int
 
     x11.XSelectInput.argtypes = [ctypes.c_void_p, ctypes.c_ulong, ctypes.c_long]
     x11.XSelectInput.restype = ctypes.c_int
@@ -198,6 +220,30 @@ def get_chrome_window_ids(x11, dpy, root, client_list_atom, wm_class_atom):
     return chrome_wids
 
 
+def get_window_size(x11, dpy, wid):
+    root_ret = ctypes.c_ulong()
+    x_ret = ctypes.c_int()
+    y_ret = ctypes.c_int()
+    w_ret = ctypes.c_uint()
+    h_ret = ctypes.c_uint()
+    bw_ret = ctypes.c_uint()
+    depth_ret = ctypes.c_uint()
+    ok = x11.XGetGeometry(
+        dpy,
+        wid,
+        ctypes.byref(root_ret),
+        ctypes.byref(x_ret),
+        ctypes.byref(y_ret),
+        ctypes.byref(w_ret),
+        ctypes.byref(h_ret),
+        ctypes.byref(bw_ret),
+        ctypes.byref(depth_ret),
+    )
+    if ok == 0:
+        return None
+    return (int(w_ret.value), int(h_ret.value))
+
+
 def get_net_wm_name_bytes(x11, dpy, wid, net_wm_name_atom):
     prop, fmt, count = get_window_property(x11, dpy, wid, net_wm_name_atom)
     if not prop:
@@ -216,7 +262,6 @@ def set_window_title(x11, dpy, wid, title, atoms):
     utf8_bytes = title.encode("utf-8")
     latin1_bytes = title.encode("latin-1", errors="replace")
 
-    # Skip write if _NET_WM_NAME already equals desired title (prevents PropertyNotify loops)
     current = get_net_wm_name_bytes(x11, dpy, wid, atoms["net_wm_name"])
     if current == utf8_bytes:
         return
@@ -239,39 +284,64 @@ def set_window_title(x11, dpy, wid, title, atoms):
     x11.XFlush(dpy)
 
 
-def unmaximize_and_resize(x11, dpy, root, wid, width, height, title, atoms):
-    net_wm_state = x11.XInternAtom(dpy, b"_NET_WM_STATE", 0)
-    max_vert = x11.XInternAtom(dpy, b"_NET_WM_STATE_MAXIMIZED_VERT", 0)
-    max_horz = x11.XInternAtom(dpy, b"_NET_WM_STATE_MAXIMIZED_HORZ", 0)
-
-    ev = XClientEventUnion()
-    ev.xclient.type = 33  # ClientMessage
-    ev.xclient.send_event = 1
-    ev.xclient.display = dpy
-    ev.xclient.window = wid
-    ev.xclient.message_type = net_wm_state
-    ev.xclient.format = 32
-    ev.xclient.data.l[0] = 0  # _NET_WM_STATE_REMOVE
-    ev.xclient.data.l[1] = max_vert
-    ev.xclient.data.l[2] = max_horz
-    ev.xclient.data.l[3] = 2  # source indication: pager/tool
-    ev.xclient.data.l[4] = 0
-
+def send_resize_commands(x11, dpy, root, wid, width, height, atoms):
     mask = (1 << 20) | (1 << 19)  # SubstructureRedirectMask | SubstructureNotifyMask
-    x11.XSendEvent(dpy, root, 0, mask, ctypes.byref(ev))
+
+    # 1. Remove maximized / fullscreen states so WM allows exact portrait size
+    for prop_atom_a, prop_atom_b in (
+        (atoms["max_vert"], atoms["max_horz"]),
+        (atoms["fullscreen"], 0),
+    ):
+        ev = XClientEventUnion()
+        ev.xclient.type = 33
+        ev.xclient.send_event = 1
+        ev.xclient.display = dpy
+        ev.xclient.window = wid
+        ev.xclient.message_type = atoms["net_wm_state"]
+        ev.xclient.format = 32
+        ev.xclient.data.l[0] = 0  # _NET_WM_STATE_REMOVE
+        ev.xclient.data.l[1] = prop_atom_a
+        ev.xclient.data.l[2] = prop_atom_b
+        ev.xclient.data.l[3] = 2  # source indication: pager/tool
+        ev.xclient.data.l[4] = 0
+        x11.XSendEvent(dpy, root, 0, mask, ctypes.byref(ev))
+
+    # 2. EWMH _NET_MOVERESIZE_WINDOW (honored by GNOME Mutter / XWayland)
+    mrev = XClientEventUnion()
+    mrev.xclient.type = 33
+    mrev.xclient.send_event = 1
+    mrev.xclient.display = dpy
+    mrev.xclient.window = wid
+    mrev.xclient.message_type = atoms["net_moveresize_window"]
+    mrev.xclient.format = 32
+    mrev.xclient.data.l[0] = (1 << 10) | (1 << 11) | (2 << 12)  # width + height + source=2
+    mrev.xclient.data.l[1] = 0
+    mrev.xclient.data.l[2] = 0
+    mrev.xclient.data.l[3] = int(width)
+    mrev.xclient.data.l[4] = int(height)
+    x11.XSendEvent(dpy, root, 0, mask, ctypes.byref(mrev))
+
+    # 3. Direct XResizeWindow for plain WMs
+    x11.XResizeWindow(dpy, wid, int(width), int(height))
     x11.XFlush(dpy)
-    time.sleep(0.05)
 
-    x11.XResizeWindow(dpy, wid, int(width), int(height))
+
+def unmaximize_and_resize(x11, dpy, root, wid, width, height, title, atoms):
+    send_resize_commands(x11, dpy, root, wid, width, height, atoms)
     set_window_title(x11, dpy, wid, title, atoms)
     x11.XSync(dpy, 0)
 
-    # Re-apply briefly after initial map/paint in case Chrome overrides first bounds or title
-    time.sleep(0.2)
-    x11.XSendEvent(dpy, root, 0, mask, ctypes.byref(ev))
-    x11.XResizeWindow(dpy, wid, int(width), int(height))
-    set_window_title(x11, dpy, wid, title, atoms)
-    x11.XSync(dpy, 0)
+    # Re-verify across Chrome's post-map placement restoration window (up to ~2s)
+    for delay in (0.12, 0.25, 0.45, 0.70, 0.90):
+        time.sleep(delay)
+        all_ids = get_all_client_list_ids(x11, dpy, root, atoms["client_list"])
+        if wid not in all_ids:
+            return
+        geom = get_window_size(x11, dpy, wid)
+        if geom is None or abs(geom[0] - width) > 24 or abs(geom[1] - height) > 24:
+            send_resize_commands(x11, dpy, root, wid, width, height, atoms)
+        set_window_title(x11, dpy, wid, title, atoms)
+        x11.XSync(dpy, 0)
 
 
 def watch_window_title(x11, dpy, root, wid, title, atoms):
@@ -295,7 +365,6 @@ def watch_window_title(x11, dpy, root, wid, title, atoms):
     ev = XEvent()
 
     while True:
-        # Periodically confirm the window still exists if no events arrive
         ready, _, _ = select.select([xfd], [], [], 8.0)
         if not ready:
             all_ids = get_all_client_list_ids(x11, dpy, root, atoms["client_list"])
@@ -321,43 +390,80 @@ def watch_window_title(x11, dpy, root, wid, title, atoms):
         set_window_title(x11, dpy, wid, title, atoms)
 
 
+def spawn_detached_shell(cmd):
+    if not cmd:
+        return
+    subprocess.Popen(
+        ["sh", "-c", cmd],
+        start_new_session=True,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        close_fds=True,
+    )
+
+
+def build_atoms(x11, dpy):
+    return {
+        "client_list": x11.XInternAtom(dpy, b"_NET_CLIENT_LIST", 0),
+        "wm_class": x11.XInternAtom(dpy, b"WM_CLASS", 0),
+        "net_wm_name": x11.XInternAtom(dpy, b"_NET_WM_NAME", 0),
+        "net_wm_icon_name": x11.XInternAtom(dpy, b"_NET_WM_ICON_NAME", 0),
+        "wm_name": x11.XInternAtom(dpy, b"WM_NAME", 0),
+        "wm_icon_name": x11.XInternAtom(dpy, b"WM_ICON_NAME", 0),
+        "utf8_string": x11.XInternAtom(dpy, b"UTF8_STRING", 0),
+        "net_wm_state": x11.XInternAtom(dpy, b"_NET_WM_STATE", 0),
+        "max_vert": x11.XInternAtom(dpy, b"_NET_WM_STATE_MAXIMIZED_VERT", 0),
+        "max_horz": x11.XInternAtom(dpy, b"_NET_WM_STATE_MAXIMIZED_HORZ", 0),
+        "fullscreen": x11.XInternAtom(dpy, b"_NET_WM_STATE_FULLSCREEN", 0),
+        "net_moveresize_window": x11.XInternAtom(dpy, b"_NET_MOVERESIZE_WINDOW", 0),
+    }
+
+
 def main():
     if len(sys.argv) < 2:
         sys.exit(0)
 
+    mode = sys.argv[1]
     display_name = os.environ.get("DISPLAY") or ":0"
+
+    # In --launch-and-watch mode, ALWAYS launch the command even if X11 Display is unavailable (e.g. pure Wayland)
+    launch_cmd = ""
+    if mode == "--launch-and-watch" and len(sys.argv) >= 6:
+        launch_cmd = sys.argv[5]
+
+    x11 = None
+    dpy = None
     try:
         x11 = load_x11()
         dpy = x11.XOpenDisplay(display_name.encode("utf-8"))
-        if not dpy:
-            sys.exit(0)
     except Exception:
+        dpy = None
+
+    if not dpy:
+        if launch_cmd:
+            try:
+                spawn_detached_shell(launch_cmd)
+            except Exception:
+                pass
         sys.exit(0)
 
     try:
         root = x11.XDefaultRootWindow(dpy)
-        atoms = {
-            "client_list": x11.XInternAtom(dpy, b"_NET_CLIENT_LIST", 0),
-            "wm_class": x11.XInternAtom(dpy, b"WM_CLASS", 0),
-            "net_wm_name": x11.XInternAtom(dpy, b"_NET_WM_NAME", 0),
-            "net_wm_icon_name": x11.XInternAtom(dpy, b"_NET_WM_ICON_NAME", 0),
-            "wm_name": x11.XInternAtom(dpy, b"WM_NAME", 0),
-            "wm_icon_name": x11.XInternAtom(dpy, b"WM_ICON_NAME", 0),
-            "utf8_string": x11.XInternAtom(dpy, b"UTF8_STRING", 0),
-        }
+        atoms = build_atoms(x11, dpy)
 
-        mode = sys.argv[1]
         if mode == "--snapshot":
             ids = get_chrome_window_ids(x11, dpy, root, atoms["client_list"], atoms["wm_class"])
             print(json.dumps(ids))
-        elif mode == "--watch-new" and len(sys.argv) >= 4:
+        elif mode == "--launch-and-watch" and len(sys.argv) >= 6:
             width = int(sys.argv[2])
             height = int(sys.argv[3])
-            pre_raw = sys.argv[4] if len(sys.argv) > 4 else ""
-            title = sys.argv[5] if len(sys.argv) > 5 else ""
-            pre_ids = set(int(x) for x in pre_raw.split(",") if x.strip().isdigit())
+            title = sys.argv[4]
+            pre_ids = set(get_chrome_window_ids(x11, dpy, root, atoms["client_list"], atoms["wm_class"]))
 
-            deadline = time.time() + 6.0
+            spawn_detached_shell(launch_cmd)
+
+            deadline = time.time() + 14.0
             target_wid = None
             while time.time() < deadline:
                 current_ids = get_chrome_window_ids(x11, dpy, root, atoms["client_list"], atoms["wm_class"])
@@ -366,15 +472,40 @@ def main():
                     target_wid = new_ids[-1]
                     unmaximize_and_resize(x11, dpy, root, target_wid, width, height, title, atoms)
                     break
-                time.sleep(0.15)
+                time.sleep(0.06)
+
+            if target_wid is not None and title:
+                watch_window_title(x11, dpy, root, target_wid, title, atoms)
+        elif mode == "--watch-new" and len(sys.argv) >= 4:
+            width = int(sys.argv[2])
+            height = int(sys.argv[3])
+            pre_raw = sys.argv[4] if len(sys.argv) > 4 else ""
+            title = sys.argv[5] if len(sys.argv) > 5 else ""
+            pre_ids = set(int(x) for x in pre_raw.split(",") if x.strip().isdigit())
+
+            deadline = time.time() + 14.0
+            target_wid = None
+            while time.time() < deadline:
+                current_ids = get_chrome_window_ids(x11, dpy, root, atoms["client_list"], atoms["wm_class"])
+                new_ids = [wid for wid in current_ids if wid not in pre_ids]
+                if new_ids:
+                    target_wid = new_ids[-1]
+                    unmaximize_and_resize(x11, dpy, root, target_wid, width, height, title, atoms)
+                    break
+                time.sleep(0.06)
 
             if target_wid is not None and title:
                 watch_window_title(x11, dpy, root, target_wid, title, atoms)
     except Exception:
-        pass
+        if launch_cmd:
+            try:
+                spawn_detached_shell(launch_cmd)
+            except Exception:
+                pass
     finally:
         try:
-            x11.XCloseDisplay(dpy)
+            if x11 and dpy:
+                x11.XCloseDisplay(dpy)
         except Exception:
             pass
 
