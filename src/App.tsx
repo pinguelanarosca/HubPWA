@@ -33,6 +33,9 @@ import {
   ChromeProfileOption,
   clonePWAForProfile,
   ensureUniquePWAIds,
+  CardSelectModifiers,
+  computeCardSelection,
+  getVisuallyOrderedPWAIds,
 } from './utils/pwaLogic';
 import {
   FOLDERS_STORAGE_KEY,
@@ -190,12 +193,29 @@ export default function App() {
     }
   });
 
-  // Card batch selection state
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  // Card batch selection state (stores both selected IDs and anchor ID for Shift+Click ranges)
+  const [selectionState, setSelectionState] = useState<{
+    ids: Set<string>;
+    lastId: string | null;
+  }>({ ids: new Set(), lastId: null });
+  const selectedIds = selectionState.ids;
+  const setSelectedIds = useCallback(
+    (updater: Set<string> | ((prev: Set<string>) => Set<string>)) => {
+      setSelectionState((prev) => {
+        const nextIds = typeof updater === 'function' ? updater(prev.ids) : updater;
+        if (nextIds === prev.ids) return prev;
+        const nextLast = prev.lastId && nextIds.has(prev.lastId) ? prev.lastId : null;
+        return { ids: nextIds, lastId: nextLast };
+      });
+    },
+    []
+  );
 
   // Clear selection when changing active folder or view mode so batch actions only target visible scope
   useEffect(() => {
-    setSelectedIds((prev) => (prev.size > 0 ? new Set() : prev));
+    setSelectionState((prev) =>
+      prev.ids.size > 0 || prev.lastId !== null ? { ids: new Set(), lastId: null } : prev
+    );
   }, [currentExplorerFolderId, selectedFolder, density]);
 
   // Modals state
@@ -943,6 +963,11 @@ export default function App() {
     });
   }, [displayedItems, density, folders, currentExplorerFolderId]);
 
+  const orderedSelectableIds = useMemo(() => {
+    const usesGrouping = (density === 'cards' || density === 'mini-cards') && groupByGroup;
+    return getVisuallyOrderedPWAIds(selectableItems, usesGrouping);
+  }, [selectableItems, density, groupByGroup]);
+
   const allSelectableSelected = useMemo(() => {
     return selectableItems.length > 0 && selectableItems.every((it) => selectedIds.has(it.id));
   }, [selectableItems, selectedIds]);
@@ -1466,33 +1491,46 @@ export default function App() {
     });
   }, []);
 
-  // Card selection handlers
-  const handleToggleSelect = useCallback((id: string) => {
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) {
-        next.delete(id);
-      } else {
-        next.add(id);
-      }
-      return next;
-    });
-  }, []);
+  // Card selection handlers (supports plain card click, Ctrl/Cmd toggle, and Shift range)
+  const handleCardSelect = useCallback(
+    (id: string, modifiers: CardSelectModifiers = {}) => {
+      setSelectionState((prev) => {
+        const result = computeCardSelection(
+          prev.ids,
+          prev.lastId,
+          id,
+          orderedSelectableIds,
+          modifiers
+        );
+        return { ids: result.selectedIds, lastId: result.lastSelectedId };
+      });
+    },
+    [orderedSelectableIds]
+  );
+
+  const handleToggleSelect = useCallback(
+    (id: string) => {
+      handleCardSelect(id, { fromCheckbox: true });
+    },
+    [handleCardSelect]
+  );
 
   const handleToggleSelectAll = useCallback(() => {
-    setSelectedIds((prev) => {
-      const visibleIds = selectableItems.map((it) => it.id);
-      const allSelected = visibleIds.length > 0 && visibleIds.every((id) => prev.has(id));
+    setSelectionState((prev) => {
+      const visibleIds = orderedSelectableIds;
+      const allSelected = visibleIds.length > 0 && visibleIds.every((id) => prev.ids.has(id));
       if (allSelected) {
-        return new Set();
-      } else {
-        return new Set(visibleIds);
+        return { ids: new Set(), lastId: null };
       }
+      return {
+        ids: new Set(visibleIds),
+        lastId: visibleIds.length > 0 ? visibleIds[visibleIds.length - 1] : null,
+      };
     });
-  }, [selectableItems]);
+  }, [orderedSelectableIds]);
 
   const handleDeselectAll = useCallback(() => {
-    setSelectedIds(new Set());
+    setSelectionState({ ids: new Set(), lastId: null });
   }, []);
 
   // Helper to resolve target IDs for bulk actions: selected items if any, otherwise scoped visible items
@@ -2272,6 +2310,7 @@ export default function App() {
                   groupColors={groupColors}
                   selectedIds={selectedIds}
                   onToggleSelect={handleToggleSelect}
+                  onSelectCard={handleCardSelect}
                   onToggleSelectAll={handleToggleSelectAll}
                   onLaunch={handleLaunch}
                   onToggleStatus={handleToggleStatus}
@@ -2305,6 +2344,9 @@ export default function App() {
                   items={displayedItems}
                   todayStr={todayStr}
                   folders={folders}
+                  selectedIds={selectedIds}
+                  onToggleSelect={handleToggleSelect}
+                  onSelectCard={handleCardSelect}
                   onLaunch={handleLaunch}
                   onToggleStatus={handleToggleStatus}
                   onUpdateNote={handleUpdateNote}
@@ -2326,6 +2368,9 @@ export default function App() {
                 <DenseGridView
                   items={displayedItems}
                   todayStr={todayStr}
+                  selectedIds={selectedIds}
+                  onToggleSelect={handleToggleSelect}
+                  onSelectCard={handleCardSelect}
                   onLaunch={handleLaunch}
                   onToggleStatus={handleToggleStatus}
                   onUpdateNote={handleUpdateNote}
@@ -2347,6 +2392,8 @@ export default function App() {
                   items={displayedItems}
                   todayStr={todayStr}
                   selectedIds={selectedIds}
+                  onToggleSelect={handleToggleSelect}
+                  onSelectCard={handleCardSelect}
                   onLaunch={handleLaunch}
                   groupByGroup={groupByGroup}
                 />
@@ -2361,6 +2408,7 @@ export default function App() {
                   groupColors={groupColors}
                   selectedIds={selectedIds}
                   onToggleSelect={handleToggleSelect}
+                  onSelectCard={handleCardSelect}
                   onLaunch={handleLaunch}
                   onToggleStatus={handleToggleStatus}
                   onUpdateNote={handleUpdateNote}

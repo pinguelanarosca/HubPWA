@@ -1592,3 +1592,123 @@ export function buildAvailableChromeProfiles(
     return a.directory.localeCompare(b.directory, 'pt-BR', { sensitivity: 'base' });
   });
 }
+
+export interface CardSelectModifiers {
+  shiftKey?: boolean;
+  ctrlKey?: boolean;
+  metaKey?: boolean;
+  fromCheckbox?: boolean;
+}
+
+export interface CardSelectionResult {
+  selectedIds: Set<string>;
+  lastSelectedId: string | null;
+}
+
+/**
+ * Returns PWA IDs in exact visual render order so Shift+Click range selection
+ * always follows the on-screen card sequence (flat or grouped by group name).
+ */
+export function getVisuallyOrderedPWAIds(
+  items: PWAItem[],
+  groupByGroup: boolean = false
+): string[] {
+  if (!groupByGroup) {
+    return items.map((it) => it.id).filter(Boolean);
+  }
+
+  const groupsMap = new Map<string, string[]>();
+  for (const item of items) {
+    if (!item.id) continue;
+    const g = item.group || item.category || 'Geral';
+    const bucket = groupsMap.get(g);
+    if (bucket) {
+      bucket.push(item.id);
+    } else {
+      groupsMap.set(g, [item.id]);
+    }
+  }
+
+  const sortedGroupNames = Array.from(groupsMap.keys()).sort((a, b) =>
+    a.localeCompare(b, 'pt-BR')
+  );
+  const ordered: string[] = [];
+  for (const grpName of sortedGroupNames) {
+    const ids = groupsMap.get(grpName);
+    if (ids) ordered.push(...ids);
+  }
+  return ordered;
+}
+
+/**
+ * Computes next PWA selection set & anchor after a card/checkbox click:
+ * - Shift + click: selects contiguous range between lastSelectedId and clickedId
+ *   (or merges range with currentSelected when Ctrl/Cmd is also held)
+ * - Ctrl/Cmd + click (or checkbox click): toggles clickedId while keeping others
+ * - Plain card click: selects solely clickedId, or deselects if it was the only selected item
+ */
+export function computeCardSelection(
+  currentSelected: Set<string>,
+  lastSelectedId: string | null,
+  clickedId: string,
+  orderedIds: string[],
+  modifiers: CardSelectModifiers = {}
+): CardSelectionResult {
+  if (!clickedId) {
+    return { selectedIds: new Set(currentSelected), lastSelectedId };
+  }
+
+  const shiftKey = Boolean(modifiers.shiftKey);
+  const ctrlOrMeta = Boolean(modifiers.ctrlKey || modifiers.metaKey);
+  const fromCheckbox = Boolean(modifiers.fromCheckbox);
+
+  if (shiftKey && lastSelectedId) {
+    const anchorIdx = orderedIds.indexOf(lastSelectedId);
+    const targetIdx = orderedIds.indexOf(clickedId);
+    if (anchorIdx !== -1 && targetIdx !== -1) {
+      const start = Math.min(anchorIdx, targetIdx);
+      const end = Math.max(anchorIdx, targetIdx);
+      const rangeIds = orderedIds.slice(start, end + 1);
+      const next = ctrlOrMeta ? new Set(currentSelected) : new Set<string>();
+      for (const id of rangeIds) {
+        next.add(id);
+      }
+      return {
+        selectedIds: next,
+        lastSelectedId,
+      };
+    }
+  }
+
+  if (ctrlOrMeta || fromCheckbox) {
+    const next = new Set(currentSelected);
+    let nextAnchor = lastSelectedId;
+    if (next.has(clickedId)) {
+      next.delete(clickedId);
+      if (nextAnchor === clickedId || (nextAnchor && !next.has(nextAnchor))) {
+        const remaining = Array.from(next);
+        nextAnchor = remaining.length > 0 ? remaining[remaining.length - 1] : null;
+      }
+    } else {
+      next.add(clickedId);
+      nextAnchor = clickedId;
+    }
+    return {
+      selectedIds: next,
+      lastSelectedId: nextAnchor,
+    };
+  }
+
+  if (currentSelected.size === 1 && currentSelected.has(clickedId)) {
+    return {
+      selectedIds: new Set(),
+      lastSelectedId: null,
+    };
+  }
+
+  return {
+    selectedIds: new Set([clickedId]),
+    lastSelectedId: clickedId,
+  };
+}
+

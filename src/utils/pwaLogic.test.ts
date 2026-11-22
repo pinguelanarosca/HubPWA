@@ -43,6 +43,8 @@ import {
   extractHtmlIconCandidates,
   isSameOrMatchingPWA,
   ensureUniquePWAIds,
+  computeCardSelection,
+  getVisuallyOrderedPWAIds,
 } from './pwaLogic';
 import { PWAItem } from '../types/pwa';
 
@@ -899,5 +901,80 @@ test('clonePWAForProfile avoids ID collisions against existingIds', () => {
   assert.equal(clone1.clonedFromId, 'pwa_src_1');
   assert.equal(clone2.clonedFromId, 'pwa_src_1');
 });
+
+test('computeCardSelection supports plain click, Ctrl+Click multi-select, and Shift+Click range', () => {
+  const ordered = ['a', 'b', 'c', 'd', 'e'];
+
+  // 1. Plain click selects only the clicked card and sets anchor
+  const r1 = computeCardSelection(new Set(), null, 'b', ordered);
+  assert.deepEqual(Array.from(r1.selectedIds), ['b']);
+  assert.equal(r1.lastSelectedId, 'b');
+
+  // 2. Clicking another card without modifiers replaces selection with new card
+  const r2 = computeCardSelection(r1.selectedIds, r1.lastSelectedId, 'd', ordered);
+  assert.deepEqual(Array.from(r2.selectedIds), ['d']);
+  assert.equal(r2.lastSelectedId, 'd');
+
+  // 3. Clicking the single already-selected card deselects it
+  const r2Off = computeCardSelection(r2.selectedIds, r2.lastSelectedId, 'd', ordered);
+  assert.deepEqual(Array.from(r2Off.selectedIds), []);
+  assert.equal(r2Off.lastSelectedId, null);
+
+  // 4. Ctrl+Click adds/toggles without clearing other selected cards
+  const r3 = computeCardSelection(r1.selectedIds, r1.lastSelectedId, 'd', ordered, { ctrlKey: true });
+  assert.deepEqual(Array.from(r3.selectedIds).sort(), ['b', 'd']);
+  assert.equal(r3.lastSelectedId, 'd');
+
+  const r4 = computeCardSelection(r3.selectedIds, r3.lastSelectedId, 'b', ordered, { metaKey: true });
+  assert.deepEqual(Array.from(r4.selectedIds), ['d']);
+  assert.equal(r4.lastSelectedId, 'd');
+
+  // 5. Shift+Click selects contiguous forward range [b..e] while preserving anchor 'b'
+  const r5 = computeCardSelection(r1.selectedIds, r1.lastSelectedId, 'e', ordered, { shiftKey: true });
+  assert.deepEqual(Array.from(r5.selectedIds), ['b', 'c', 'd', 'e']);
+  assert.equal(r5.lastSelectedId, 'b');
+
+  // 6. Reverse Shift+Click from anchor 'e' to 'b' selects [b..e]
+  const anchorE = computeCardSelection(new Set(), null, 'e', ordered);
+  const r6 = computeCardSelection(anchorE.selectedIds, anchorE.lastSelectedId, 'b', ordered, { shiftKey: true });
+  assert.deepEqual(Array.from(r6.selectedIds), ['b', 'c', 'd', 'e']);
+
+  // 7. Shift+Ctrl merges new range with existing non-contiguous selection
+  const existing = new Set(['a']);
+  const r7 = computeCardSelection(existing, 'c', 'e', ordered, { shiftKey: true, ctrlKey: true });
+  assert.deepEqual(Array.from(r7.selectedIds).sort(), ['a', 'c', 'd', 'e']);
+
+  // 8. Checkbox click preserves existing selection; fallback when anchor is missing selects clicked
+  const r8 = computeCardSelection(new Set(['a']), 'a', 'c', ordered, { fromCheckbox: true });
+  assert.deepEqual(Array.from(r8.selectedIds).sort(), ['a', 'c']);
+  const r9 = computeCardSelection(new Set(['missing']), 'missing', 'c', ordered, { shiftKey: true });
+  assert.deepEqual(Array.from(r9.selectedIds), ['c']);
+  assert.equal(r9.lastSelectedId, 'c');
+});
+
+test('getVisuallyOrderedPWAIds follows flat and grouped alphabetical render order', () => {
+  const makeItem = (id: string, group: string): PWAItem => ({
+    id,
+    name: id.toUpperCase(),
+    url: `https://${id}.example.com`,
+    category: group,
+    group,
+    notes: '',
+    lastAccessedDate: null,
+    accessCount: 0,
+    createdAt: '2026-11-01T00:00:00.000Z',
+  });
+
+  const list = [
+    makeItem('1', 'Zeta'),
+    makeItem('2', 'Alpha'),
+    makeItem('3', 'Zeta'),
+    makeItem('4', 'Alpha'),
+  ];
+
+  assert.deepEqual(getVisuallyOrderedPWAIds(list, false), ['1', '2', '3', '4']);
+  assert.deepEqual(getVisuallyOrderedPWAIds(list, true), ['2', '4', '1', '3']);
+});
+
 
 

@@ -32,6 +32,10 @@ interface FolderViewProps {
   groupColors?: Record<string, string>;
   selectedIds?: Set<string>;
   onToggleSelect?: (id: string) => void;
+  onSelectCard?: (
+    id: string,
+    modifiers: { shiftKey: boolean; ctrlKey: boolean; metaKey: boolean; fromCheckbox?: boolean }
+  ) => void;
   onToggleSelectAll?: () => void;
   onLaunch: (item: PWAItem) => void;
   onToggleStatus: (item: PWAItem) => void;
@@ -64,6 +68,7 @@ export const FolderView: React.FC<FolderViewProps> = ({
   groupColors = {},
   selectedIds = new Set<string>(),
   onToggleSelect,
+  onSelectCard,
   onToggleSelectAll,
   onLaunch,
   onToggleStatus,
@@ -542,6 +547,7 @@ export const FolderView: React.FC<FolderViewProps> = ({
             groupColors={groupColors}
             selectedIds={selectedIds}
             onToggleSelect={onToggleSelect}
+            onSelectCard={onSelectCard}
             onLaunch={onLaunch}
             onToggleStatus={onToggleStatus}
             onUpdateNote={onUpdateNote}

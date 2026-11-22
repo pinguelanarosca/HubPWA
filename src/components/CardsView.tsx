@@ -17,6 +17,10 @@ interface CardsViewProps {
   groupColors?: Record<string, string>;
   selectedIds?: Set<string>;
   onToggleSelect?: (id: string) => void;
+  onSelectCard?: (
+    id: string,
+    modifiers: { shiftKey: boolean; ctrlKey: boolean; metaKey: boolean; fromCheckbox?: boolean }
+  ) => void;
   onLaunch: (item: PWAItem) => void;
   onToggleStatus: (item: PWAItem) => void;
   onUpdateNote: (item: PWAItem, newNote: string) => void;
@@ -42,6 +46,7 @@ export const CardsView: React.FC<CardsViewProps> = ({
   groupColors = {},
   selectedIds = new Set<string>(),
   onToggleSelect,
+  onSelectCard,
   onLaunch,
   onToggleStatus,
   onUpdateNote,
@@ -106,13 +111,29 @@ export const CardsView: React.FC<CardsViewProps> = ({
           e.dataTransfer.setData('text/pwa-id', item.id);
           e.dataTransfer.effectAllowed = 'move';
         }}
-        className={`group relative p-3.5 rounded-xl bg-[#14151a] hover:bg-[#181920] transition-all flex flex-col justify-between ${
+        onMouseDown={(e) => {
+          if (e.shiftKey || e.ctrlKey || e.metaKey) {
+            e.preventDefault();
+          }
+        }}
+        onClick={(e) => {
+          if (onSelectCard) {
+            onSelectCard(item.id, {
+              shiftKey: e.shiftKey,
+              ctrlKey: e.ctrlKey,
+              metaKey: e.metaKey,
+            });
+          } else if (onToggleSelect) {
+            onToggleSelect(item.id);
+          }
+        }}
+        className={`group relative p-3.5 rounded-xl bg-[#14151a] hover:bg-[#181920] transition-all flex flex-col justify-between cursor-pointer select-none ${
           activeMenuId === item.id ? 'z-20' : ''
         } ${
           isAccessed
             ? 'border-[3px] border-emerald-400/90 hover:border-emerald-300 shadow-[0_0_20px_-4px_rgba(16,185,129,0.5),inset_0_0_30px_4px_rgba(16,185,129,0.34)]'
             : 'border-[3px] border-rose-500/90 hover:border-rose-400 shadow-[0_0_20px_-4px_rgba(244,63,94,0.48),inset_0_0_30px_4px_rgba(244,63,94,0.32)]'
-        } ${isSelected ? 'ring-2 ring-emerald-400 bg-[#1a1c24]' : ''}`}
+        } ${isSelected ? 'outline-2 outline-offset-2 outline-sky-400 bg-[#1a2030]' : ''}`}
       >
         {/* Inner Clipped Wrapper for Ambient Background Glows & Inward Border Smoke */}
         <div className="absolute inset-0 overflow-hidden rounded-[9px] pointer-events-none">
@@ -152,14 +173,23 @@ export const CardsView: React.FC<CardsViewProps> = ({
           <div className="flex items-center justify-between gap-1.5 mb-3">
             {/* Left: Interactive 5 Stars Rating + Chrome Profile Badge */}
             <div className="flex items-center gap-1 min-w-0">
-              {onToggleSelect && (
+              {(onSelectCard || onToggleSelect) && (
                 <button
                   type="button"
                   draggable={false}
                   onMouseDown={(e) => e.stopPropagation()}
                   onClick={(e) => {
                     e.stopPropagation();
-                    onToggleSelect(item.id);
+                    if (onSelectCard) {
+                      onSelectCard(item.id, {
+                        shiftKey: e.shiftKey,
+                        ctrlKey: e.ctrlKey,
+                        metaKey: e.metaKey,
+                        fromCheckbox: true,
+                      });
+                    } else if (onToggleSelect) {
+                      onToggleSelect(item.id);
+                    }
                   }}
                   data-testid={`select-pwa-${item.id}`}
                   aria-label={`Selecionar ${item.name}`}
@@ -250,6 +280,8 @@ export const CardsView: React.FC<CardsViewProps> = ({
                 {activeMenuId === item.id && (
                   <div
                     ref={menuRef}
+                    onClick={(e) => e.stopPropagation()}
+                    onMouseDown={(e) => e.stopPropagation()}
                     className="absolute right-0 top-full mt-1 z-30 w-52 bg-neutral-900 border border-neutral-800 rounded-lg shadow-xl py-1 text-xs text-neutral-200 animate-in fade-in zoom-in-95 duration-100"
                   >
                     <button
@@ -431,11 +463,19 @@ export const CardsView: React.FC<CardsViewProps> = ({
 
           {/* Card Middle Section: Large Icon on Left | Name, Access Log & Notes on Right */}
           <div className="flex items-start gap-3">
-            {/* Prominent Large Icon - Clicável para abrir */}
-            <div
-              onClick={() => onLaunch(item)}
-              className="shrink-0 transition-transform active:scale-95 group-hover:opacity-95 cursor-pointer"
-              title={`Abrir ${item.name}`}
+            {/* Prominent Large Icon - Somente o ícone abre a PWA */}
+            <button
+              type="button"
+              draggable={false}
+              data-testid={`launch-pwa-icon-${item.id}`}
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                onLaunch(item);
+              }}
+              className="shrink-0 rounded-2xl transition-transform hover:scale-105 active:scale-95 hover:ring-2 hover:ring-emerald-400/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 cursor-pointer"
+              title={`Clique no ícone para abrir ${item.name}`}
+              aria-label={`Abrir ${item.name}`}
             >
               <PWAIcon
                 icon={item.icon}
@@ -444,15 +484,14 @@ export const CardsView: React.FC<CardsViewProps> = ({
                 size="xl"
                 className="w-14 h-14 rounded-2xl shadow-md border border-neutral-800/80 bg-neutral-900 object-cover"
               />
-            </div>
+            </button>
 
             {/* Right Information Column */}
             <div className="min-w-0 flex-1">
-              {/* 1. PWA Name - Clicável para abrir */}
+              {/* 1. PWA Name (clicking card/name selects the PWA) */}
               <h3
-                onClick={() => onLaunch(item)}
-                className="font-bold text-sm text-white hover:text-emerald-400 cursor-pointer truncate transition-colors leading-snug"
-                title={`Abrir ${item.name} (${grpName})`}
+                className="font-bold text-sm text-white truncate transition-colors leading-snug"
+                title={`${item.name} (${grpName}) — Clique no card para selecionar`}
               >
                 {item.name}
               </h3>

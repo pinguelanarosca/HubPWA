@@ -9,6 +9,11 @@ interface MiniCardsViewProps {
   items: PWAItem[];
   todayStr: string;
   selectedIds?: Set<string>;
+  onToggleSelect?: (id: string) => void;
+  onSelectCard?: (
+    id: string,
+    modifiers: { shiftKey: boolean; ctrlKey: boolean; metaKey: boolean; fromCheckbox?: boolean }
+  ) => void;
   onLaunch: (item: PWAItem) => void;
   groupByGroup?: boolean;
 }
@@ -17,6 +22,8 @@ export const MiniCardsView: React.FC<MiniCardsViewProps> = ({
   items,
   todayStr,
   selectedIds = new Set<string>(),
+  onToggleSelect,
+  onSelectCard,
   onLaunch,
   groupByGroup = false,
 }) => {
@@ -38,11 +45,27 @@ export const MiniCardsView: React.FC<MiniCardsViewProps> = ({
       <div
         key={renderKey}
         data-testid={`mini-card-${item.id}`}
-        className={`group relative overflow-hidden rounded-xl bg-[#14151a] hover:bg-[#181920] transition-all flex items-stretch min-h-[78px] ${
+        onMouseDown={(e) => {
+          if (e.shiftKey || e.ctrlKey || e.metaKey) {
+            e.preventDefault();
+          }
+        }}
+        onClick={(e) => {
+          if (onSelectCard) {
+            onSelectCard(item.id, {
+              shiftKey: e.shiftKey,
+              ctrlKey: e.ctrlKey,
+              metaKey: e.metaKey,
+            });
+          } else if (onToggleSelect) {
+            onToggleSelect(item.id);
+          }
+        }}
+        className={`group relative overflow-hidden rounded-xl bg-[#14151a] hover:bg-[#181920] transition-all flex items-stretch min-h-[78px] cursor-pointer select-none ${
           isAccessed
             ? 'border-[3px] border-emerald-400/90 hover:border-emerald-300 shadow-[0_0_18px_-4px_rgba(16,185,129,0.48),inset_0_0_24px_3px_rgba(16,185,129,0.32)]'
             : 'border-[3px] border-rose-500/90 hover:border-rose-400 shadow-[0_0_18px_-4px_rgba(244,63,94,0.45),inset_0_0_24px_3px_rgba(244,63,94,0.3)]'
-        } ${isSelected ? 'ring-2 ring-emerald-400 bg-[#1a1c24]' : ''}`}
+        } ${isSelected ? 'outline-2 outline-offset-2 outline-sky-400 bg-[#1a2030]' : ''}`}
       >
         <div
           aria-hidden="true"
@@ -55,9 +78,14 @@ export const MiniCardsView: React.FC<MiniCardsViewProps> = ({
         {/* Left: Full-height prominent Icon occupying top to bottom */}
         <button
           type="button"
-          onClick={() => onLaunch(item)}
+          data-testid={`mini-launch-pwa-icon-${item.id}`}
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation();
+            onLaunch(item);
+          }}
           className="relative z-10 w-[76px] sm:w-[82px] self-stretch shrink-0 p-1.5 bg-neutral-950/75 hover:bg-neutral-900/95 border-r border-white/[0.08] flex items-center justify-center transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-emerald-400"
-          title={`Abrir ${item.name}`}
+          title={`Clique no ícone para abrir ${item.name}`}
           aria-label={`Abrir ${item.name}`}
         >
           <PWAIcon
@@ -73,9 +101,8 @@ export const MiniCardsView: React.FC<MiniCardsViewProps> = ({
         <div className="relative z-10 flex-1 min-w-0 px-3 py-2 flex flex-col justify-center gap-2">
           <div className="flex items-center justify-between gap-2 min-w-0">
             <h3
-              onClick={() => onLaunch(item)}
-              className="font-bold text-sm text-white hover:text-emerald-400 cursor-pointer truncate transition-colors leading-tight"
-              title={`Abrir ${item.name}`}
+              className="font-bold text-sm text-white truncate transition-colors leading-tight"
+              title={`${item.name} — Clique no card para selecionar`}
             >
               {item.name}
             </h3>

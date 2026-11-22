@@ -196,18 +196,19 @@ test('Star Rating Confirmation workflow: changing stars sets pending state and a
   assert.equal(pendingRatingChange, null);
 });
 
-test('Launch Target constraint: only icon and name are valid launch triggers', () => {
-  const validLaunchTargets = new Set(['icon', 'name']);
+test('Launch Target constraint: only icon triggers launch; card surface and name select instead', () => {
+  const validLaunchTargets = new Set(['icon']);
 
   const canTriggerLaunch = (targetType: 'card-bg' | 'stars' | 'status-badge' | 'notes' | 'icon' | 'name') => {
     return validLaunchTargets.has(targetType);
   };
 
   assert.equal(canTriggerLaunch('card-bg'), false, 'Clicking card background must NOT launch PWA');
+  assert.equal(canTriggerLaunch('name'), false, 'Clicking name must select card and NOT launch PWA');
   assert.equal(canTriggerLaunch('stars'), false, 'Clicking stars must NOT launch PWA');
   assert.equal(canTriggerLaunch('status-badge'), false, 'Clicking status badge must NOT launch PWA');
   assert.equal(canTriggerLaunch('notes'), false, 'Clicking notes field must NOT launch PWA');
   assert.equal(canTriggerLaunch('icon'), true, 'Clicking icon MUST launch PWA');
-  assert.equal(canTriggerLaunch('name'), true, 'Clicking name MUST launch PWA');
 });
+
 

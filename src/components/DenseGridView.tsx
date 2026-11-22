@@ -11,6 +11,12 @@ import { isAccessedToday, getCleanDomain, formatAccessDateTime, formatChromeProf
 interface DenseGridViewProps {
   items: PWAItem[];
   todayStr: string;
+  selectedIds?: Set<string>;
+  onToggleSelect?: (id: string) => void;
+  onSelectCard?: (
+    id: string,
+    modifiers: { shiftKey: boolean; ctrlKey: boolean; metaKey: boolean; fromCheckbox?: boolean }
+  ) => void;
   onLaunch: (item: PWAItem) => void;
   onToggleStatus: (item: PWAItem) => void;
   onUpdateNote: (item: PWAItem, newNote: string) => void;
@@ -26,6 +32,9 @@ interface DenseGridViewProps {
 export const DenseGridView: React.FC<DenseGridViewProps> = ({
   items,
   todayStr,
+  selectedIds = new Set<string>(),
+  onToggleSelect,
+  onSelectCard,
   onLaunch,
   onToggleStatus,
   onUpdateNote,
@@ -56,6 +65,7 @@ export const DenseGridView: React.FC<DenseGridViewProps> = ({
         const currentRating = typeof item.rating === 'number' ? item.rating : (item.pinned ? 5 : 0);
         const accessLog = formatAccessDateTime(item.lastAccessedDate);
         const chromeProfile = formatChromeProfileDisplay(item);
+        const isSelected = selectedIds.has(item.id);
         const baseKey = item.id || `idx_${idx}`;
         const keyCount = seenKeys.get(baseKey) || 0;
         seenKeys.set(baseKey, keyCount + 1);
@@ -64,11 +74,28 @@ export const DenseGridView: React.FC<DenseGridViewProps> = ({
         return (
           <div
             key={renderKey}
-            className={`group relative overflow-hidden flex flex-col justify-between p-2.5 rounded-lg border-[3px] bg-neutral-900/40 hover:bg-neutral-900/80 transition-all ${
+            data-testid={`dense-card-${item.id}`}
+            onMouseDown={(e) => {
+              if (e.shiftKey || e.ctrlKey || e.metaKey) {
+                e.preventDefault();
+              }
+            }}
+            onClick={(e) => {
+              if (onSelectCard) {
+                onSelectCard(item.id, {
+                  shiftKey: e.shiftKey,
+                  ctrlKey: e.ctrlKey,
+                  metaKey: e.metaKey,
+                });
+              } else if (onToggleSelect) {
+                onToggleSelect(item.id);
+              }
+            }}
+            className={`group relative overflow-hidden flex flex-col justify-between p-2.5 rounded-lg border-[3px] bg-neutral-900/40 hover:bg-neutral-900/80 transition-all cursor-pointer select-none ${
               accessed
                 ? 'border-emerald-400/90 hover:border-emerald-300 shadow-[0_0_18px_-4px_rgba(16,185,129,0.46),inset_0_0_24px_3px_rgba(16,185,129,0.3)]'
                 : 'border-rose-500/90 hover:border-rose-400 shadow-[0_0_18px_-4px_rgba(244,63,94,0.44),inset_0_0_24px_3px_rgba(244,63,94,0.28)]'
-            }`}
+            } ${isSelected ? 'outline-2 outline-offset-2 outline-sky-400 bg-[#1a2030]' : ''}`}
           >
             <div
               aria-hidden="true"
@@ -82,18 +109,24 @@ export const DenseGridView: React.FC<DenseGridViewProps> = ({
             <div className="relative z-10">
               <div className="flex items-start justify-between gap-1.5 mb-1.5">
                 <div className="flex items-center gap-2 min-w-0">
-                  <div
-                    className="cursor-pointer shrink-0 transition-transform active:scale-95"
-                    onClick={() => onLaunch(item)}
-                    title={`Abrir ${item.name} (marca como acessado hoje)`}
+                  <button
+                    type="button"
+                    data-testid={`dense-launch-pwa-icon-${item.id}`}
+                    className="cursor-pointer shrink-0 rounded-lg transition-transform hover:scale-105 active:scale-95 hover:ring-2 hover:ring-emerald-400/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
+                    onMouseDown={(e) => e.stopPropagation()}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onLaunch(item);
+                    }}
+                    title={`Clique no ícone para abrir ${item.name}`}
+                    aria-label={`Abrir ${item.name}`}
                   >
                     <PWAIcon icon={item.icon} name={item.name} url={item.url} size="md" />
-                  </div>
+                  </button>
                   <div className="min-w-0">
                     <h3
-                      onClick={() => onLaunch(item)}
-                      className="font-semibold text-xs text-neutral-200 group-hover:text-emerald-400 truncate cursor-pointer transition-colors"
-                      title={item.name}
+                      className="font-semibold text-xs text-neutral-200 truncate transition-colors"
+                      title={`${item.name} — Clique no card para selecionar`}
                     >
                       {item.name}
                     </h3>
@@ -208,7 +241,10 @@ export const DenseGridView: React.FC<DenseGridViewProps> = ({
                 {onClone && (
                   <button
                     type="button"
-                    onClick={() => onClone(item)}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onClone(item);
+                    }}
                     title={`Clonar ${item.name} para outro Perfil`}
                     aria-label={`Clonar ${item.name} para outro Perfil`}
                     className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-neutral-400 hover:text-sky-300 hover:bg-sky-950/40 text-[10px] font-medium transition-colors cursor-pointer"
@@ -219,7 +255,10 @@ export const DenseGridView: React.FC<DenseGridViewProps> = ({
                 )}
                 <button
                   type="button"
-                  onClick={() => onEdit(item)}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onEdit(item);
+                  }}
                   title={`Editar ${item.name}`}
                   aria-label={`Editar ${item.name}`}
                   className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-neutral-400 hover:text-white hover:bg-neutral-800 text-[10px] font-medium transition-colors cursor-pointer"
@@ -229,7 +268,10 @@ export const DenseGridView: React.FC<DenseGridViewProps> = ({
                 </button>
                 <button
                   type="button"
-                  onClick={() => onDelete(item.id)}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onDelete(item.id);
+                  }}
                   title={`Excluir ${item.name}`}
                   aria-label={`Excluir ${item.name}`}
                   className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-neutral-400 hover:text-rose-400 hover:bg-rose-950/40 text-[10px] font-medium transition-colors cursor-pointer"
@@ -241,7 +283,10 @@ export const DenseGridView: React.FC<DenseGridViewProps> = ({
 
               <button
                 type="button"
-                onClick={() => onLaunch(item)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onLaunch(item);
+                }}
                 className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-200 hover:text-white text-[11px] font-medium transition-colors cursor-pointer shrink-0"
               >
                 <ExternalLink className="w-2.5 h-2.5 text-emerald-400" />

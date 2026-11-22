@@ -12,6 +12,12 @@ interface CompactTableViewProps {
   items: PWAItem[];
   todayStr: string;
   folders?: PWAFolder[];
+  selectedIds?: Set<string>;
+  onToggleSelect?: (id: string) => void;
+  onSelectCard?: (
+    id: string,
+    modifiers: { shiftKey: boolean; ctrlKey: boolean; metaKey: boolean; fromCheckbox?: boolean }
+  ) => void;
   onLaunch: (item: PWAItem) => void;
   onToggleStatus: (item: PWAItem) => void;
   onUpdateNote: (item: PWAItem, newNote: string) => void;
@@ -29,6 +35,9 @@ export const CompactTableView: React.FC<CompactTableViewProps> = ({
   items,
   todayStr,
   folders = [],
+  selectedIds = new Set<string>(),
+  onToggleSelect,
+  onSelectCard,
   onLaunch,
   onToggleStatus,
   onUpdateNote,
@@ -76,6 +85,7 @@ export const CompactTableView: React.FC<CompactTableViewProps> = ({
             const assignedFolder = item.folderId ? folderMap.get(item.folderId) : null;
             const chromeProfile = formatChromeProfileDisplay(item);
             const accessed = isAccessedToday(item.lastAccessedDate, todayStr);
+            const isSelected = selectedIds.has(item.id);
             const baseKey = item.id || `idx_${idx}`;
             const keyCount = seenRowKeys.get(baseKey) || 0;
             seenRowKeys.set(baseKey, keyCount + 1);
@@ -84,9 +94,26 @@ export const CompactTableView: React.FC<CompactTableViewProps> = ({
             return (
               <tr
                 key={renderKey}
-                className={`group hover:bg-neutral-900/50 transition-colors h-9 border-l-[3px] ${
+                data-testid={`table-row-${item.id}`}
+                onMouseDown={(e) => {
+                  if (e.shiftKey || e.ctrlKey || e.metaKey) {
+                    e.preventDefault();
+                  }
+                }}
+                onClick={(e) => {
+                  if (onSelectCard) {
+                    onSelectCard(item.id, {
+                      shiftKey: e.shiftKey,
+                      ctrlKey: e.ctrlKey,
+                      metaKey: e.metaKey,
+                    });
+                  } else if (onToggleSelect) {
+                    onToggleSelect(item.id);
+                  }
+                }}
+                className={`group hover:bg-neutral-900/50 transition-colors h-9 border-l-[3px] cursor-pointer select-none ${
                   accessed ? 'border-l-emerald-500' : 'border-l-rose-500'
-                }`}
+                } ${isSelected ? 'bg-sky-950/35 ring-1 ring-inset ring-sky-400/80' : ''}`}
               >
                 {/* 1 to 5 Star Rating + Chrome Profile */}
                 <td className="py-1 px-3 whitespace-nowrap">
@@ -129,7 +156,10 @@ export const CompactTableView: React.FC<CompactTableViewProps> = ({
                   <button
                     type="button"
                     data-testid={`table-history-btn-${item.id}`}
-                    onClick={() => onViewHistory && onViewHistory(item)}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (onViewHistory) onViewHistory(item);
+                    }}
                     disabled={!onViewHistory}
                     className={`inline-flex items-center gap-1.5 font-mono text-[11px] rounded px-2 py-0.5 transition-colors ${
                       accessLog.hasRecord
@@ -166,16 +196,25 @@ export const CompactTableView: React.FC<CompactTableViewProps> = ({
                   </button>
                 </td>
 
-                {/* PWA Icon + Name + Link (Clicável para Abrir PWA) */}
-                <td
-                  className="py-1 px-3 cursor-pointer hover:opacity-80 transition-opacity"
-                  onClick={() => onLaunch(item)}
-                  title={`Abrir ${item.name}`}
-                >
+                {/* PWA Icon (Abre PWA) + Name & Link (Seleciona PWA) */}
+                <td className="py-1 px-3">
                   <div className="flex items-center gap-2 max-w-xs">
-                    <PWAIcon icon={item.icon} name={item.name} url={item.url} size="sm" />
+                    <button
+                      type="button"
+                      data-testid={`table-launch-pwa-icon-${item.id}`}
+                      onMouseDown={(e) => e.stopPropagation()}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onLaunch(item);
+                      }}
+                      title={`Clique no ícone para abrir ${item.name}`}
+                      aria-label={`Abrir ${item.name}`}
+                      className="shrink-0 rounded-md transition-transform hover:scale-110 active:scale-95 hover:ring-2 hover:ring-emerald-400/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 cursor-pointer"
+                    >
+                      <PWAIcon icon={item.icon} name={item.name} url={item.url} size="sm" />
+                    </button>
                     <div className="min-w-0 truncate">
-                      <span className="font-medium text-neutral-200 group-hover:text-emerald-400 truncate block">
+                      <span className="font-medium text-neutral-200 truncate block">
                         {item.name}
                       </span>
                       <span className="text-[10px] text-neutral-400 truncate flex items-center gap-1.5">
@@ -205,7 +244,7 @@ export const CompactTableView: React.FC<CompactTableViewProps> = ({
                 </td>
 
                 {/* Compact Inline Editable Notes Field */}
-                <td className="py-1 px-3">
+                <td className="py-1 px-3" onClick={(e) => e.stopPropagation()}>
                   <InlineNoteInput
                     initialValue={item.notes}
                     onSave={(newNote) => onUpdateNote(item, newNote)}
@@ -232,7 +271,10 @@ export const CompactTableView: React.FC<CompactTableViewProps> = ({
                     {onClone && (
                       <button
                         type="button"
-                        onClick={() => onClone(item)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onClone(item);
+                        }}
                         title={`Clonar ${item.name} para outro Perfil`}
                         aria-label={`Clonar ${item.name} para outro Perfil`}
                         className="p-1 rounded text-neutral-400 hover:text-sky-300 hover:bg-sky-950/40 transition-colors cursor-pointer"
@@ -242,7 +284,10 @@ export const CompactTableView: React.FC<CompactTableViewProps> = ({
                     )}
                     <button
                       type="button"
-                      onClick={() => onEdit(item)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onEdit(item);
+                      }}
                       title={`Editar ${item.name}`}
                       aria-label={`Editar ${item.name}`}
                       className="p-1 rounded text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors cursor-pointer"
@@ -251,7 +296,10 @@ export const CompactTableView: React.FC<CompactTableViewProps> = ({
                     </button>
                     <button
                       type="button"
-                      onClick={() => onDelete(item.id)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onDelete(item.id);
+                      }}
                       title={`Excluir ${item.name}`}
                       aria-label={`Excluir ${item.name}`}
                       className="p-1 rounded text-neutral-400 hover:text-rose-400 hover:bg-rose-950/40 transition-colors cursor-pointer"

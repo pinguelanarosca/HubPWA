@@ -46,6 +46,8 @@ export const InlineNoteInput: React.FC<InlineNoteInputProps> = ({
         autoFocus
         value={value}
         onChange={(e) => setValue(e.target.value)}
+        onClick={(e) => e.stopPropagation()}
+        onMouseDown={(e) => e.stopPropagation()}
         onBlur={handleBlur}
         onKeyDown={handleKeyDown}
         placeholder={placeholder}
