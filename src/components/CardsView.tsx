@@ -488,12 +488,21 @@ export const CardsView: React.FC<CardsViewProps> = ({
 
             {/* Right Information Column */}
             <div className="min-w-0 flex-1">
-              {/* 1. PWA Name (clicking card/name selects the PWA) */}
-              <h3
-                className="font-bold text-sm text-white truncate transition-colors leading-snug"
-                title={`${item.name} (${grpName}) — Clique no card para selecionar`}
-              >
-                {item.name}
+              {/* 1. PWA Name - Clicável para abrir a PWA */}
+              <h3 className="leading-snug truncate">
+                <button
+                  type="button"
+                  data-testid={`launch-pwa-name-${item.id}`}
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onLaunch(item);
+                  }}
+                  className="max-w-full font-bold text-sm text-white hover:text-emerald-400 cursor-pointer truncate transition-colors text-left align-top focus-visible:outline-none focus-visible:underline"
+                  title={`Abrir ${item.name} (${grpName})`}
+                >
+                  {item.name}
+                </button>
               </h3>
 
               {/* 2. Access Log: DD/MM - HH:MM (clickable to open Day/Time History) & Folder indicator */}

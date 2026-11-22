@@ -214,9 +214,19 @@ export const CompactTableView: React.FC<CompactTableViewProps> = ({
                       <PWAIcon icon={item.icon} name={item.name} url={item.url} size="sm" />
                     </button>
                     <div className="min-w-0 truncate">
-                      <span className="font-medium text-neutral-200 truncate block">
+                      <button
+                        type="button"
+                        data-testid={`table-launch-pwa-name-${item.id}`}
+                        onMouseDown={(e) => e.stopPropagation()}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onLaunch(item);
+                        }}
+                        title={`Abrir ${item.name}`}
+                        className="max-w-full font-medium text-neutral-200 hover:text-emerald-400 truncate block cursor-pointer transition-colors text-left focus-visible:outline-none focus-visible:underline"
+                      >
                         {item.name}
-                      </span>
+                      </button>
                       <span className="text-[10px] text-neutral-400 truncate flex items-center gap-1.5">
                         <span className="truncate">{domain}</span>
                         {assignedFolder && (

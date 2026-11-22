@@ -124,11 +124,20 @@ export const DenseGridView: React.FC<DenseGridViewProps> = ({
                     <PWAIcon icon={item.icon} name={item.name} url={item.url} size="md" />
                   </button>
                   <div className="min-w-0">
-                    <h3
-                      className="font-semibold text-xs text-neutral-200 truncate transition-colors"
-                      title={`${item.name} — Clique no card para selecionar`}
-                    >
-                      {item.name}
+                    <h3 className="truncate">
+                      <button
+                        type="button"
+                        data-testid={`dense-launch-pwa-name-${item.id}`}
+                        onMouseDown={(e) => e.stopPropagation()}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onLaunch(item);
+                        }}
+                        className="max-w-full font-semibold text-xs text-neutral-200 hover:text-emerald-400 truncate cursor-pointer transition-colors text-left align-top focus-visible:outline-none focus-visible:underline"
+                        title={`Abrir ${item.name}`}
+                      >
+                        {item.name}
+                      </button>
                     </h3>
                     <p
                       className="text-[10px] text-neutral-400 truncate flex items-center gap-1"

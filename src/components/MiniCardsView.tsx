@@ -100,11 +100,20 @@ export const MiniCardsView: React.FC<MiniCardsViewProps> = ({
         {/* Right: Name + optional read-only $ date on top, read-only COM/RB/BON status dots below */}
         <div className="relative z-10 flex-1 min-w-0 px-3 py-2 flex flex-col justify-center gap-2">
           <div className="flex items-center justify-between gap-2 min-w-0">
-            <h3
-              className="font-bold text-sm text-white truncate transition-colors leading-tight"
-              title={`${item.name} — Clique no card para selecionar`}
-            >
-              {item.name}
+            <h3 className="min-w-0 leading-tight truncate">
+              <button
+                type="button"
+                data-testid={`mini-launch-pwa-name-${item.id}`}
+                onMouseDown={(e) => e.stopPropagation()}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onLaunch(item);
+                }}
+                className="max-w-full font-bold text-sm text-white hover:text-emerald-400 cursor-pointer truncate transition-colors text-left align-top focus-visible:outline-none focus-visible:underline"
+                title={`Abrir ${item.name}`}
+              >
+                {item.name}
+              </button>
             </h3>
 
             {moneyDate && (
