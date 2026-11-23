@@ -16,6 +16,7 @@ import {
   RefreshCw,
   Terminal,
   Image as ImageIcon,
+  FileUp,
 } from 'lucide-react';
 import { PWAStats } from '../types/pwa';
 
@@ -41,6 +42,7 @@ interface TopBarProps {
   onRefreshAllIcons?: () => void;
   onRescanLocalPWAs?: () => void;
   onSyncProfileHistory?: () => void;
+  onSelectMarkdownStatusFile?: (file: File) => void;
   isSyncingHistory?: boolean;
   activityStatus?: TopBarActivityStatus;
 }
@@ -58,16 +60,26 @@ export const TopBar: React.FC<TopBarProps> = ({
   onRefreshAllIcons,
   onRescanLocalPWAs,
   onSyncProfileHistory,
+  onSelectMarkdownStatusFile,
   isSyncingHistory = false,
   activityStatus,
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const mdStatusInputRef = useRef<HTMLInputElement>(null);
 
   const handleFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
       onSelectDesktopFiles(e.target.files);
       e.target.value = '';
     }
+  };
+
+  const handleMdStatusFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file && onSelectMarkdownStatusFile) {
+      onSelectMarkdownStatusFile(file);
+    }
+    e.target.value = '';
   };
 
   const handleOpenExplorer = () => {
@@ -96,6 +108,15 @@ export const TopBar: React.FC<TopBarProps> = ({
         className="hidden"
         aria-hidden="true"
         data-testid="ubuntu-desktop-file-input"
+      />
+      <input
+        ref={mdStatusInputRef}
+        type="file"
+        accept=".md,.markdown,text/markdown"
+        onChange={handleMdStatusFileChange}
+        className="hidden"
+        aria-hidden="true"
+        data-testid="topbar-md-status-file-input"
       />
 
       <div className="max-w-7xl mx-auto px-3 sm:px-4 py-1.5 flex items-center justify-between gap-2 min-w-0">
@@ -285,6 +306,18 @@ export const TopBar: React.FC<TopBarProps> = ({
                 </button>
               )}
               <div className="border-t border-[#242633] my-1" />
+              {onSelectMarkdownStatusFile && (
+                <button
+                  type="button"
+                  data-testid="topbar-import-md-status-btn"
+                  onClick={() => mdStatusInputRef.current?.click()}
+                  title="Enviar documento .md exportado para atualizar somente o status (Acessada/Pendente) das PWAs"
+                  className="w-full text-left px-3 py-2 text-neutral-200 hover:bg-[#1e2028] hover:text-sky-300 flex items-center gap-2 cursor-pointer font-medium"
+                >
+                  <FileUp className="w-3.5 h-3.5 text-sky-400" />
+                  <span>Atualizar Status via .md</span>
+                </button>
+              )}
               <button
                 type="button"
                 onClick={onOpenBackupModal}

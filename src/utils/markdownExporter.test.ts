@@ -1,9 +1,16 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { PWAItem } from '../types/pwa';
-import { buildPWAsMarkdownContent, formatExportChromeProfile } from './markdownExporter';
+import { isAccessedToday } from './pwaLogic';
+import {
+  applyMarkdownAccessUpdates,
+  buildPWAsMarkdownContent,
+  formatExportChromeProfile,
+  parseAccessFlagValue,
+  parsePWAMarkdownAccessEntries,
+} from './markdownExporter';
 
-test('buildPWAsMarkdownContent filters selected items and includes Chrome profile information', () => {
+test('buildPWAsMarkdownContent filters selected items and includes Chrome profile and current Acesso status', () => {
   const dummyPWAs: PWAItem[] = [
     {
       id: '1',
@@ -13,7 +20,7 @@ test('buildPWAsMarkdownContent filters selected items and includes Chrome profil
       group: 'Dev',
       notes: 'Code review',
       profileDirectory: 'Profile 5',
-      lastAccessedDate: '2026-11-07T08:00:00Z',
+      lastAccessedDate: '2026-11-22T08:00:00Z',
       accessCount: 5,
       createdAt: '2026-10-01',
     },
@@ -48,15 +55,16 @@ test('buildPWAsMarkdownContent filters selected items and includes Chrome profil
       category: 'Geral',
       group: 'Geral',
       notes: '',
-      lastAccessedDate: null,
-      accessCount: 0,
+      lastAccessedDate: '2026-11-20T09:00:00Z',
+      accessCount: 1,
       createdAt: '2026-10-01',
     },
   ];
 
   const selected = new Set(['1', '3', '4']);
   const md = buildPWAsMarkdownContent(dummyPWAs, selected, {
-    now: new Date('2026-11-22T15:30:00Z'),
+    now: new Date(2026, 10, 22, 15, 30, 0),
+    todayStr: '2026-11-22',
     chromeProfiles: [
       { directory: 'Profile 5', displayName: 'Conta Trabalho' },
       { directory: 'Profile 2', displayName: 'Profile 2' },
@@ -65,8 +73,10 @@ test('buildPWAsMarkdownContent filters selected items and includes Chrome profil
 
   assert.ok(md.includes('### [GitHub](https://github.com)'));
   assert.ok(md.includes('- **Perfil do Chrome:** Perfil 5 (Profile 5) — Conta Trabalho'));
+  assert.ok(md.includes('- **Acesso:** Sim'));
   assert.ok(md.includes('### [Linear](https://linear.app)'));
   assert.ok(md.includes('- **Perfil do Chrome:** Perfil 2 (Profile 2)'));
+  assert.ok(md.includes('- **Acesso:** Não'));
   assert.ok(md.includes('### [SemPerfil](https://semperfil.example.com)'));
   assert.ok(md.includes('- **Perfil do Chrome:** Padrão do Chrome (não especificado)'));
   assert.equal(md.includes('https://figma.com'), false, 'Unselected PWA must not appear');
@@ -90,5 +100,94 @@ test('formatExportChromeProfile handles Default profile cleanly', () => {
     formatExportChromeProfile(defaultItem, [{ directory: 'Default', displayName: 'Pessoal' }]),
     'Default — Pessoal (Padrão)'
   );
+});
+
+test('parseAccessFlagValue parses Sim/Não variants reliably', () => {
+  assert.equal(parseAccessFlagValue('Sim'), true);
+  assert.equal(parseAccessFlagValue('  sim '), true);
+  assert.equal(parseAccessFlagValue('verde'), true);
+  assert.equal(parseAccessFlagValue('Não'), false);
+  assert.equal(parseAccessFlagValue('nao'), false);
+  assert.equal(parseAccessFlagValue('Pendente'), false);
+  assert.equal(parseAccessFlagValue('talvez'), null);
+});
+
+test('applyMarkdownAccessUpdates updates only status (pending<->accessed) cleanly without adding new PWAs', () => {
+  const todayStr = '2026-11-23';
+  const now = new Date(2026, 10, 23, 10, 0, 0);
+
+  const items: PWAItem[] = [
+    {
+      id: 'bet-p1',
+      name: 'Bet (Perfil 1)',
+      url: 'https://bet.example.com',
+      category: 'Geral',
+      notes: '',
+      profileDirectory: 'Profile 1',
+      lastAccessedDate: null,
+      accessCount: 0,
+      createdAt: '2026-10-01',
+    },
+    {
+      id: 'bet-p5',
+      name: 'Bet (Perfil 5)',
+      url: 'https://bet.example.com',
+      category: 'Geral',
+      notes: '',
+      profileDirectory: 'Profile 5',
+      lastAccessedDate: '2026-11-23T08:00:00.000Z',
+      accessCount: 3,
+      createdAt: '2026-10-01',
+    },
+    {
+      id: 'keep-p1',
+      name: 'Keep',
+      url: 'https://keep.google.com',
+      category: 'Geral',
+      notes: '',
+      profileDirectory: 'Default',
+      lastAccessedDate: null,
+      accessCount: 2,
+      createdAt: '2026-10-01',
+    },
+  ];
+
+  // Export Bet P1 (Não -> changed by user to Sim), Bet P5 (Sim -> changed by user to Não), Keep (remains Não), plus an unknown PWA
+  const exported = buildPWAsMarkdownContent(items, new Set(['bet-p1', 'bet-p5', 'keep-p1']), {
+    now,
+    todayStr,
+  });
+  const editedMarkdown =
+    exported
+      .replace(
+        /### \[Bet \(Perfil 1\)\][\s\S]*?- \*\*Acesso:\*\* Não/,
+        (block) => block.replace('- **Acesso:** Não', '- **Acesso:** Sim')
+      )
+      .replace(
+        /### \[Bet \(Perfil 5\)\][\s\S]*?- \*\*Acesso:\*\* Sim/,
+        (block) => block.replace('- **Acesso:** Sim', '- **Acesso:** Não')
+      ) +
+    `\n### [Nova PWA Inexistente](https://unknown.example.com)\n- **URL:** \`https://unknown.example.com\`\n- **Acesso:** Sim\n`;
+
+  const parsedEntries = parsePWAMarkdownAccessEntries(editedMarkdown);
+  assert.equal(parsedEntries.length, 4);
+
+  const result = applyMarkdownAccessUpdates(items, editedMarkdown, { now, todayStr });
+
+  assert.equal(result.items.length, 3, 'Must never add new PWAs from uploaded markdown');
+  assert.equal(result.markedAccessedCount, 1);
+  assert.equal(result.markedPendingCount, 1);
+  assert.equal(result.unchangedCount, 1);
+  assert.equal(result.unmatchedCount, 1);
+
+  const updatedBetP1 = result.items.find((i) => i.id === 'bet-p1')!;
+  const updatedBetP5 = result.items.find((i) => i.id === 'bet-p5')!;
+  const unchangedKeep = result.items.find((i) => i.id === 'keep-p1')!;
+
+  assert.equal(isAccessedToday(updatedBetP1.lastAccessedDate, todayStr), true);
+  assert.equal(updatedBetP1.accessCount, 1);
+  assert.equal(isAccessedToday(updatedBetP5.lastAccessedDate, todayStr), false);
+  assert.equal(isAccessedToday(unchangedKeep.lastAccessedDate, todayStr), false);
+  assert.equal(unchangedKeep.accessCount, 2, 'Unchanged item must not increment accessCount');
 });
 

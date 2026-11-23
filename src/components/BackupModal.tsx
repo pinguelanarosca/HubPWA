@@ -1,13 +1,15 @@
-import React, { useState } from 'react';
-import { X, Download, Upload, Copy, Check, AlertCircle, Trash2 } from 'lucide-react';
+import React, { useRef, useState } from 'react';
+import { X, Download, Upload, Copy, Check, AlertCircle, Trash2, FileUp } from 'lucide-react';
 import { PWAItem } from '../types/pwa';
 import { exportPWAsToJson, importPWAsFromJson } from '../utils/pwaLogic';
+import { MarkdownStatusApplyResult } from '../utils/markdownExporter';
 
 interface BackupModalProps {
   isOpen: boolean;
   onClose: () => void;
   items: PWAItem[];
   onImport: (newItems: PWAItem[], mode: 'replace' | 'merge') => void;
+  onImportMarkdownStatus?: (markdownText: string) => MarkdownStatusApplyResult;
   onClearAll: () => void;
 }
 
@@ -16,16 +18,51 @@ export const BackupModal: React.FC<BackupModalProps> = ({
   onClose,
   items,
   onImport,
+  onImportMarkdownStatus,
   onClearAll,
 }) => {
+  const mdInputRef = useRef<HTMLInputElement>(null);
   const [copied, setCopied] = useState(false);
   const [importText, setImportText] = useState('');
   const [importMode, setImportMode] = useState<'merge' | 'replace'>('merge');
   const [importError, setImportError] = useState('');
   const [importSuccess, setImportSuccess] = useState('');
+  const [mdStatusMessage, setMdStatusMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [confirmingClear, setConfirmingClear] = useState(false);
 
   if (!isOpen) return null;
+
+  const handleMdFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file || !onImportMarkdownStatus) return;
+    setMdStatusMessage(null);
+    try {
+      const content = await file.text();
+      const res = onImportMarkdownStatus(content);
+      if (res.parsedCount === 0) {
+        setMdStatusMessage({
+          type: 'error',
+          text: 'Nenhuma PWA com o parâmetro "Acesso: Sim/Não" foi encontrada no arquivo .md.',
+        });
+      } else if (res.matchedCount === 0) {
+        setMdStatusMessage({
+          type: 'error',
+          text: `Nenhuma das ${res.parsedCount} PWAs do documento corresponde às cadastradas no Hub (nenhuma PWA adicionada).`,
+        });
+      } else {
+        setMdStatusMessage({
+          type: 'success',
+          text: `Status atualizado: ${res.markedAccessedCount} marcada(s) como acessadas (verde), ${res.markedPendingCount} como pendente(s) (vermelha), ${res.unchangedCount} sem alteração.`,
+        });
+      }
+    } catch {
+      setMdStatusMessage({
+        type: 'error',
+        text: 'Não foi possível ler o arquivo .md selecionado.',
+      });
+    }
+  };
 
   const jsonContent = exportPWAsToJson(items);
 
@@ -169,6 +206,54 @@ export const BackupModal: React.FC<BackupModalProps> = ({
               </div>
             </div>
           </div>
+
+          {/* Status-Only Upload from Exported Markdown (.md) */}
+          {onImportMarkdownStatus && (
+            <div className="p-3.5 rounded-lg bg-sky-950/25 border border-sky-800/50 space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <div>
+                  <h3 className="text-xs font-semibold text-sky-200">
+                    Atualizar Somente Status via Markdown (.md)
+                  </h3>
+                  <p className="text-[11px] text-neutral-400 mt-0.5">
+                    Envie o documento <code className="text-sky-300 font-mono">.md</code> exportado com o parâmetro <strong className="text-neutral-200">Acesso: Sim/Não</strong>. Atualiza apenas o status das PWAs existentes (não adiciona novas).
+                  </p>
+                </div>
+                <input
+                  ref={mdInputRef}
+                  type="file"
+                  accept=".md,.markdown,text/markdown"
+                  onChange={handleMdFileChange}
+                  className="hidden"
+                  data-testid="backup-md-status-input"
+                />
+                <button
+                  type="button"
+                  data-testid="backup-upload-md-status-btn"
+                  onClick={() => mdInputRef.current?.click()}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-sky-500/20 hover:bg-sky-500/30 border border-sky-500/60 text-sky-200 text-xs font-semibold transition-colors cursor-pointer shrink-0 whitespace-nowrap"
+                >
+                  <FileUp className="w-3.5 h-3.5 text-sky-300" />
+                  <span>Enviar .md</span>
+                </button>
+              </div>
+              {mdStatusMessage && (
+                <div
+                  data-testid="backup-md-status-feedback"
+                  className={`flex items-start gap-1.5 text-[11px] ${
+                    mdStatusMessage.type === 'success' ? 'text-emerald-300' : 'text-rose-300'
+                  }`}
+                >
+                  {mdStatusMessage.type === 'success' ? (
+                    <Check className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                  ) : (
+                    <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                  )}
+                  <span>{mdStatusMessage.text}</span>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Import Section */}
           <form onSubmit={handleImportSubmit} className="space-y-3 pt-2 border-t border-neutral-800">

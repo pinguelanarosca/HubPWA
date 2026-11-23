@@ -67,7 +67,7 @@ import { DesktopImportModal } from './components/DesktopImportModal';
 import { GitHubUpdateModal } from './components/GitHubUpdateModal';
 import { AutostartModal } from './components/AutostartModal';
 import { loadGroupConfigs, saveGroupConfigs, loadGroupColors, saveGroupColors } from './utils/groupLogic';
-import { extractPWAsToMarkdown } from './utils/markdownExporter';
+import { applyMarkdownAccessUpdates, extractPWAsToMarkdown, MarkdownStatusApplyResult } from './utils/markdownExporter';
 import { GroupManagerModal } from './components/GroupManagerModal';
 import { FolderManagerModal } from './components/FolderManagerModal';
 import { QuickAssignFolderModal } from './components/QuickAssignFolderModal';
@@ -75,7 +75,7 @@ import { RatingConfirmModal } from './components/RatingConfirmModal';
 import { ClonePWAProfileModal } from './components/ClonePWAProfileModal';
 import { AccessHistoryModal } from './components/AccessHistoryModal';
 import { DeleteConfirmModal } from './components/DeleteConfirmModal';
-import { AlertCircle, FolderUp, FolderOpen, Plus, X } from 'lucide-react';
+import { AlertCircle, CheckCircle2, FolderUp, FolderOpen, Plus, X } from 'lucide-react';
 
 const STORAGE_KEY = 'chrome_pwa_hub_items_empty_v1';
 const DENSITY_STORAGE_KEY = 'chrome_pwa_hub_density';
@@ -312,6 +312,7 @@ export default function App() {
   // Pending deletion confirmation modal (single or batch IDs)
   const [pendingDeleteIds, setPendingDeleteIds] = useState<string[] | null>(null);
   const [noticeMessage, setNoticeMessage] = useState<string | null>(null);
+  const [noticeTone, setNoticeTone] = useState<'warning' | 'success'>('warning');
 
   // Current day string (YYYY-MM-DD)
   const [todayStr, setTodayStr] = useState(() => getTodayString());
@@ -800,14 +801,90 @@ export default function App() {
     }
   };
 
-  // Process Ubuntu .desktop files selected via native file dialog or drag & drop
+  // Update ONLY daily access status (accessed <-> pending) of existing PWAs from exported Markdown (.md)
+  const handleImportMarkdownStatus = useCallback(
+    (markdownText: string): MarkdownStatusApplyResult => {
+      const result = applyMarkdownAccessUpdates(itemsRef.current, markdownText, {
+        now: new Date(),
+        todayStr,
+      });
+
+      if (result.updatedItems.length > 0) {
+        itemsRef.current = result.items;
+        setItems(result.items);
+        try {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(result.items));
+        } catch {
+          // ignore storage quota errors
+        }
+        fetch('/api/pwas/state', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ items: result.updatedItems }),
+        }).catch(() => {});
+      }
+
+      if (result.parsedCount === 0) {
+        setNoticeTone('warning');
+        setNoticeMessage(
+          'Nenhuma PWA com o parâmetro "Acesso: Sim/Não" foi encontrada no arquivo .md.'
+        );
+      } else if (result.matchedCount === 0) {
+        setNoticeTone('warning');
+        setNoticeMessage(
+          `Nenhuma das ${result.parsedCount} PWAs do arquivo .md corresponde às cadastradas no Hub (nenhuma PWA adicionada).`
+        );
+      } else {
+        setNoticeTone('success');
+        const unmatchedNote =
+          result.unmatchedCount > 0
+            ? ` · ${result.unmatchedCount} não encontrada(s) (nenhuma PWA adicionada)`
+            : '';
+        setNoticeMessage(
+          `Status atualizado via .md: ${result.markedAccessedCount} acessada(s) (verde), ${result.markedPendingCount} pendente(s) (vermelha), ${result.unchangedCount} sem alteração${unmatchedNote}.`
+        );
+      }
+
+      return result;
+    },
+    [todayStr]
+  );
+
+  const handleSelectMarkdownStatusFile = useCallback(
+    async (file: File) => {
+      const execId = beginExecutionTask('Lendo status .md...');
+      try {
+        const text = await file.text();
+        handleImportMarkdownStatus(text);
+      } catch {
+        setNoticeTone('warning');
+        setNoticeMessage(`Não foi possível ler o arquivo "${file.name}".`);
+      } finally {
+        endExecutionTask(execId);
+      }
+    },
+    [beginExecutionTask, endExecutionTask, handleImportMarkdownStatus]
+  );
+
+  // Process Ubuntu .desktop files or status .md files selected via native file dialog or drag & drop
   const processDesktopFiles = useCallback(async (files: FileList | File[]) => {
+    const fileArray = Array.from(files);
+    const mdFiles = fileArray.filter((f) => /\.(?:md|markdown)$/i.test(f.name));
+    const otherFiles = fileArray.filter((f) => !/\.(?:md|markdown)$/i.test(f.name));
+
+    for (const mdFile of mdFiles) {
+      await handleSelectMarkdownStatusFile(mdFile);
+    }
+
+    if (otherFiles.length === 0) {
+      return;
+    }
+
     const execId = beginExecutionTask('Lendo arquivos .desktop...');
     try {
-      const fileArray = Array.from(files);
       const parsedList: ParsedDesktopApp[] = [];
 
-      for (const file of fileArray) {
+      for (const file of otherFiles) {
         try {
           const text = await file.text();
           const parsed = parseDesktopFile(text, file.name);
@@ -822,13 +899,14 @@ export default function App() {
       if (parsedList.length > 0) {
         setParsedDesktopApps(parsedList);
         setIsDesktopModalOpen(true);
-      } else {
+      } else if (mdFiles.length === 0) {
+        setNoticeTone('warning');
         setNoticeMessage('Nenhum atalho de PWA (.desktop) válido foi encontrado nos arquivos selecionados.');
       }
     } finally {
       endExecutionTask(execId);
     }
-  }, [beginExecutionTask, endExecutionTask]);
+  }, [beginExecutionTask, endExecutionTask, handleSelectMarkdownStatusFile]);
 
   // Global Drag & Drop handler for Ubuntu .desktop files
   useEffect(() => {
@@ -2135,10 +2213,10 @@ export default function App() {
         <div className="fixed inset-0 z-50 bg-emerald-950/80 backdrop-blur-xs border-4 border-dashed border-emerald-400 flex flex-col items-center justify-center pointer-events-none p-6 text-center">
           <FolderUp className="w-16 h-16 text-emerald-400 mb-4 animate-bounce" />
           <h2 className="text-xl font-bold text-white mb-2">
-            Solte seus atalhos .desktop do Ubuntu aqui
+            Solte seus atalhos .desktop ou arquivo .md aqui
           </h2>
           <p className="text-sm text-emerald-200 max-w-md">
-            O Chrome PWA Hub irá ler os arquivos .desktop e extrair automaticamente o nome, ícone, URL e anotações.
+            Arquivos <code className="font-mono">.desktop</code> cadastram PWAs e arquivos <code className="font-mono">.md</code> exportados atualizam somente o status (Acesso: Sim/Não).
           </p>
         </div>
       )}
@@ -2164,6 +2242,7 @@ export default function App() {
           onRefreshAllIcons={handleRefreshAllIcons}
           onRescanLocalPWAs={handleRescanLocalPWAs}
           onSyncProfileHistory={() => void syncAllProfilesHistory()}
+          onSelectMarkdownStatusFile={(file) => void handleSelectMarkdownStatusFile(file)}
           isSyncingHistory={isSyncingHistory}
           activityStatus={topBarActivityStatus}
         />
@@ -2244,16 +2323,31 @@ export default function App() {
       {/* Main Container */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-3 sm:px-4 py-3 flex flex-col">
         {noticeMessage && (
-          <div className="mb-3 px-3.5 py-2.5 rounded-lg bg-amber-950/70 border border-amber-800/70 text-amber-200 text-xs flex items-center justify-between gap-2">
+          <div
+            data-testid="hub-notice-banner"
+            className={`mb-3 px-3.5 py-2.5 rounded-lg border text-xs flex items-center justify-between gap-2 ${
+              noticeTone === 'success'
+                ? 'bg-emerald-950/70 border-emerald-700/70 text-emerald-200'
+                : 'bg-amber-950/70 border-amber-800/70 text-amber-200'
+            }`}
+          >
             <div className="flex items-center gap-2">
-              <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
+              {noticeTone === 'success' ? (
+                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+              ) : (
+                <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
+              )}
               <span>{noticeMessage}</span>
             </div>
             <button
               type="button"
               onClick={() => setNoticeMessage(null)}
               aria-label="Fechar aviso"
-              className="p-1 rounded hover:bg-amber-900/60 text-amber-300 cursor-pointer"
+              className={`p-1 rounded cursor-pointer ${
+                noticeTone === 'success'
+                  ? 'hover:bg-emerald-900/60 text-emerald-300'
+                  : 'hover:bg-amber-900/60 text-amber-300'
+              }`}
             >
               <X className="w-3.5 h-3.5" />
             </button>
@@ -2525,6 +2619,7 @@ export default function App() {
         onClose={() => setIsBackupOpen(false)}
         items={items}
         onImport={handleImport}
+        onImportMarkdownStatus={handleImportMarkdownStatus}
         onClearAll={handleClearAll}
       />
 
