@@ -1869,8 +1869,8 @@ export default function App() {
   // Batch extract URLs to Markdown (.md)
   const handleBatchExtractUrls = useCallback(() => {
     if (selectedIds.size === 0) return;
-    extractPWAsToMarkdown(items, selectedIds);
-  }, [items, selectedIds]);
+    extractPWAsToMarkdown(items, selectedIds, discoveredChromeProfiles);
+  }, [items, selectedIds, discoveredChromeProfiles]);
 
   // Group manager actions
   const handleRenameGroup = useCallback((oldName: string, newName: string, colorKey: string) => {
