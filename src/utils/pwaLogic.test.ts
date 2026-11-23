@@ -45,6 +45,8 @@ import {
   ensureUniquePWAIds,
   computeCardSelection,
   getVisuallyOrderedPWAIds,
+  getNormalizedPWAChromeProfileKey,
+  buildChromeProfileFilterOptions,
 } from './pwaLogic';
 import { PWAItem } from '../types/pwa';
 
@@ -974,6 +976,100 @@ test('getVisuallyOrderedPWAIds follows flat and grouped alphabetical render orde
 
   assert.deepEqual(getVisuallyOrderedPWAIds(list, false), ['1', '2', '3', '4']);
   assert.deepEqual(getVisuallyOrderedPWAIds(list, true), ['2', '4', '1', '3']);
+});
+
+test('getNormalizedPWAChromeProfileKey extracts canonical profile keys across fields', () => {
+  assert.equal(getNormalizedPWAChromeProfileKey({ profileDirectory: 'Default' }), 'default');
+  assert.equal(getNormalizedPWAChromeProfileKey({ profileDirectory: 'Profile 5' }), 'profile 5');
+  assert.equal(
+    getNormalizedPWAChromeProfileKey({ execLine: 'google-chrome --profile-directory="Profile_3" --app-id=abc' }),
+    'profile 3'
+  );
+  assert.equal(
+    getNormalizedPWAChromeProfileKey({ rawFileName: 'chrome-xyz-Profile_1.desktop' }),
+    'profile 1'
+  );
+  assert.equal(getNormalizedPWAChromeProfileKey({}), '');
+});
+
+test('buildChromeProfileFilterOptions aggregates counts, friendly OS names, natural order, and unassigned count', () => {
+  const mk = (id: string, extras: Partial<PWAItem> = {}): PWAItem => ({
+    id,
+    name: `App ${id}`,
+    url: `https://app${id}.example.com`,
+    category: 'Geral',
+    notes: '',
+    lastAccessedDate: null,
+    accessCount: 0,
+    createdAt: '2026-11-01T00:00:00.000Z',
+    ...extras,
+  });
+
+  const items: PWAItem[] = [
+    mk('1', { profileDirectory: 'Profile 10' }),
+    mk('2', { profileDirectory: 'Default' }),
+    mk('3', { execLine: 'google-chrome --profile-directory="Profile 2" --app=https://a.com' }),
+    mk('4', { profileDirectory: 'Profile_2' }),
+    mk('5', {}),
+    mk('6', { profileDirectory: '' }),
+  ];
+
+  const summary = buildChromeProfileFilterOptions(items, [
+    { directory: 'Profile 2', displayName: 'Trabalho' },
+    { directory: 'Profile 5', displayName: 'Pessoal' },
+  ]);
+
+  assert.equal(summary.unassignedCount, 2);
+  assert.deepEqual(
+    summary.options.map((o) => ({ key: o.key, label: o.label, count: o.count })),
+    [
+      { key: 'default', label: 'Default', count: 1 },
+      { key: 'profile 2', label: 'Perfil 2 — Trabalho', count: 2 },
+      { key: 'profile 5', label: 'Perfil 5 — Pessoal', count: 0 },
+      { key: 'profile 10', label: 'Perfil 10', count: 1 },
+    ]
+  );
+});
+
+test('filterAndSortPWAs filters by Chrome profile including variants, unassigned ("none"), and combined filters', () => {
+  const mk = (id: string, extras: Partial<PWAItem> = {}): PWAItem => ({
+    id,
+    name: `App ${id}`,
+    url: `https://app${id}.example.com`,
+    category: 'Geral',
+    notes: '',
+    lastAccessedDate: null,
+    accessCount: 0,
+    rating: 5,
+    createdAt: '2026-11-01T00:00:00.000Z',
+    ...extras,
+  });
+
+  const items: PWAItem[] = [
+    mk('def', { name: 'Alpha Default', profileDirectory: 'Default', rating: 5 }),
+    mk('p1', { name: 'Beta P1', profileDirectory: 'Profile 1', rating: 4 }),
+    mk('p5a', { name: 'Gamma P5 Exec', execLine: 'google-chrome --profile-directory=Profile_5 --app=https://g.com', rating: 5 }),
+    mk('p5b', { name: 'Delta P5 Direct', profileDirectory: 'Profile 5', rating: 2 }),
+    mk('none', { name: 'Epsilon Sem Perfil', rating: 5 }),
+  ];
+
+  assert.equal(filterAndSortPWAs(items, { profileFilter: 'all' }).length, 5);
+  assert.deepEqual(
+    filterAndSortPWAs(items, { profileFilter: 'default' }).map((i) => i.id),
+    ['def']
+  );
+  assert.deepEqual(
+    filterAndSortPWAs(items, { profileFilter: 'Profile 5' }).map((i) => i.id),
+    ['p5a', 'p5b']
+  );
+  assert.deepEqual(
+    filterAndSortPWAs(items, { profileFilter: 'profile_5', starFilter: '5' }).map((i) => i.id),
+    ['p5a']
+  );
+  assert.deepEqual(
+    filterAndSortPWAs(items, { profileFilter: 'none' }).map((i) => i.id),
+    ['none']
+  );
 });
 
 

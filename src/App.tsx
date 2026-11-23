@@ -36,6 +36,7 @@ import {
   CardSelectModifiers,
   computeCardSelection,
   getVisuallyOrderedPWAIds,
+  buildChromeProfileFilterOptions,
 } from './utils/pwaLogic';
 import {
   FOLDERS_STORAGE_KEY,
@@ -177,6 +178,7 @@ export default function App() {
   const [currentExplorerFolderId, setCurrentExplorerFolderId] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [starFilter, setStarFilter] = useState<StarFilter>('all');
+  const [profileFilter, setProfileFilter] = useState<string>('all');
   const [flagFilters, setFlagFilters] = useState<FlagFilterKey[]>([]);
   const [timeWindow, setTimeWindow] = useState<AccessTimeWindowFilter>({
     enabled: false,
@@ -931,6 +933,11 @@ export default function App() {
     return cleanItems.filter((it) => matchesAccessTimeWindow(it, timeWindow, todayStr)).length;
   }, [cleanItems, timeWindow, todayStr]);
 
+  const chromeProfileSummary = useMemo(
+    () => buildChromeProfileFilterOptions(cleanItems, discoveredChromeProfiles),
+    [cleanItems, discoveredChromeProfiles]
+  );
+
   // Filtered and sorted items
   const displayedItems = useMemo(() => {
     const activeFolderFilter = density === 'folders' ? 'all' : selectedFolder;
@@ -947,12 +954,13 @@ export default function App() {
       validFolderIds,
       statusFilter,
       starFilter,
+      profileFilter,
       flagFilters,
       timeWindow,
       sortBy,
       todayStr,
     });
-  }, [cleanItems, folders, validFolderIds, density, selectedFolder, search, selectedGroup, statusFilter, starFilter, flagFilters, timeWindow, sortBy, todayStr]);
+  }, [cleanItems, folders, validFolderIds, density, selectedFolder, search, selectedGroup, statusFilter, starFilter, profileFilter, flagFilters, timeWindow, sortBy, todayStr]);
 
   // Scoped selectable items (when inside a folder -> ONLY that folder; root/unfiled -> ONLY unfiled; cards -> displayedItems)
   const selectableItems = useMemo(() => {
@@ -2196,6 +2204,9 @@ export default function App() {
               onStatusFilterChange={setStatusFilter}
               starFilter={starFilter}
               onStarFilterChange={setStarFilter}
+              profileFilter={profileFilter}
+              onProfileFilterChange={setProfileFilter}
+              profileSummary={chromeProfileSummary}
               flagFilters={flagFilters}
               flagCounts={flagCounts}
               flagBreakdown={flagBreakdown}

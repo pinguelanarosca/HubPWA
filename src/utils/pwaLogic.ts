@@ -734,6 +734,7 @@ export function filterAndSortPWAs(
     validFolderIds?: Set<string>;
     statusFilter?: StatusFilter;
     starFilter?: string;
+    profileFilter?: string;
     flagFilters?: FlagFilterKey[];
     timeWindow?: AccessTimeWindowFilter | null;
     sortBy?: SortOption;
@@ -750,6 +751,7 @@ export function filterAndSortPWAs(
     validFolderIds,
     statusFilter = 'all',
     starFilter = 'all',
+    profileFilter = 'all',
     flagFilters = [],
     timeWindow = null,
     sortBy = 'pinned',
@@ -757,6 +759,13 @@ export function filterAndSortPWAs(
   } = options;
 
   const targetGroup = group || category || 'all';
+  const rawProfileFilter = (profileFilter || 'all').trim();
+  const normalizedProfileFilter =
+    rawProfileFilter.toLowerCase() === 'all'
+      ? 'all'
+      : rawProfileFilter.toLowerCase() === 'none'
+      ? 'none'
+      : normalizeChromeProfileInput(rawProfileFilter).toLowerCase();
 
   return safeItems
     .filter((item) => {
@@ -797,6 +806,16 @@ export function filterAndSortPWAs(
         if (starFilter === '4' && rating < 4) return false;
         if (starFilter === '3' && rating < 3) return false;
         if (starFilter === 'unrated' && rating > 0) return false;
+      }
+
+      // Chrome profile filter
+      if (normalizedProfileFilter !== 'all') {
+        const itemProfileKey = getNormalizedPWAChromeProfileKey(item);
+        if (normalizedProfileFilter === 'none') {
+          if (itemProfileKey !== '') return false;
+        } else if (itemProfileKey !== normalizedProfileFilter) {
+          return false;
+        }
       }
 
       // Custom bottom markings filter ($ Date, COM, RD, IRB)
@@ -1591,6 +1610,126 @@ export function buildAvailableChromeProfiles(
 
     return a.directory.localeCompare(b.directory, 'pt-BR', { sensitivity: 'base' });
   });
+}
+
+export interface ChromeProfileFilterOption {
+  key: string;
+  directory: string;
+  displayName?: string;
+  label: string;
+  count: number;
+}
+
+export interface ChromeProfileFilterSummary {
+  options: ChromeProfileFilterOption[];
+  unassignedCount: number;
+}
+
+/**
+ * Resolves the canonical lowercase Chrome profile key for a PWA item (e.g. "default", "profile 5"),
+ * or returns "" when no profile is associated.
+ */
+export function getNormalizedPWAChromeProfileKey(item: {
+  profileDirectory?: string;
+  execLine?: string;
+  rawFileName?: string;
+  desktopPath?: string;
+}): string {
+  const raw = extractChromeProfileDirectory(item);
+  if (!raw) return '';
+  const normalized = normalizeChromeProfileInput(raw);
+  return normalized ? normalized.toLowerCase() : '';
+}
+
+function formatProfileFilterOptionLabel(directory: string, displayName?: string): string {
+  const display = formatChromeProfileDisplay({ profileDirectory: directory });
+  const baseLabel = display?.badgeText || directory;
+  const trimmedName = displayName?.trim();
+  const hasDistinctName =
+    Boolean(trimmedName) &&
+    trimmedName!.toLowerCase() !== directory.toLowerCase() &&
+    trimmedName!.toLowerCase() !== baseLabel.toLowerCase();
+
+  return hasDistinctName ? `${baseLabel} — ${trimmedName}` : baseLabel;
+}
+
+/**
+ * Builds naturally sorted Chrome profile filter options with per-profile PWA counts
+ * from the active PWA list and any discovered OS Chrome profiles.
+ */
+export function buildChromeProfileFilterOptions(
+  items: PWAItem[],
+  discovered: ChromeProfileOption[] = []
+): ChromeProfileFilterSummary {
+  const safeItems = Array.isArray(items) ? items : [];
+  const map = new Map<string, { directory: string; displayName?: string; count: number }>();
+  let unassignedCount = 0;
+
+  const upsert = (directory: string, displayName?: string, incrementCount: boolean = false) => {
+    const normalized = normalizeChromeProfileInput(directory);
+    if (!normalized) return;
+    const key = normalized.toLowerCase();
+    const existing = map.get(key);
+    if (!existing) {
+      map.set(key, {
+        directory: normalized,
+        displayName: displayName?.trim() || undefined,
+        count: incrementCount ? 1 : 0,
+      });
+    } else {
+      if (displayName?.trim() && !existing.displayName) {
+        existing.displayName = displayName.trim();
+      }
+      if (incrementCount) {
+        existing.count += 1;
+      }
+    }
+  };
+
+  for (const prof of discovered) {
+    if (prof?.directory) {
+      upsert(prof.directory, prof.displayName, false);
+    }
+  }
+
+  for (const item of safeItems) {
+    if (!item || typeof item !== 'object') continue;
+    const raw = extractChromeProfileDirectory(item);
+    if (!raw) {
+      unassignedCount += 1;
+      continue;
+    }
+    const normalized = normalizeChromeProfileInput(raw);
+    if (!normalized) {
+      unassignedCount += 1;
+      continue;
+    }
+    upsert(normalized, undefined, true);
+  }
+
+  const options = Array.from(map.entries())
+    .sort(([, a], [, b]) => {
+      const aDef = a.directory.toLowerCase() === 'default';
+      const bDef = b.directory.toLowerCase() === 'default';
+      if (aDef !== bDef) return aDef ? -1 : 1;
+
+      const aNum = a.directory.match(/^profile\s+(\d+)$/i);
+      const bNum = b.directory.match(/^profile\s+(\d+)$/i);
+      if (aNum && bNum) return Number(aNum[1]) - Number(bNum[1]);
+      if (aNum) return -1;
+      if (bNum) return 1;
+
+      return a.directory.localeCompare(b.directory, 'pt-BR', { sensitivity: 'base' });
+    })
+    .map(([key, entry]) => ({
+      key,
+      directory: entry.directory,
+      displayName: entry.displayName,
+      label: formatProfileFilterOptionLabel(entry.directory, entry.displayName),
+      count: entry.count,
+    }));
+
+  return { options, unassignedCount };
 }
 
 export interface CardSelectModifiers {

@@ -26,11 +26,12 @@ import {
   Check,
   LayoutGrid,
   SlidersHorizontal,
+  User,
 } from 'lucide-react';
 import { AccessTimeWindowFilter, DailyFlagKey, DailyFlagState, FlagFilterKey, PWAFolder, SortOption, StatusFilter, StarFilter, ViewDensity } from '../types/pwa';
 import { getGroupTheme, GROUP_COLOR_THEMES } from '../utils/groupLogic';
 import { flattenFoldersHierarchy } from '../utils/folderLogic';
-import { PWAFlagBreakdown } from '../utils/pwaLogic';
+import { ChromeProfileFilterSummary, PWAFlagBreakdown } from '../utils/pwaLogic';
 import { buildRelativeTimeWindow } from '../utils/historyLogic';
 import { DAILY_FLAG_META, MoneySymbolIcon } from './PWAFlagsControl';
 
@@ -54,6 +55,9 @@ interface ControlToolbarProps {
   onStatusFilterChange: (status: StatusFilter) => void;
   starFilter: StarFilter;
   onStarFilterChange: (star: StarFilter) => void;
+  profileFilter?: string;
+  onProfileFilterChange?: (profile: string) => void;
+  profileSummary?: ChromeProfileFilterSummary;
   flagFilters?: FlagFilterKey[];
   flagCounts?: Record<'moneyDate' | DailyFlagKey, number>;
   flagBreakdown?: PWAFlagBreakdown;
@@ -104,6 +108,9 @@ export const ControlToolbar: React.FC<ControlToolbarProps> = ({
   onStatusFilterChange,
   starFilter,
   onStarFilterChange,
+  profileFilter = 'all',
+  onProfileFilterChange,
+  profileSummary,
   flagFilters = [],
   flagCounts = { moneyDate: 0, com: 0, rb: 0, bon: 0 },
   flagBreakdown,
@@ -180,6 +187,7 @@ export const ControlToolbar: React.FC<ControlToolbarProps> = ({
 
   const activeSecondaryFiltersCount =
     (timeWindow?.enabled ? 1 : 0) +
+    (profileFilter !== 'all' ? 1 : 0) +
     (starFilter !== 'all' ? 1 : 0) +
     flagFilters.length +
     (selectedFolder !== 'all' ? 1 : 0) +
@@ -666,6 +674,56 @@ export const ControlToolbar: React.FC<ControlToolbarProps> = ({
                       setIsTimePanelOpen(false);
                     }}
                     className="px-1.5 py-1 rounded-r-md bg-emerald-950/80 hover:bg-rose-950/80 border border-l-0 border-emerald-500/75 hover:border-rose-500/75 text-emerald-300 hover:text-rose-200 transition-colors cursor-pointer"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                )}
+              </div>
+            )}
+
+            {/* Chrome Profile Filter Dropdown */}
+            {onProfileFilterChange && (
+              <div className="relative flex items-center shrink-0">
+                <User
+                  className={`w-3 h-3 absolute left-2 pointer-events-none ${
+                    profileFilter !== 'all' ? 'text-sky-300' : 'text-sky-400'
+                  }`}
+                />
+                <select
+                  data-testid="profile-filter-select"
+                  value={profileFilter}
+                  onChange={(e) => onProfileFilterChange(e.target.value)}
+                  aria-label="Filtrar por perfil do Chrome"
+                  title="Filtrar PWAs pelo perfil do Google Chrome"
+                  className={`text-[11px] pl-6 pr-2.5 py-1 focus:outline-none focus:border-sky-500 appearance-none cursor-pointer border transition-colors ${
+                    profileFilter !== 'all'
+                      ? 'bg-sky-950/75 border-sky-500/75 text-sky-200 font-semibold rounded-l-md'
+                      : 'bg-[#14151a] border-[#242633] text-neutral-200 rounded-md'
+                  }`}
+                >
+                  <option value="all">Perfil Chrome (Todos)</option>
+                  {(profileSummary?.options || []).map((opt) => (
+                    <option key={opt.key} value={opt.key}>
+                      {opt.label} ({opt.count})
+                    </option>
+                  ))}
+                  {(profileSummary?.unassignedCount || 0) > 0 && (
+                    <option value="none">Sem perfil ({profileSummary?.unassignedCount})</option>
+                  )}
+                  {profileFilter !== 'all' &&
+                    profileFilter !== 'none' &&
+                    !(profileSummary?.options || []).some((opt) => opt.key === profileFilter) && (
+                      <option value={profileFilter}>{profileFilter} (0)</option>
+                    )}
+                </select>
+                {profileFilter !== 'all' && (
+                  <button
+                    type="button"
+                    data-testid="profile-filter-quick-clear"
+                    aria-label="Limpar filtro de perfil do Chrome"
+                    title="Mostrar todos os perfis do Chrome"
+                    onClick={() => onProfileFilterChange('all')}
+                    className="px-1.5 py-1 rounded-r-md bg-sky-950/75 hover:bg-rose-950/80 border border-l-0 border-sky-500/75 hover:border-rose-500/75 text-sky-300 hover:text-rose-200 transition-colors cursor-pointer"
                   >
                     <X className="w-3 h-3" />
                   </button>
