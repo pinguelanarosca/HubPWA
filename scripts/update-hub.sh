@@ -39,7 +39,11 @@ if [ -n "$COMMIT_SHA" ]; then
     EXTRACTED_DIR=$(find "$TMP_EXTRACT" -maxdepth 1 -type d | grep -v "^$TMP_EXTRACT$" | head -n 1)
     if [ -n "$EXTRACTED_DIR" ] && [ -d "$EXTRACTED_DIR" ]; then
         echo "📂 Atualizando arquivos do aplicativo (preservando dados em data/)..."
-        rsync -av --exclude 'node_modules' --exclude '.git' --exclude '.env' --exclude 'data' "$EXTRACTED_DIR/" "$PROJECT_DIR/"
+        if command -v rsync &>/dev/null; then
+            rsync -av --exclude 'node_modules' --exclude '.git' --exclude '.env' --exclude 'data' "$EXTRACTED_DIR/" "$PROJECT_DIR/"
+        else
+            (cd "$EXTRACTED_DIR" && tar -cf - --exclude='node_modules' --exclude='.git' --exclude='.env' --exclude='.env.*' --exclude='data' .) | (cd "$PROJECT_DIR" && tar -xf -)
+        fi
     fi
     
     # Atualiza version.json

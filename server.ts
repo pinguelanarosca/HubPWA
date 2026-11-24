@@ -4,6 +4,7 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { createServer as createViteServer } from 'vite';
 import { parseGitHubCommitResponse, isUpdateAvailable } from './src/utils/githubUpdater.js';
+import { copyUpdateDirectory, findExtractedRepoDirectory } from './src/utils/githubUpdaterFs.js';
 
 import os from 'os';
 import crypto from 'crypto';
@@ -1774,6 +1775,9 @@ app.get('/api/updater/status', async (_req, res) => {
 app.post('/api/updater/apply', async (_req, res) => {
   serverActivity.activeUpdates += 1;
   const updateScriptId = registerRunningScript('Atualização GitHub', 60000);
+  const stamp = Date.now();
+  const tmpArchive = path.resolve('/tmp', `hubpwa-update-${stamp}.tar.gz`);
+  const tmpExtractDir = path.resolve('/tmp', `hubpwa-extracted-${stamp}`);
   try {
     const localVersion = getLocalVersion();
 
@@ -1795,7 +1799,7 @@ app.post('/api/updater/apply', async (_req, res) => {
     const ghData = await ghRes.json();
     const remoteCommit = parseGitHubCommitResponse(ghData);
 
-    // Download tarball or zipball of the repository
+    // Download tarball of the repository
     const tarballRes = await fetch(
       `https://api.github.com/repos/${GITHUB_REPO}/tarball/${DEFAULT_BRANCH}`,
       {
@@ -1809,45 +1813,31 @@ app.post('/api/updater/apply', async (_req, res) => {
       throw new Error(`Falha ao baixar pacote de atualização do GitHub (${tarballRes.status})`);
     }
 
-    // Save temporary archive and extract
+    // Save temporary archive and extract safely without relying on rsync
     const buffer = Buffer.from(await tarballRes.arrayBuffer());
-    const tmpArchive = path.resolve('/tmp', `hubpwa-update-${Date.now()}.tar.gz`);
-    const tmpExtractDir = path.resolve('/tmp', `hubpwa-extracted-${Date.now()}`);
-
     fs.writeFileSync(tmpArchive, buffer);
     fs.mkdirSync(tmpExtractDir, { recursive: true });
 
-    const { exec } = await import('child_process');
-    const { promisify } = await import('util');
-    const execAsync = promisify(exec);
+    await execFileAsync('tar', ['-xzf', tmpArchive, '-C', tmpExtractDir]);
 
-    // Extract tarball
-    await execAsync(`tar -xzf "${tmpArchive}" -C "${tmpExtractDir}"`);
+    const innerDir = findExtractedRepoDirectory(tmpExtractDir);
+    if (!innerDir) {
+      throw new Error('Pacote baixado do GitHub não contém diretório de código válido.');
+    }
 
-    // The tarball extracts to a single top-level directory like pinguelanarosca-HubPWA-92ba6d8/
-    const extractedEntries = fs.readdirSync(tmpExtractDir);
-    const innerDir = path.resolve(tmpExtractDir, extractedEntries[0] || '');
+    const pkgBeforePath = path.resolve(__dirname, 'package.json');
+    const pkgBefore = fs.existsSync(pkgBeforePath) ? fs.readFileSync(pkgBeforePath, 'utf-8') : '';
 
-    if (fs.existsSync(innerDir)) {
-      // 1. Copy files to applet directory, preserving node_modules and .git
-      await execAsync(
-        `rsync -av --exclude 'node_modules' --exclude '.git' --exclude '.env' "${innerDir}/" "${__dirname}/"`
-      );
+    // Copy updated files cleanly via Node FS, preserving node_modules, .git, .env, and data/
+    copyUpdateDirectory(innerDir, __dirname);
 
-      // 2. Run npm install to ensure any new dependencies are installed
+    const pkgAfter = fs.existsSync(pkgBeforePath) ? fs.readFileSync(pkgBeforePath, 'utf-8') : '';
+    if (pkgAfter && pkgAfter !== pkgBefore) {
       try {
-        await execAsync('npm install --legacy-peer-deps', { cwd: __dirname });
+        await execFileAsync('npm', ['install', '--legacy-peer-deps'], { cwd: __dirname });
       } catch (npmErr) {
         console.warn('Aviso durante npm install:', npmErr);
       }
-    }
-
-    // Clean up temporary files
-    try {
-      fs.unlinkSync(tmpArchive);
-      await execAsync(`rm -rf "${tmpExtractDir}"`);
-    } catch {
-      // ignore temp cleanup error
     }
 
     // Update local version.json
@@ -1901,6 +1891,12 @@ app.post('/api/updater/apply', async (_req, res) => {
       details: (err as Error).message,
     });
   } finally {
+    try {
+      if (fs.existsSync(tmpArchive)) fs.unlinkSync(tmpArchive);
+      if (fs.existsSync(tmpExtractDir)) fs.rmSync(tmpExtractDir, { recursive: true, force: true });
+    } catch {
+      // ignore temp cleanup errors
+    }
     serverActivity.activeUpdates = Math.max(0, serverActivity.activeUpdates - 1);
     serverActivity.activeScripts.delete(updateScriptId);
   }
