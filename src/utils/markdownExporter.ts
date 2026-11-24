@@ -20,7 +20,9 @@ export interface ParsedMarkdownAccessEntry {
   name: string;
   url: string;
   profileKey?: string;
-  accessed: boolean;
+  profileDirectory?: string;
+  hasProfileField: boolean;
+  accessed: boolean | null;
 }
 
 export interface MarkdownStatusApplyResult {
@@ -30,6 +32,7 @@ export interface MarkdownStatusApplyResult {
   matchedCount: number;
   markedAccessedCount: number;
   markedPendingCount: number;
+  updatedProfileCount: number;
   unchangedCount: number;
   unmatchedCount: number;
 }
@@ -188,15 +191,26 @@ export function parseAccessFlagValue(rawValue: string): boolean | null {
   return null;
 }
 
-function extractProfileKeyFromMarkdownLine(rawLine: string): string | undefined {
+/**
+ * Extracts canonical Chrome profile directory & key from a Markdown profile field.
+ * Examples:
+ * - "Perfil 5 (Profile 5)" -> { key: "profile 5", directory: "Profile 5" }
+ * - "Perfil 5 (Profile 5) — Trabalho" -> { key: "profile 5", directory: "Profile 5" }
+ * - "Default (Padrão)" -> { key: "default", directory: "Default" }
+ * - "Padrão do Chrome (não especificado)" / "Sem perfil" -> { key: "", directory: undefined }
+ */
+export function parseMarkdownProfileValue(
+  rawLine: string
+): { key: string; directory?: string } | undefined {
   const cleaned = (rawLine || '').replace(/[*_`]/g, '').trim();
   if (!cleaned) return undefined;
-  if (/n[aã]o\s+especificado|sem\s+perfil/i.test(cleaned)) {
-    return '';
+  if (/^(?:padrao|padr[aã]o)\s+do\s+chrome\s*\(n[aã]o\s+especificado\)|^sem\s+perfil$|^nenhum$|^n[aã]o\s+especificado$/i.test(cleaned)) {
+    return { key: '', directory: undefined };
   }
   const parenDirMatch = cleaned.match(/\((Profile[_\s-]*\d+|Default)\)/i);
   if (parenDirMatch) {
-    return normalizeChromeProfileInput(parenDirMatch[1]).toLowerCase();
+    const dir = normalizeChromeProfileInput(parenDirMatch[1]);
+    return dir ? { key: dir.toLowerCase(), directory: dir } : undefined;
   }
   const basePart = cleaned
     .split(/\s+[—–-]\s+/)[0]
@@ -204,7 +218,7 @@ function extractProfileKeyFromMarkdownLine(rawLine: string): string | undefined 
     .trim();
   if (!basePart) return undefined;
   const normalized = normalizeChromeProfileInput(basePart);
-  return normalized ? normalized.toLowerCase() : undefined;
+  return normalized ? { key: normalized.toLowerCase(), directory: normalized } : undefined;
 }
 
 function cleanMarkdownUrlToken(raw: string): string {
@@ -225,7 +239,8 @@ function normalizeUrlForMatch(rawUrl?: string): string {
 }
 
 /**
- * Parses `### ...` PWA blocks containing an `- **Acesso:** Sim|Não` parameter from an exported Markdown document.
+ * Parses PWA blocks (`## [Name](url)` or `### [Name](url)`) containing `- **Acesso:**`
+ * and/or `- **Perfil do Chrome:**` / `- **Profile:**` from a Markdown document.
  */
 export function parsePWAMarkdownAccessEntries(markdownText: string): ParsedMarkdownAccessEntry[] {
   if (!markdownText || typeof markdownText !== 'string') return [];
@@ -237,15 +252,23 @@ export function parsePWAMarkdownAccessEntries(markdownText: string): ParsedMarkd
     name: string;
     url: string;
     profileKey?: string;
+    profileDirectory?: string;
+    hasProfileField: boolean;
     accessed: boolean | null;
   } | null = null;
 
   const flushCurrent = () => {
-    if (current && current.accessed !== null && (current.url || current.name)) {
+    if (
+      current &&
+      (current.accessed !== null || current.hasProfileField) &&
+      (current.url || current.name)
+    ) {
       entries.push({
         name: current.name,
         url: current.url,
         profileKey: current.profileKey,
+        profileDirectory: current.profileDirectory,
+        hasProfileField: current.hasProfileField,
         accessed: current.accessed,
       });
     }
@@ -255,19 +278,23 @@ export function parsePWAMarkdownAccessEntries(markdownText: string): ParsedMarkd
   for (const rawLine of lines) {
     const trimmed = rawLine.trim();
 
-    if (/^##\s+/.test(trimmed) || /^---+$/.test(trimmed)) {
+    if (/^---+$/.test(trimmed)) {
       flushCurrent();
       continue;
     }
 
-    const h3Match = trimmed.match(/^###\s+(.+)$/);
-    if (h3Match) {
+    const headingMatch = trimmed.match(/^#{2,4}\s+(.+)$/);
+    if (headingMatch) {
       flushCurrent();
-      const heading = h3Match[1].trim();
+      const heading = headingMatch[1].trim();
+      if (/^Grupo\s*:/i.test(heading)) {
+        continue;
+      }
       const linkHeading = heading.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
       current = {
         name: (linkHeading ? linkHeading[1] : heading).trim(),
         url: linkHeading ? linkHeading[2].trim() : '',
+        hasProfileField: false,
         accessed: null,
       };
       continue;
@@ -285,10 +312,15 @@ export function parsePWAMarkdownAccessEntries(markdownText: string): ParsedMarkd
     }
 
     const profileField = fieldLine.match(
-      /^(?:\*\*|__)?Perfil(?:\s+do\s+Chrome)?:?(?:\*\*|__)?\s*:?\s*(.+)$/i
+      /^(?:\*\*|__)?(?:Perfil(?:\s+do\s+Chrome)?|Profile):?(?:\*\*|__)?\s*:?\s*(.+)$/i
     );
     if (profileField) {
-      current.profileKey = extractProfileKeyFromMarkdownLine(profileField[1]);
+      const parsedProfile = parseMarkdownProfileValue(profileField[1]);
+      if (parsedProfile) {
+        current.profileKey = parsedProfile.key;
+        current.profileDirectory = parsedProfile.directory;
+        current.hasProfileField = true;
+      }
       continue;
     }
 
@@ -307,8 +339,8 @@ export function parsePWAMarkdownAccessEntries(markdownText: string): ParsedMarkd
 }
 
 /**
- * Updates ONLY the daily access status (`accessed` <-> `pending`) of existing PWAs
- * matched against an uploaded `.md` report. Never adds or removes PWAs.
+ * Updates daily access status (`accessed` <-> `pending`) and/or Chrome profile (`profileDirectory`)
+ * of existing PWAs matched against an uploaded `.md` report. Never adds or removes PWAs.
  */
 export function applyMarkdownAccessUpdates(
   items: PWAItem[],
@@ -322,6 +354,7 @@ export function applyMarkdownAccessUpdates(
 
   const toAccessedIds = new Set<string>();
   const toPendingIds = new Set<string>();
+  const profileUpdatesById = new Map<string, string | undefined>();
   const claimedIds = new Set<string>();
 
   let matchedCount = 0;
@@ -334,6 +367,17 @@ export function applyMarkdownAccessUpdates(
     const hasProfileConstraint = entry.profileKey !== undefined;
 
     const findMatch = (): PWAItem | undefined => {
+      if (targetUrlNorm && targetNameNorm && hasProfileConstraint) {
+        const match = safeItems.find(
+          (it) =>
+            !claimedIds.has(it.id) &&
+            normalizeUrlForMatch(it.url) === targetUrlNorm &&
+            it.name.trim().toLowerCase() === targetNameNorm &&
+            getNormalizedPWAChromeProfileKey(it) === entry.profileKey
+        );
+        if (match) return match;
+      }
+
       if (targetUrlNorm && hasProfileConstraint) {
         const match = safeItems.find(
           (it) =>
@@ -350,6 +394,16 @@ export function applyMarkdownAccessUpdates(
             !claimedIds.has(it.id) &&
             it.name.trim().toLowerCase() === targetNameNorm &&
             getNormalizedPWAChromeProfileKey(it) === entry.profileKey
+        );
+        if (match) return match;
+      }
+
+      if (targetUrlNorm && targetNameNorm) {
+        const match = safeItems.find(
+          (it) =>
+            !claimedIds.has(it.id) &&
+            normalizeUrlForMatch(it.url) === targetUrlNorm &&
+            it.name.trim().toLowerCase() === targetNameNorm
         );
         if (match) return match;
       }
@@ -380,17 +434,55 @@ export function applyMarkdownAccessUpdates(
     claimedIds.add(matched.id);
     matchedCount += 1;
 
-    const currentlyAccessed = isAccessedToday(matched.lastAccessedDate, todayStr);
-    if (entry.accessed && !currentlyAccessed) {
-      toAccessedIds.add(matched.id);
-    } else if (!entry.accessed && currentlyAccessed) {
-      toPendingIds.add(matched.id);
-    } else {
+    let itemChanged = false;
+
+    if (entry.accessed !== null) {
+      const currentlyAccessed = isAccessedToday(matched.lastAccessedDate, todayStr);
+      if (entry.accessed && !currentlyAccessed) {
+        toAccessedIds.add(matched.id);
+        itemChanged = true;
+      } else if (!entry.accessed && currentlyAccessed) {
+        toPendingIds.add(matched.id);
+        itemChanged = true;
+      }
+    }
+
+    if (entry.hasProfileField) {
+      const currentProfileKey = getNormalizedPWAChromeProfileKey(matched);
+      const nextProfileKey = entry.profileKey || '';
+      if (currentProfileKey !== nextProfileKey) {
+        profileUpdatesById.set(matched.id, entry.profileDirectory);
+        itemChanged = true;
+      }
+    }
+
+    if (!itemChanged) {
       unchangedCount += 1;
     }
   }
 
   let nextItems = safeItems;
+  if (profileUpdatesById.size > 0) {
+    nextItems = nextItems.map((it) => {
+      if (!profileUpdatesById.has(it.id)) return it;
+      const nextProfileDir = profileUpdatesById.get(it.id);
+      const nextExecLine =
+        nextProfileDir && it.execLine && /--profile-directory=/i.test(it.execLine)
+          ? it.execLine.replace(
+              /--profile-directory=(?:"[^"]*"|'[^']*'|[^\s"']+)/i,
+              `--profile-directory="${nextProfileDir}"`
+            )
+          : undefined;
+      return {
+        ...it,
+        profileDirectory: nextProfileDir,
+        execLine: nextExecLine,
+        rawFileName: undefined,
+        desktopPath: undefined,
+        appId: undefined,
+      };
+    });
+  }
   if (toAccessedIds.size > 0) {
     nextItems = batchSetStatus(nextItems, toAccessedIds, 'accessed', now, todayStr);
   }
@@ -398,7 +490,11 @@ export function applyMarkdownAccessUpdates(
     nextItems = batchSetStatus(nextItems, toPendingIds, 'pending', now, todayStr);
   }
 
-  const changedIds = new Set<string>([...toAccessedIds, ...toPendingIds]);
+  const changedIds = new Set<string>([
+    ...toAccessedIds,
+    ...toPendingIds,
+    ...profileUpdatesById.keys(),
+  ]);
   const updatedItems = nextItems.filter((it) => changedIds.has(it.id));
 
   return {
@@ -408,6 +504,7 @@ export function applyMarkdownAccessUpdates(
     matchedCount,
     markedAccessedCount: toAccessedIds.size,
     markedPendingCount: toPendingIds.size,
+    updatedProfileCount: profileUpdatesById.size,
     unchangedCount,
     unmatchedCount,
   };

@@ -406,10 +406,12 @@ export default function App() {
           const existingWorkingIcon = matches.find((m) => isPreservableIconUrl(m.icon))?.icon;
           const finalMergedIcon = existingWorkingIcon || scanned.icon || resolveFaviconAtInsertion(scanned.url, undefined, customName);
 
-          const finalProfileDirectory =
-            scanned.profileDirectory ||
-            matches.find((m) => m.profileDirectory)?.profileDirectory ||
-            extractChromeProfileDirectory(scanned);
+          const userEditedProfile = matches.find((m) => m.profileDirectory)?.profileDirectory;
+          const scannedProfile = scanned.profileDirectory || extractChromeProfileDirectory(scanned);
+          const finalProfileDirectory = userEditedProfile || scannedProfile;
+          const profileOverridden =
+            Boolean(userEditedProfile && scannedProfile) &&
+            userEditedProfile!.toLowerCase() !== scannedProfile!.toLowerCase();
 
           const mergedFlags = matches.find((m) => m.flags)?.flags || scanned.flags;
           const combinedLogs = Array.from(
@@ -434,6 +436,14 @@ export default function App() {
 
           return {
             ...scanned,
+            ...(profileOverridden
+              ? {
+                  execLine: undefined,
+                  rawFileName: undefined,
+                  desktopPath: undefined,
+                  appId: undefined,
+                }
+              : {}),
             name: customName,
             category: customCategory,
             folderId: customFolderId,
@@ -827,7 +837,7 @@ export default function App() {
       if (result.parsedCount === 0) {
         setNoticeTone('warning');
         setNoticeMessage(
-          'Nenhuma PWA com o parâmetro "Acesso: Sim/Não" foi encontrada no arquivo .md.'
+          'Nenhuma PWA com o parâmetro "Acesso" ou "Perfil do Chrome" foi encontrada no arquivo .md.'
         );
       } else if (result.matchedCount === 0) {
         setNoticeTone('warning');
@@ -836,12 +846,16 @@ export default function App() {
         );
       } else {
         setNoticeTone('success');
+        const profilePart =
+          result.updatedProfileCount > 0
+            ? `, ${result.updatedProfileCount} perfil(is) atualizado(s)`
+            : '';
         const unmatchedNote =
           result.unmatchedCount > 0
             ? ` · ${result.unmatchedCount} não encontrada(s) (nenhuma PWA adicionada)`
             : '';
         setNoticeMessage(
-          `Status atualizado via .md: ${result.markedAccessedCount} acessada(s) (verde), ${result.markedPendingCount} pendente(s) (vermelha), ${result.unchangedCount} sem alteração${unmatchedNote}.`
+          `Atualizado via .md: ${result.markedAccessedCount} acessada(s) (verde), ${result.markedPendingCount} pendente(s) (vermelha)${profilePart}, ${result.unchangedCount} sem alteração${unmatchedNote}.`
         );
       }
 

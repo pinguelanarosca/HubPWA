@@ -311,11 +311,11 @@ export const TopBar: React.FC<TopBarProps> = ({
                   type="button"
                   data-testid="topbar-import-md-status-btn"
                   onClick={() => mdStatusInputRef.current?.click()}
-                  title="Enviar documento .md exportado para atualizar somente o status (Acessada/Pendente) das PWAs"
+                  title="Enviar documento .md exportado para atualizar status (Acessada/Pendente) e Perfil do Chrome das PWAs"
                   className="w-full text-left px-3 py-2 text-neutral-200 hover:bg-[#1e2028] hover:text-sky-300 flex items-center gap-2 cursor-pointer font-medium"
                 >
                   <FileUp className="w-3.5 h-3.5 text-sky-400" />
-                  <span>Atualizar Status via .md</span>
+                  <span>Atualizar Status / Perfil (.md)</span>
                 </button>
               )}
               <button

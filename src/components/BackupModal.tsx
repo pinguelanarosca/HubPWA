@@ -43,7 +43,7 @@ export const BackupModal: React.FC<BackupModalProps> = ({
       if (res.parsedCount === 0) {
         setMdStatusMessage({
           type: 'error',
-          text: 'Nenhuma PWA com o parâmetro "Acesso: Sim/Não" foi encontrada no arquivo .md.',
+          text: 'Nenhuma PWA com o parâmetro "Acesso" ou "Perfil do Chrome" foi encontrada no arquivo .md.',
         });
       } else if (res.matchedCount === 0) {
         setMdStatusMessage({
@@ -51,9 +51,13 @@ export const BackupModal: React.FC<BackupModalProps> = ({
           text: `Nenhuma das ${res.parsedCount} PWAs do documento corresponde às cadastradas no Hub (nenhuma PWA adicionada).`,
         });
       } else {
+        const profilePart =
+          res.updatedProfileCount > 0
+            ? `, ${res.updatedProfileCount} perfil(is) atualizado(s)`
+            : '';
         setMdStatusMessage({
           type: 'success',
-          text: `Status atualizado: ${res.markedAccessedCount} marcada(s) como acessadas (verde), ${res.markedPendingCount} como pendente(s) (vermelha), ${res.unchangedCount} sem alteração.`,
+          text: `Atualizado: ${res.markedAccessedCount} acessada(s) (verde), ${res.markedPendingCount} pendente(s) (vermelha)${profilePart}, ${res.unchangedCount} sem alteração.`,
         });
       }
     } catch {
@@ -213,10 +217,10 @@ export const BackupModal: React.FC<BackupModalProps> = ({
               <div className="flex items-center justify-between gap-2">
                 <div>
                   <h3 className="text-xs font-semibold text-sky-200">
-                    Atualizar Somente Status via Markdown (.md)
+                    Atualizar Status e Perfil via Markdown (.md)
                   </h3>
                   <p className="text-[11px] text-neutral-400 mt-0.5">
-                    Envie o documento <code className="text-sky-300 font-mono">.md</code> exportado com o parâmetro <strong className="text-neutral-200">Acesso: Sim/Não</strong>. Atualiza apenas o status das PWAs existentes (não adiciona novas).
+                    Envie o documento <code className="text-sky-300 font-mono">.md</code> com <strong className="text-neutral-200">Perfil do Chrome</strong> e <strong className="text-neutral-200">Acesso: Sim/Não</strong>. Atualiza status e perfil das PWAs existentes (não adiciona novas).
                   </p>
                 </div>
                 <input

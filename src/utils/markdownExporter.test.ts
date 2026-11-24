@@ -191,3 +191,84 @@ test('applyMarkdownAccessUpdates updates only status (pending<->accessed) cleanl
   assert.equal(unchangedKeep.accessCount, 2, 'Unchanged item must not increment accessCount');
 });
 
+test('applyMarkdownAccessUpdates parses ## [Name](url) blocks and edits Chrome profileDirectory + status without adding PWAs', () => {
+  const todayStr = '2026-11-24';
+  const now = new Date(2026, 10, 24, 9, 30, 0);
+
+  const items: PWAItem[] = [
+    {
+      id: '35m',
+      name: '35M.COM',
+      url: 'https://35m.com',
+      category: 'Geral',
+      notes: '',
+      profileDirectory: 'Profile 1',
+      execLine: '/opt/google/chrome/google-chrome --profile-directory="Profile 1" --app-id=abc35m',
+      rawFileName: 'chrome-abc35m-Profile_1.desktop',
+      desktopPath: '/home/user/.local/share/applications/chrome-abc35m-Profile_1.desktop',
+      appId: 'abc35m',
+      lastAccessedDate: '2026-11-24T08:00:00.000Z',
+      accessCount: 4,
+      createdAt: '2026-10-01',
+    },
+    {
+      id: 'bet-p1',
+      name: 'Bet (Perfil 1)',
+      url: 'https://bet.example.com',
+      category: 'Geral',
+      notes: '',
+      profileDirectory: 'Profile 1',
+      lastAccessedDate: null,
+      accessCount: 0,
+      createdAt: '2026-10-01',
+    },
+    {
+      id: 'bet-p5',
+      name: 'Bet (Perfil 5)',
+      url: 'https://bet.example.com',
+      category: 'Geral',
+      notes: '',
+      profileDirectory: 'Profile 5',
+      lastAccessedDate: null,
+      accessCount: 0,
+      createdAt: '2026-10-01',
+    },
+  ];
+
+  const mdInput = `## [35M.COM](https://35m.com)
+- **URL:** \`https://35m.com\`
+- **Perfil do Chrome:** Perfil 5 (Profile 5)
+- **Acesso:** Não
+- **Classificação:** Sem classificação
+- **Último Acesso:** 22/11 - 01:33
+
+## [Bet (Perfil 1)](https://bet.example.com)
+- **URL:** \`https://bet.example.com\`
+- **Perfil do Chrome:** Perfil 2 (Profile 2)
+- **Acesso:** Sim
+`;
+
+  const result = applyMarkdownAccessUpdates(items, mdInput, { now, todayStr });
+  assert.equal(result.items.length, 3);
+  assert.equal(result.parsedCount, 2);
+  assert.equal(result.matchedCount, 2);
+  assert.equal(result.markedAccessedCount, 1);
+  assert.equal(result.markedPendingCount, 1);
+  assert.equal(result.updatedProfileCount, 2);
+
+  const updated35m = result.items.find((i) => i.id === '35m')!;
+  assert.equal(updated35m.profileDirectory, 'Profile 5');
+  assert.equal(isAccessedToday(updated35m.lastAccessedDate, todayStr), false);
+  assert.ok(updated35m.execLine?.includes('--profile-directory="Profile 5"'));
+  assert.equal(updated35m.desktopPath, undefined);
+  assert.equal(updated35m.rawFileName, undefined);
+  assert.equal(updated35m.appId, undefined);
+
+  const updatedBet1 = result.items.find((i) => i.id === 'bet-p1')!;
+  const untouchedBet5 = result.items.find((i) => i.id === 'bet-p5')!;
+  assert.equal(updatedBet1.profileDirectory, 'Profile 2');
+  assert.equal(isAccessedToday(updatedBet1.lastAccessedDate, todayStr), true);
+  assert.equal(untouchedBet5.profileDirectory, 'Profile 5');
+  assert.equal(isAccessedToday(untouchedBet5.lastAccessedDate, todayStr), false);
+});
+
