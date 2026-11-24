@@ -12,12 +12,15 @@ import { spawn, exec, execFile, execSync } from 'child_process';
 import { parseDesktopFile, ParsedDesktopApp, convertParsedToPWAs } from './src/utils/desktopParser.js';
 import { deduplicateDesktopApps, DeduplicationResult, normalizeAppUrl } from './src/utils/desktopDeduplicator.js';
 import {
+  extractChromeProfileDirectory,
   extractHtmlIconCandidates,
   getCleanDomain,
   getTodayString,
   isAndroidOrRedroidApp,
   isChromeShortcutLocalCandidate,
   isPreservableIconUrl,
+  normalizeChromeProfileInput,
+  sanitizeLauncherMetadataForProfile,
 } from './src/utils/pwaLogic.js';
 import type { AccessHistoryEntry } from './src/types/pwa.js';
 import {
@@ -160,36 +163,61 @@ function findStoredState(
     return null;
   }
 
+  const pickPreferredSaved = (candidates: ServerPWAState[]): ServerPWAState | null => {
+    const valid = candidates.filter((c) => !c.clonedFromId && !c.id?.startsWith('pwa_clone_'));
+    if (valid.length === 0) return null;
+    valid.sort((a, b) => {
+      const profA = a.profileDirectory ? normalizeChromeProfileInput(a.profileDirectory).toLowerCase() : '';
+      const profB = b.profileDirectory ? normalizeChromeProfileInput(b.profileDirectory).toLowerCase() : '';
+      const customA = profA && profA !== 'default' ? 2 : profA === 'default' ? 1 : 0;
+      const customB = profB && profB !== 'default' ? 2 : profB === 'default' ? 1 : 0;
+      if (customA !== customB) return customB - customA;
+      const updA = a.updatedAt || '';
+      const updB = b.updatedAt || '';
+      return updB.localeCompare(updA);
+    });
+    return valid[0];
+  };
+
   // 2. Exact appId match
   if (item.appId) {
     const targetAppId = item.appId.toLowerCase();
+    const matches: ServerPWAState[] = [];
     for (const savedId in db.pwas) {
       const saved = db.pwas[savedId];
       if (saved.appId && saved.appId.toLowerCase() === targetAppId) {
-        return saved;
+        matches.push(saved);
       }
     }
+    const preferred = pickPreferredSaved(matches);
+    if (preferred) return preferred;
   }
 
   // 3. Exact rawFileName match
   if (item.rawFileName) {
+    const matches: ServerPWAState[] = [];
     for (const savedId in db.pwas) {
       const saved = db.pwas[savedId];
       if (saved.rawFileName && saved.rawFileName === item.rawFileName) {
-        return saved;
+        matches.push(saved);
       }
     }
+    const preferred = pickPreferredSaved(matches);
+    if (preferred) return preferred;
   }
 
   // 4. Match by normalized URL (exact URL including path, never bare domain)
   const normUrl = item.url ? normalizeAppUrl(item.url) : '';
   if (normUrl) {
+    const matches: ServerPWAState[] = [];
     for (const savedId in db.pwas) {
       const saved = db.pwas[savedId];
       if (saved.url && normalizeAppUrl(saved.url) === normUrl) {
-        return saved;
+        matches.push(saved);
       }
     }
+    const preferred = pickPreferredSaved(matches);
+    if (preferred) return preferred;
   }
 
   return null;
@@ -780,14 +808,20 @@ app.get('/api/pwas/scan', (_req, res) => {
           const workingIcon = isPreservableIconUrl(stored.icon)
             ? stored.icon
             : pwa.icon;
-          return {
+          const nativeDesktopProfile = extractChromeProfileDirectory({
+            execLine: pwa.execLine,
+            rawFileName: pwa.rawFileName,
+            desktopPath: pwa.desktopPath,
+          });
+          const mergedProfile = stored.profileDirectory || pwa.profileDirectory;
+          const mergedItem = {
             ...pwa,
             name: stored.name || pwa.name,
             category: stored.category || pwa.category,
             group: stored.group || stored.category || pwa.category,
             folderId: stored.folderId !== undefined ? stored.folderId : pwa.folderId,
             icon: workingIcon || pwa.icon,
-            profileDirectory: stored.profileDirectory || pwa.profileDirectory,
+            profileDirectory: mergedProfile,
             aliases: Array.isArray(stored.aliases) ? stored.aliases : pwa.aliases,
             ...(stored.flags ? { flags: stored.flags } : {}),
             ...(stored.clonedFromId ? { clonedFromId: stored.clonedFromId } : {}),
@@ -799,6 +833,15 @@ app.get('/api/pwas/scan', (_req, res) => {
             accessHistory: Array.isArray(stored.accessHistory) ? stored.accessHistory : pwa.accessHistory,
             accessCount: typeof stored.accessCount === 'number' ? stored.accessCount : pwa.accessCount,
           };
+          const storedProfile = stored.profileDirectory;
+          const profileOverridden =
+            storedProfile && nativeDesktopProfile
+              ? normalizeChromeProfileInput(storedProfile).toLowerCase() !==
+                normalizeChromeProfileInput(nativeDesktopProfile).toLowerCase()
+              : false;
+          return profileOverridden
+            ? sanitizeLauncherMetadataForProfile(mergedItem, mergedProfile).item
+            : mergedItem;
         }
         return pwa;
       });
@@ -842,7 +885,7 @@ app.get('/api/pwas/state', (_req, res) => {
 // POST /api/pwas/state - Save / update user state to disk
 app.post('/api/pwas/state', (req, res) => {
   try {
-    const { items, folders, deletedIds, replaceAll, allowRestore } = req.body || {};
+    const { items, folders, deletedIds, supersededIds, replaceAll, allowRestore } = req.body || {};
     const db = getDb();
 
     if (Array.isArray(deletedIds)) {
@@ -850,6 +893,14 @@ app.post('/api/pwas/state', (req, res) => {
         if (id && !db.deletedIds.includes(id)) {
           db.deletedIds.push(id);
         }
+        if (id) {
+          delete db.pwas[id];
+        }
+      });
+    }
+
+    if (Array.isArray(supersededIds)) {
+      supersededIds.forEach((id: string) => {
         if (id) {
           delete db.pwas[id];
         }

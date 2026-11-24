@@ -47,6 +47,9 @@ import {
   getVisuallyOrderedPWAIds,
   getNormalizedPWAChromeProfileKey,
   buildChromeProfileFilterOptions,
+  sanitizeLauncherMetadataForProfile,
+  resolveConsolidatedScannedProfile,
+  filterNonDuplicateImportedPWAs,
 } from './pwaLogic';
 import { PWAItem } from '../types/pwa';
 
@@ -1071,6 +1074,159 @@ test('filterAndSortPWAs filters by Chrome profile including variants, unassigned
     ['none']
   );
 });
+
+test('importPWAsFromJson preserves Chrome profileDirectory, rating, aliases, and launcher fields', () => {
+  const backupJson = JSON.stringify([
+    {
+      id: 'p_5',
+      name: '35M.COM',
+      url: 'https://35m.com',
+      group: 'Comunicação',
+      profileDirectory: 'Profile 5',
+      rating: 4,
+      aliases: ['35m'],
+      accessCount: 3,
+    },
+  ]);
+
+  const parsed = importPWAsFromJson(backupJson);
+  assert.equal(parsed.length, 1);
+  assert.equal(parsed[0].profileDirectory, 'Profile 5');
+  assert.equal(parsed[0].rating, 4);
+  assert.equal(parsed[0].pinned, true);
+  assert.deepEqual(parsed[0].aliases, ['35m']);
+});
+
+test('resolveConsolidatedScannedProfile prefers custom Profile 5 over stale Default match and clears conflicting desktop metadata', () => {
+  const defaultDuplicate: PWAItem = {
+    id: 'pwa_old_def',
+    name: '13E.COM',
+    url: 'https://13e.com',
+    category: 'Comunicação',
+    notes: '',
+    profileDirectory: 'Default',
+    lastAccessedDate: null,
+    accessCount: 0,
+    createdAt: '2026-10-01',
+  };
+  const editedProfile5: PWAItem = {
+    id: 'pwa_platform_13e_com',
+    name: '13E.COM',
+    url: 'https://13e.com',
+    category: 'Comunicação',
+    notes: '',
+    profileDirectory: 'Profile 5',
+    lastAccessedDate: '2026-11-22T09:07:00.000Z',
+    accessCount: 2,
+    createdAt: '2026-10-02',
+  };
+  const scannedWithPreMergedServerProfile: PWAItem = {
+    id: 'pwa_platform_13e_com',
+    name: '13E.COM',
+    url: 'https://13e.com',
+    category: 'Comunicação',
+    notes: '',
+    // Simulates server /api/pwas/scan returning Default desktop fields alongside Profile 5
+    profileDirectory: 'Profile 5',
+    execLine: '/opt/google/chrome/google-chrome --profile-directory="Default" --app-id=app13e',
+    rawFileName: 'chrome-app13e-Default.desktop',
+    desktopPath: '/home/user/.local/share/applications/chrome-app13e-Default.desktop',
+    appId: 'app13e',
+    lastAccessedDate: null,
+    accessCount: 0,
+    createdAt: '2026-11-24',
+  };
+
+  const resolved = resolveConsolidatedScannedProfile(
+    [defaultDuplicate, editedProfile5],
+    scannedWithPreMergedServerProfile
+  );
+
+  assert.equal(resolved.finalProfileDirectory, 'Profile 5');
+  assert.equal(resolved.profileOverridden, true);
+  assert.ok(resolved.nextExecLine?.includes('--profile-directory="Profile 5"'));
+
+  const sanitized = sanitizeLauncherMetadataForProfile(scannedWithPreMergedServerProfile, 'Profile 5');
+  assert.equal(sanitized.changed, true);
+  assert.equal(sanitized.item.desktopPath, undefined);
+  assert.equal(sanitized.item.rawFileName, undefined);
+  assert.equal(sanitized.item.appId, undefined);
+});
+
+test('filterNonDuplicateImportedPWAs blocks Default and URL+profile duplicates on desktop and json imports', () => {
+  const existing: PWAItem[] = [
+    {
+      id: 'pwa_platform_13e_com',
+      name: '13E.COM',
+      url: 'https://13e.com',
+      category: 'Comunicação',
+      notes: '',
+      profileDirectory: 'Profile 5',
+      lastAccessedDate: null,
+      accessCount: 0,
+      createdAt: '2026-10-01',
+    },
+  ];
+
+  const incomingDesktop: PWAItem[] = [
+    {
+      id: 'pwa_chrome_13e_Default_desktop',
+      name: '13E.COM',
+      url: 'https://13e.com/',
+      category: 'Comunicação',
+      notes: '',
+      profileDirectory: 'Default',
+      appId: 'app13e',
+      rawFileName: 'chrome-app13e-Default.desktop',
+      lastAccessedDate: null,
+      accessCount: 0,
+      createdAt: '2026-11-24',
+    },
+    {
+      id: 'pwa_chrome_13e_Profile_2_desktop',
+      name: '13E.COM (Perfil 2)',
+      url: 'https://13e.com/',
+      category: 'Comunicação',
+      notes: '',
+      profileDirectory: 'Profile 2',
+      appId: 'app13e_p2',
+      rawFileName: 'chrome-app13e-Profile_2.desktop',
+      lastAccessedDate: null,
+      accessCount: 0,
+      createdAt: '2026-11-24',
+    },
+    {
+      // Second duplicate of same Profile 2 desktop file in same import batch
+      id: 'pwa_chrome_13e_Profile_2_desktop_copy',
+      name: '13E.COM (Perfil 2)',
+      url: 'https://13e.com',
+      category: 'Comunicação',
+      notes: '',
+      profileDirectory: 'Profile 2',
+      lastAccessedDate: null,
+      accessCount: 0,
+      createdAt: '2026-11-24',
+    },
+  ];
+
+  const filteredDesktop = filterNonDuplicateImportedPWAs(existing, incomingDesktop, 'desktop');
+  assert.deepEqual(
+    filteredDesktop.map((i) => i.id),
+    ['pwa_chrome_13e_Profile_2_desktop'],
+    'Should skip Default shadow of Profile 5 PWA and skip duplicate Profile 2 copies in same batch'
+  );
+
+  const filteredJson = filterNonDuplicateImportedPWAs(
+    existing,
+    [
+      { ...existing[0], id: 'old_json_id_same_url_and_profile' },
+      { ...existing[0], id: 'json_p2', profileDirectory: 'Profile 2' },
+    ],
+    'json'
+  );
+  assert.deepEqual(filteredJson.map((i) => i.id), ['json_p2']);
+});
+
 
 
 

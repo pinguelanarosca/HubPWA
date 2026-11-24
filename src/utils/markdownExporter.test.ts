@@ -272,3 +272,118 @@ test('applyMarkdownAccessUpdates parses ## [Name](url) blocks and edits Chrome p
   assert.equal(isAccessedToday(untouchedBet5.lastAccessedDate, todayStr), false);
 });
 
+test('applyMarkdownAccessUpdates returns Default and duplicate copies to Profile 5 from exported report without Acesso line while preserving distinct clones', () => {
+  const todayStr = '2026-11-24';
+  const now = new Date(2026, 10, 24, 9, 45, 0);
+
+  const items: PWAItem[] = [
+    {
+      id: 'pwa_platform_13e_com',
+      name: '13E.COM',
+      url: 'https://13e.com',
+      category: 'Comunicação',
+      notes: '',
+      profileDirectory: 'Default',
+      execLine: '/opt/google/chrome/google-chrome --profile-directory="Default" --app-id=app13e',
+      rawFileName: 'chrome-app13e-Default.desktop',
+      desktopPath: '/home/user/.local/share/applications/chrome-app13e-Default.desktop',
+      appId: 'app13e',
+      lastAccessedDate: null,
+      accessCount: 0,
+      createdAt: '2026-10-01',
+    },
+    {
+      id: 'pwa_platform_13e_com__dup_2',
+      name: '13E.COM (Default)',
+      url: 'https://13e.com/',
+      category: 'Comunicação',
+      notes: '',
+      profileDirectory: 'Default',
+      rawFileName: 'chrome-app13e-copy-Default.desktop',
+      lastAccessedDate: null,
+      accessCount: 0,
+      createdAt: '2026-10-02',
+    },
+    {
+      id: 'pwa_5ggg_stale',
+      name: '5ggg.com',
+      url: 'https://5ggg.com/',
+      category: 'Comunicação',
+      notes: '',
+      // Already labeled Profile 5, but still carrying stale Default desktop fields
+      profileDirectory: 'Profile 5',
+      execLine: '/opt/google/chrome/google-chrome --profile-directory="Default" --app-id=app5ggg',
+      rawFileName: 'chrome-app5ggg-Default.desktop',
+      desktopPath: '/home/user/.local/share/applications/chrome-app5ggg-Default.desktop',
+      appId: 'app5ggg',
+      lastAccessedDate: null,
+      accessCount: 0,
+      createdAt: '2026-10-01',
+    },
+    {
+      id: 'pwa_clone_5ggg_p2',
+      name: '5ggg.com (Perfil 2)',
+      url: 'https://5ggg.com/',
+      category: 'Comunicação',
+      notes: '',
+      clonedFromId: 'pwa_5ggg_stale',
+      profileDirectory: 'Profile 2',
+      lastAccessedDate: null,
+      accessCount: 0,
+      createdAt: '2026-10-03',
+    },
+  ];
+
+  const mdInput = `# Relatório de PWAs Extraídas - Chrome PWA Hub
+
+> **Data de Extração:** 23/11/2026 às 08:59
+> **Total de PWAs Selecionadas:** 2
+
+---
+
+## Grupo: Comunicação (2)
+
+### [13E.COM](https://13e.com)
+- **URL:** \`https://13e.com\`
+- **Perfil do Chrome:** Perfil 5 (Profile 5) — Marlene
+- **Classificação:** Sem classificação
+- **Último Acesso:** 22/11 - 09:07
+
+### [5ggg.com](https://5ggg.com/)
+- **URL:** \`https://5ggg.com/\`
+- **Perfil do Chrome:** Perfil 5 (Profile 5) — Marlene
+- **Classificação:** Sem classificação
+- **Último Acesso:** 22/11 - 05:35
+`;
+
+  const result = applyMarkdownAccessUpdates(items, mdInput, { now, todayStr });
+
+  assert.equal(result.items.length, 4, 'Never adds or removes cards');
+  assert.equal(result.parsedCount, 2);
+  assert.equal(result.matchedCount, 2);
+  assert.equal(result.updatedProfileCount, 3, 'Moves both 13E.COM copies and cleans 5ggg stale Default fields');
+
+  const p13Main = result.items.find((i) => i.id === 'pwa_platform_13e_com')!;
+  const p13Dup = result.items.find((i) => i.id === 'pwa_platform_13e_com__dup_2')!;
+  const p5gggMain = result.items.find((i) => i.id === 'pwa_5ggg_stale')!;
+  const p5gggCloneP2 = result.items.find((i) => i.id === 'pwa_clone_5ggg_p2')!;
+
+  assert.equal(p13Main.profileDirectory, 'Profile 5');
+  assert.equal(p13Main.desktopPath, undefined);
+  assert.equal(p13Main.rawFileName, undefined);
+  assert.equal(p13Main.appId, undefined);
+  assert.ok(p13Main.execLine?.includes('--profile-directory="Profile 5"'));
+
+  assert.equal(p13Dup.profileDirectory, 'Profile 5');
+  assert.equal(p13Dup.rawFileName, undefined);
+
+  assert.equal(p5gggMain.profileDirectory, 'Profile 5');
+  assert.equal(p5gggMain.desktopPath, undefined);
+  assert.equal(p5gggMain.rawFileName, undefined);
+  assert.equal(p5gggMain.appId, undefined);
+  assert.ok(p5gggMain.execLine?.includes('--profile-directory="Profile 5"'));
+
+  assert.equal(p5gggCloneP2.profileDirectory, 'Profile 2', 'Must never overwrite an explicit Perfil 2 clone');
+});
+
+

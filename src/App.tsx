@@ -37,6 +37,9 @@ import {
   computeCardSelection,
   getVisuallyOrderedPWAIds,
   buildChromeProfileFilterOptions,
+  resolveConsolidatedScannedProfile,
+  sanitizeLauncherMetadataForProfile,
+  filterNonDuplicateImportedPWAs,
 } from './utils/pwaLogic';
 import {
   FOLDERS_STORAGE_KEY,
@@ -406,12 +409,11 @@ export default function App() {
           const existingWorkingIcon = matches.find((m) => isPreservableIconUrl(m.icon))?.icon;
           const finalMergedIcon = existingWorkingIcon || scanned.icon || resolveFaviconAtInsertion(scanned.url, undefined, customName);
 
-          const userEditedProfile = matches.find((m) => m.profileDirectory)?.profileDirectory;
-          const scannedProfile = scanned.profileDirectory || extractChromeProfileDirectory(scanned);
-          const finalProfileDirectory = userEditedProfile || scannedProfile;
-          const profileOverridden =
-            Boolean(userEditedProfile && scannedProfile) &&
-            userEditedProfile!.toLowerCase() !== scannedProfile!.toLowerCase();
+          const {
+            finalProfileDirectory,
+            profileOverridden,
+            nextExecLine,
+          } = resolveConsolidatedScannedProfile(matches, scanned);
 
           const mergedFlags = matches.find((m) => m.flags)?.flags || scanned.flags;
           const combinedLogs = Array.from(
@@ -438,7 +440,7 @@ export default function App() {
             ...scanned,
             ...(profileOverridden
               ? {
-                  execLine: undefined,
+                  execLine: nextExecLine,
                   rawFileName: undefined,
                   desktopPath: undefined,
                   appId: undefined,
@@ -474,12 +476,17 @@ export default function App() {
       const finalMerged = ensureUniquePWAIds(
         [...mergedList, ...remainingManualItems].filter((it) => !isAndroidOrRedroidApp(it))
       );
+      const finalMergedIds = new Set(finalMerged.map((it) => it.id));
+      const supersededIds = Array.from(absorbedPrevIds).filter((id) => !finalMergedIds.has(id));
 
-      // Sync merged state to server disk database
+      // Sync merged state to server disk database and remove absorbed duplicate IDs
       fetch('/api/pwas/state', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ items: finalMerged }),
+        body: JSON.stringify({
+          items: finalMerged,
+          ...(supersededIds.length > 0 ? { supersededIds } : {}),
+        }),
       }).catch(() => {});
 
       return finalMerged;
@@ -954,17 +961,19 @@ export default function App() {
     };
   }, [processDesktopFiles]);
 
-  // Confirm import of parsed Ubuntu desktop PWAs
+  // Confirm import of parsed Ubuntu desktop PWAs (deduplicated against existing PWAs & profiles)
   const handleConfirmDesktopImport = useCallback((newItems: PWAItem[]) => {
     const validNew = newItems.filter((i) => !isAndroidOrRedroidApp(i));
     setItems((prev) => {
       const cleanPrev = prev.filter((p) => !isAndroidOrRedroidApp(p));
-      const existingIds = new Set(cleanPrev.map((i) => i.id));
       const withResolvedIcons = validNew.map((item) => ({
         ...item,
         icon: item.icon || resolveFaviconAtInsertion(item.url),
       }));
-      const filtered = withResolvedIcons.filter((i) => !existingIds.has(i.id));
+      const filtered = filterNonDuplicateImportedPWAs(cleanPrev, withResolvedIcons, 'desktop');
+      if (filtered.length === 0) {
+        return cleanPrev.length === prev.length ? prev : cleanPrev;
+      }
       return ensureUniquePWAIds([...filtered, ...cleanPrev]);
     });
   }, []);
@@ -1516,11 +1525,20 @@ export default function App() {
     if (data.id) {
       // Edit
       setItems((prev) => {
-        const updatedList = prev.map((it) =>
-          it.id === data.id
-            ? { ...it, ...data, group: grp, category: grp, folderId: nextFolderId, icon: finalIcon }
-            : it
-        );
+        const updatedList = prev.map((it) => {
+          if (it.id !== data.id) return it;
+          const draft: PWAItem = {
+            ...it,
+            ...data,
+            group: grp,
+            category: grp,
+            folderId: nextFolderId,
+            icon: finalIcon,
+          };
+          return 'profileDirectory' in data
+            ? sanitizeLauncherMetadataForProfile(draft, data.profileDirectory).item
+            : draft;
+        });
         fetch('/api/pwas/state', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -2178,9 +2196,14 @@ export default function App() {
     } else {
       setItems((prev) => {
         const cleanPrev = prev.filter((p) => !isAndroidOrRedroidApp(p));
-        const existingIds = new Set(cleanPrev.map((i) => i.id));
-        const nonDuplicate = validNew.filter((i) => !existingIds.has(i.id));
-        return ensureUniquePWAIds([...cleanPrev, ...nonDuplicate]);
+        const nonDuplicate = filterNonDuplicateImportedPWAs(cleanPrev, validNew, 'json');
+        const nextList = ensureUniquePWAIds([...cleanPrev, ...nonDuplicate]);
+        fetch('/api/pwas/state', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ items: nextList }),
+        }).catch(() => {});
+        return nextList;
       });
     }
   }, []);

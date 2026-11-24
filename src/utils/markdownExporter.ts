@@ -2,12 +2,16 @@ import { PWAItem } from '../types/pwa';
 import {
   ChromeProfileOption,
   batchSetStatus,
+  extractExplicitProfileSuffixKey,
   formatAccessLogDash,
   formatChromeProfileDisplay,
   getNormalizedPWAChromeProfileKey,
   getTodayString,
   isAccessedToday,
+  normalizeAppUrlForMatch,
   normalizeChromeProfileInput,
+  sanitizeLauncherMetadataForProfile,
+  stripProfileSuffixFromName,
 } from './pwaLogic';
 
 export interface MarkdownExportOptions {
@@ -361,10 +365,21 @@ export function applyMarkdownAccessUpdates(
   let unchangedCount = 0;
   let unmatchedCount = 0;
 
+  const urlEntryCounts = new Map<string, number>();
+  for (const entry of entries) {
+    const u = normalizeAppUrlForMatch(entry.url);
+    if (!u) continue;
+    urlEntryCounts.set(u, (urlEntryCounts.get(u) || 0) + 1);
+  }
+
   for (const entry of entries) {
     const targetUrlNorm = normalizeUrlForMatch(entry.url);
     const targetNameNorm = entry.name.trim().toLowerCase();
+    const targetBaseNameNorm = stripProfileSuffixFromName(entry.name).trim().toLowerCase();
     const hasProfileConstraint = entry.profileKey !== undefined;
+    const entryHasExplicitProfileSuffix = Boolean(
+      extractExplicitProfileSuffixKey(entry.name)
+    );
 
     const findMatch = (): PWAItem | undefined => {
       if (targetUrlNorm && targetNameNorm && hasProfileConstraint) {
@@ -373,6 +388,17 @@ export function applyMarkdownAccessUpdates(
             !claimedIds.has(it.id) &&
             normalizeUrlForMatch(it.url) === targetUrlNorm &&
             it.name.trim().toLowerCase() === targetNameNorm &&
+            getNormalizedPWAChromeProfileKey(it) === entry.profileKey
+        );
+        if (match) return match;
+      }
+
+      if (targetUrlNorm && targetBaseNameNorm && hasProfileConstraint) {
+        const match = safeItems.find(
+          (it) =>
+            !claimedIds.has(it.id) &&
+            normalizeUrlForMatch(it.url) === targetUrlNorm &&
+            stripProfileSuffixFromName(it.name).trim().toLowerCase() === targetBaseNameNorm &&
             getNormalizedPWAChromeProfileKey(it) === entry.profileKey
         );
         if (match) return match;
@@ -408,6 +434,16 @@ export function applyMarkdownAccessUpdates(
         if (match) return match;
       }
 
+      if (targetUrlNorm && targetBaseNameNorm) {
+        const match = safeItems.find(
+          (it) =>
+            !claimedIds.has(it.id) &&
+            normalizeUrlForMatch(it.url) === targetUrlNorm &&
+            stripProfileSuffixFromName(it.name).trim().toLowerCase() === targetBaseNameNorm
+        );
+        if (match) return match;
+      }
+
       if (targetUrlNorm) {
         const match = safeItems.find(
           (it) => !claimedIds.has(it.id) && normalizeUrlForMatch(it.url) === targetUrlNorm
@@ -425,38 +461,82 @@ export function applyMarkdownAccessUpdates(
       return undefined;
     };
 
-    const matched = findMatch();
-    if (!matched) {
+    const primaryMatched = findMatch();
+    if (!primaryMatched) {
       unmatchedCount += 1;
       continue;
     }
 
-    claimedIds.add(matched.id);
+    const targets: PWAItem[] = [primaryMatched];
+    claimedIds.add(primaryMatched.id);
     matchedCount += 1;
 
-    let itemChanged = false;
+    // If this URL only appears once in the .md report and has no explicit per-profile suffix
+    // (e.g. "### [13E.COM](https://13e.com)" with "Perfil 5"), also migrate any unclaimed
+    // duplicate/Default copies sharing the exact same URL so none remain stuck in Default.
+    if (
+      targetUrlNorm &&
+      (urlEntryCounts.get(targetUrlNorm) || 0) === 1 &&
+      !entryHasExplicitProfileSuffix
+    ) {
+      const targetProfKey = entry.profileKey || '';
+      for (const candidate of safeItems) {
+        if (claimedIds.has(candidate.id)) continue;
+        if (normalizeUrlForMatch(candidate.url) !== targetUrlNorm) continue;
 
-    if (entry.accessed !== null) {
-      const currentlyAccessed = isAccessedToday(matched.lastAccessedDate, todayStr);
-      if (entry.accessed && !currentlyAccessed) {
-        toAccessedIds.add(matched.id);
-        itemChanged = true;
-      } else if (!entry.accessed && currentlyAccessed) {
-        toPendingIds.add(matched.id);
-        itemChanged = true;
+        const candExplicitSuffixKey = extractExplicitProfileSuffixKey(candidate.name);
+        if (
+          candExplicitSuffixKey &&
+          candExplicitSuffixKey !== 'default' &&
+          candExplicitSuffixKey !== targetProfKey
+        ) {
+          continue;
+        }
+
+        const candCurrentProfKey = getNormalizedPWAChromeProfileKey(candidate);
+        if (
+          candidate.clonedFromId &&
+          candCurrentProfKey &&
+          candCurrentProfKey !== 'default' &&
+          candCurrentProfKey !== targetProfKey
+        ) {
+          continue;
+        }
+
+        claimedIds.add(candidate.id);
+        targets.push(candidate);
       }
     }
 
-    if (entry.hasProfileField) {
-      const currentProfileKey = getNormalizedPWAChromeProfileKey(matched);
-      const nextProfileKey = entry.profileKey || '';
-      if (currentProfileKey !== nextProfileKey) {
-        profileUpdatesById.set(matched.id, entry.profileDirectory);
-        itemChanged = true;
+    let primaryOrCopyChanged = false;
+    for (const target of targets) {
+      let targetChanged = false;
+
+      if (entry.accessed !== null) {
+        const currentlyAccessed = isAccessedToday(target.lastAccessedDate, todayStr);
+        if (entry.accessed && !currentlyAccessed) {
+          toAccessedIds.add(target.id);
+          targetChanged = true;
+        } else if (!entry.accessed && currentlyAccessed) {
+          toPendingIds.add(target.id);
+          targetChanged = true;
+        }
+      }
+
+      if (entry.hasProfileField) {
+        const { changed } = sanitizeLauncherMetadataForProfile(target, entry.profileDirectory);
+        if (changed) {
+          profileUpdatesById.set(target.id, entry.profileDirectory);
+          targetChanged = true;
+        }
+      }
+
+      if (targetChanged) {
+        primaryOrCopyChanged = true;
       }
     }
 
-    if (!itemChanged) {
+    if (!primaryOrCopyChanged) {
       unchangedCount += 1;
     }
   }
@@ -466,21 +546,7 @@ export function applyMarkdownAccessUpdates(
     nextItems = nextItems.map((it) => {
       if (!profileUpdatesById.has(it.id)) return it;
       const nextProfileDir = profileUpdatesById.get(it.id);
-      const nextExecLine =
-        nextProfileDir && it.execLine && /--profile-directory=/i.test(it.execLine)
-          ? it.execLine.replace(
-              /--profile-directory=(?:"[^"]*"|'[^']*'|[^\s"']+)/i,
-              `--profile-directory="${nextProfileDir}"`
-            )
-          : undefined;
-      return {
-        ...it,
-        profileDirectory: nextProfileDir,
-        execLine: nextExecLine,
-        rawFileName: undefined,
-        desktopPath: undefined,
-        appId: undefined,
-      };
+      return sanitizeLauncherMetadataForProfile(it, nextProfileDir).item;
     });
   }
   if (toAccessedIds.size > 0) {

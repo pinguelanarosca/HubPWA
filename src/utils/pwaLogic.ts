@@ -924,9 +924,27 @@ export function importPWAsFromJson(rawJson: string): PWAItem[] {
         icon: typeof r.icon === 'string' && r.icon.trim()
           ? r.icon.trim()
           : resolveFaviconAtInsertion(url),
+        ...(typeof r.profileDirectory === 'string' && r.profileDirectory.trim()
+          ? { profileDirectory: normalizeChromeProfileInput(r.profileDirectory) }
+          : {}),
+        ...(typeof r.rating === 'number' ? { rating: r.rating } : {}),
+        ...(Array.isArray(r.aliases) ? { aliases: r.aliases.map((a) => String(a)) } : {}),
+        ...(typeof r.clonedFromId === 'string' && r.clonedFromId.trim()
+          ? { clonedFromId: r.clonedFromId.trim() }
+          : {}),
+        ...(typeof r.execLine === 'string' && r.execLine.trim() ? { execLine: r.execLine.trim() } : {}),
+        ...(typeof r.rawFileName === 'string' && r.rawFileName.trim()
+          ? { rawFileName: r.rawFileName.trim() }
+          : {}),
+        ...(typeof r.desktopPath === 'string' && r.desktopPath.trim()
+          ? { desktopPath: r.desktopPath.trim() }
+          : {}),
+        ...(typeof r.appId === 'string' && r.appId.trim() ? { appId: r.appId.trim() } : {}),
         lastAccessedDate: typeof r.lastAccessedDate === 'string' ? r.lastAccessedDate : null,
+        ...(Array.isArray(r.accessLogs) ? { accessLogs: r.accessLogs.map((l) => String(l)) } : {}),
+        ...(Array.isArray(r.accessHistory) ? { accessHistory: r.accessHistory as PWAItem['accessHistory'] } : {}),
         accessCount: typeof r.accessCount === 'number' ? r.accessCount : 0,
-        pinned: Boolean(r.pinned),
+        pinned: Boolean(r.pinned || (typeof r.rating === 'number' && r.rating > 0)),
         flags:
           typeof r.flags === 'object' && r.flags !== null
             ? migratePWAFlags(r.flags as Record<string, unknown>)
@@ -1850,4 +1868,249 @@ export function computeCardSelection(
     lastSelectedId: clickedId,
   };
 }
+
+/**
+ * Normalizes a PWA URL consistently for identity and deduplication checks.
+ */
+export function normalizeAppUrlForMatch(rawUrl?: string): string {
+  if (!rawUrl || typeof rawUrl !== 'string') return '';
+  return rawUrl
+    .trim()
+    .toLowerCase()
+    .replace(/^https?:\/\//, '')
+    .replace(/^www\./, '')
+    .replace(/\/+$/, '');
+}
+
+/**
+ * Extracts canonical lowercase profile key declared explicitly at the end of a PWA name
+ * (e.g. "Bet (Perfil 5)" -> "profile 5", "13E.COM (Default)" -> "default").
+ */
+export function extractExplicitProfileSuffixKey(name?: string): string {
+  if (!name || typeof name !== 'string') return '';
+  const m = name.trim().match(/\((Perfil\s+\d+|Default|Profile\s+\d+)\)\s*$/i);
+  if (!m) return '';
+  const normalized = normalizeChromeProfileInput(m[1]);
+  return normalized ? normalized.toLowerCase() : '';
+}
+
+/**
+ * Updates a PWA item's Chrome profile and sanitizes stale `.desktop` launcher bindings
+ * (`execLine`, `rawFileName`, `desktopPath`, `appId`) whenever the target profile differs
+ * from the launcher's embedded profile so `Default` launchers never override an edited profile.
+ */
+export function sanitizeLauncherMetadataForProfile(
+  item: PWAItem,
+  nextProfileDir: string | undefined
+): { changed: boolean; item: PWAItem } {
+  const normalizedTarget =
+    nextProfileDir && nextProfileDir.trim()
+      ? normalizeChromeProfileInput(nextProfileDir)
+      : undefined;
+  const targetKey = normalizedTarget ? normalizedTarget.toLowerCase() : '';
+  const currentKey = getNormalizedPWAChromeProfileKey(item);
+  const currentExplicit =
+    item.profileDirectory && item.profileDirectory.trim()
+      ? normalizeChromeProfileInput(item.profileDirectory)
+      : undefined;
+
+  const nativeLauncherProfile = extractChromeProfileDirectory({
+    execLine: item.execLine,
+    rawFileName: item.rawFileName,
+    desktopPath: item.desktopPath,
+  });
+  const nativeLauncherKey = nativeLauncherProfile
+    ? normalizeChromeProfileInput(nativeLauncherProfile).toLowerCase()
+    : '';
+
+  const needsProfileChange =
+    currentKey !== targetKey || (normalizedTarget || undefined) !== currentExplicit;
+  const hasConflictingLauncher =
+    Boolean(nativeLauncherKey && nativeLauncherKey !== targetKey) ||
+    Boolean(!targetKey && (item.rawFileName || item.desktopPath || item.appId || item.execLine));
+
+  if (!needsProfileChange && !hasConflictingLauncher) {
+    return { changed: false, item };
+  }
+
+  if (!hasConflictingLauncher && !needsProfileChange) {
+    return { changed: false, item };
+  }
+
+  const shouldStripNativeDesktop =
+    needsProfileChange || hasConflictingLauncher;
+
+  const nextExecLine =
+    shouldStripNativeDesktop
+      ? normalizedTarget && item.execLine && /--profile-directory=/i.test(item.execLine)
+        ? item.execLine.replace(
+            /--profile-directory=(?:"[^"]*"|'[^']*'|[^\s"']+)/i,
+            `--profile-directory="${normalizedTarget}"`
+          )
+        : undefined
+      : item.execLine;
+
+  return {
+    changed: true,
+    item: {
+      ...item,
+      profileDirectory: normalizedTarget,
+      execLine: nextExecLine,
+      ...(shouldStripNativeDesktop
+        ? {
+            rawFileName: undefined,
+            desktopPath: undefined,
+            appId: undefined,
+          }
+        : {}),
+    },
+  };
+}
+
+/**
+ * Selects the canonical user profile when consolidating matched platform installations
+ * and detects whether that profile differs from the scanned `.desktop` launcher's native profile.
+ */
+export function resolveConsolidatedScannedProfile(
+  matches: PWAItem[],
+  scanned: PWAItem
+): {
+  finalProfileDirectory: string | undefined;
+  profileOverridden: boolean;
+  nextExecLine: string | undefined;
+} {
+  // Prefer any match explicitly assigned to a non-Default custom profile (e.g. Profile 5)
+  // over stale/uncleaned Default entries, choosing most recently updated when ties occur.
+  const candidatesWithProfile = matches
+    .filter((m) => Boolean(m.profileDirectory && m.profileDirectory.trim()))
+    .map((m) => ({
+      item: m,
+      normalized: normalizeChromeProfileInput(m.profileDirectory!),
+    }))
+    .filter((entry) => Boolean(entry.normalized));
+
+  const nonDefaultCandidate = candidatesWithProfile.find(
+    (c) => c.normalized.toLowerCase() !== 'default'
+  );
+  const pickedUserProfile = nonDefaultCandidate
+    ? nonDefaultCandidate.normalized
+    : candidatesWithProfile[0]?.normalized;
+
+  const nativeScannedProfileRaw = extractChromeProfileDirectory({
+    execLine: scanned.execLine,
+    rawFileName: scanned.rawFileName,
+    desktopPath: scanned.desktopPath,
+  });
+  const nativeScannedProfile = nativeScannedProfileRaw
+    ? normalizeChromeProfileInput(nativeScannedProfileRaw)
+    : undefined;
+  const scannedExplicitProfile = scanned.profileDirectory
+    ? normalizeChromeProfileInput(scanned.profileDirectory)
+    : undefined;
+
+  const finalProfileDirectory =
+    pickedUserProfile || scannedExplicitProfile || nativeScannedProfile || undefined;
+
+  const nativeKey = nativeScannedProfile ? nativeScannedProfile.toLowerCase() : '';
+  const finalKey = finalProfileDirectory ? finalProfileDirectory.toLowerCase() : '';
+  const profileOverridden = Boolean(
+    finalKey && nativeKey && finalKey !== nativeKey
+  );
+
+  const nextExecLine = profileOverridden
+    ? finalProfileDirectory && scanned.execLine && /--profile-directory=/i.test(scanned.execLine)
+      ? scanned.execLine.replace(
+          /--profile-directory=(?:"[^"]*"|'[^']*'|[^\s"']+)/i,
+          `--profile-directory="${finalProfileDirectory}"`
+        )
+      : undefined
+    : scanned.execLine;
+
+  return {
+    finalProfileDirectory,
+    profileOverridden,
+    nextExecLine,
+  };
+}
+
+/**
+ * Filters incoming `.desktop` or JSON backup PWAs so re-importing files never creates
+ * duplicate cards or accidental `Default` copies alongside existing entries.
+ */
+export function filterNonDuplicateImportedPWAs(
+  existing: PWAItem[],
+  incoming: PWAItem[],
+  mode: 'desktop' | 'json'
+): PWAItem[] {
+  const safeExisting = Array.isArray(existing) ? existing : [];
+  const safeIncoming = Array.isArray(incoming) ? incoming : [];
+
+  const seenIds = new Set<string>(safeExisting.map((i) => i.id).filter(Boolean));
+  const seenAppIds = new Set<string>(
+    safeExisting.map((i) => i.appId?.trim().toLowerCase()).filter(Boolean) as string[]
+  );
+  const seenRawFiles = new Set<string>(
+    safeExisting.map((i) => i.rawFileName?.trim().toLowerCase()).filter(Boolean) as string[]
+  );
+  const seenDesktopPaths = new Set<string>(
+    safeExisting.map((i) => i.desktopPath?.trim()).filter(Boolean) as string[]
+  );
+  const existingByUrl = new Map<string, string[]>();
+
+  for (const item of safeExisting) {
+    const urlNorm = normalizeAppUrlForMatch(item.url);
+    if (!urlNorm) continue;
+    const profKey = getNormalizedPWAChromeProfileKey(item);
+    const list = existingByUrl.get(urlNorm);
+    if (list) list.push(profKey);
+    else existingByUrl.set(urlNorm, [profKey]);
+  }
+
+  const accepted: PWAItem[] = [];
+
+  for (const cand of safeIncoming) {
+    if (!cand || typeof cand !== 'object' || !cand.url) continue;
+    if (cand.id && seenIds.has(cand.id)) continue;
+
+    const appIdNorm = cand.appId?.trim().toLowerCase();
+    if (appIdNorm && seenAppIds.has(appIdNorm)) continue;
+
+    const rawFileNorm = cand.rawFileName?.trim().toLowerCase();
+    if (rawFileNorm && seenRawFiles.has(rawFileNorm)) continue;
+
+    const desktopPathNorm = cand.desktopPath?.trim();
+    if (desktopPathNorm && seenDesktopPaths.has(desktopPathNorm)) continue;
+
+    const urlNorm = normalizeAppUrlForMatch(cand.url);
+    const candProfKey = getNormalizedPWAChromeProfileKey(cand);
+
+    if (urlNorm && existingByUrl.has(urlNorm)) {
+      const existingProfiles = existingByUrl.get(urlNorm)!;
+      const sameProfileMatch = existingProfiles.some((p) => p === candProfKey);
+      const desktopDefaultOrUnassignedShadow =
+        mode === 'desktop' &&
+        (candProfKey === '' ||
+          candProfKey === 'default' ||
+          existingProfiles.includes(''));
+
+      if (sameProfileMatch || desktopDefaultOrUnassignedShadow) {
+        continue;
+      }
+    }
+
+    accepted.push(cand);
+    if (cand.id) seenIds.add(cand.id);
+    if (appIdNorm) seenAppIds.add(appIdNorm);
+    if (rawFileNorm) seenRawFiles.add(rawFileNorm);
+    if (desktopPathNorm) seenDesktopPaths.add(desktopPathNorm);
+    if (urlNorm) {
+      const list = existingByUrl.get(urlNorm);
+      if (list) list.push(candProfKey);
+      else existingByUrl.set(urlNorm, [candProfKey]);
+    }
+  }
+
+  return accepted;
+}
+
 
