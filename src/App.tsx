@@ -40,6 +40,9 @@ import {
   resolveConsolidatedScannedProfile,
   sanitizeLauncherMetadataForProfile,
   filterNonDuplicateImportedPWAs,
+  findSameProfileDuplicateGroups,
+  removeSameProfileDuplicates,
+  SameProfileDedupePlan,
 } from './utils/pwaLogic';
 import {
   FOLDERS_STORAGE_KEY,
@@ -312,8 +315,9 @@ export default function App() {
     newRating: number;
   } | null>(null);
 
-  // Pending deletion confirmation modal (single or batch IDs)
+  // Pending deletion confirmation modal (single or batch IDs) and same-profile dedupe confirmation
   const [pendingDeleteIds, setPendingDeleteIds] = useState<string[] | null>(null);
+  const [pendingDedupePlan, setPendingDedupePlan] = useState<SameProfileDedupePlan | null>(null);
   const [noticeMessage, setNoticeMessage] = useState<string | null>(null);
   const [noticeTone, setNoticeTone] = useState<'warning' | 'success'>('warning');
 
@@ -1039,6 +1043,11 @@ export default function App() {
     [cleanItems, discoveredChromeProfiles]
   );
 
+  const sameProfileDedupePlan = useMemo(
+    () => findSameProfileDuplicateGroups(cleanItems),
+    [cleanItems]
+  );
+
   // Filtered and sorted items
   const displayedItems = useMemo(() => {
     const activeFolderFilter = density === 'folders' ? 'all' : selectedFolder;
@@ -1502,6 +1511,76 @@ export default function App() {
       body: JSON.stringify({ ids: idsToDelete }),
     }).catch((err) => console.warn('Erro ao persistir exclusão no servidor:', err));
   }, [pendingDeleteIds]);
+
+  // Request confirmation to remove duplicate PWAs within the exact same Chrome profile
+  const handleRequestRemoveSameProfileDuplicates = useCallback(
+    (targetIds?: Set<string>) => {
+      const plan =
+        targetIds && targetIds.size > 0
+          ? findSameProfileDuplicateGroups(cleanItems, targetIds)
+          : sameProfileDedupePlan;
+
+      if (plan.totalDuplicates === 0) {
+        setNoticeTone('warning');
+        setNoticeMessage(
+          'Nenhuma PWA duplicada encontrada dentro do mesmo perfil do Chrome.'
+        );
+        return;
+      }
+
+      setPendingDedupePlan(plan);
+    },
+    [cleanItems, sameProfileDedupePlan]
+  );
+
+  // Confirm and apply same-profile deduplication, merging metadata onto each kept card
+  const handleConfirmRemoveSameProfileDuplicates = useCallback(() => {
+    if (!pendingDedupePlan || pendingDedupePlan.totalDuplicates === 0) {
+      setPendingDedupePlan(null);
+      return;
+    }
+
+    const previewParticipantIds = new Set<string>();
+    for (const grp of pendingDedupePlan.groups) {
+      previewParticipantIds.add(grp.keeper.id);
+      grp.duplicates.forEach((dup) => previewParticipantIds.add(dup.id));
+    }
+
+    const result = removeSameProfileDuplicates(itemsRef.current, previewParticipantIds);
+    const removedIds = Array.from(result.plan.duplicateIds);
+
+    if (removedIds.length === 0) {
+      setPendingDedupePlan(null);
+      return;
+    }
+
+    setItems(result.items);
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(result.items));
+    } catch {}
+
+    setSelectedIds((prev) => {
+      if (prev.size === 0) return prev;
+      const next = new Set(prev);
+      removedIds.forEach((id) => next.delete(id));
+      return next;
+    });
+
+    setPendingDedupePlan(null);
+    setNoticeTone('success');
+    setNoticeMessage(
+      `${removedIds.length} duplicada${removedIds.length > 1 ? 's' : ''} do mesmo perfil removida${removedIds.length > 1 ? 's' : ''} e dados consolidados no card mantido.`
+    );
+
+    fetch('/api/pwas/state', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        items: result.plan.updatedKeepers,
+        deletedIds: removedIds,
+      }),
+    }).catch((err) => console.warn('Erro ao persistir remoção de duplicadas no servidor:', err));
+  }, [pendingDedupePlan, setSelectedIds]);
 
   // Save new or edited PWA
   const handleSavePWA = useCallback((data: Partial<PWAItem> & { name: string; url: string; category: string; group?: string; folderId?: string | null; notes: string }) => {
@@ -2280,6 +2359,8 @@ export default function App() {
           onRescanLocalPWAs={handleRescanLocalPWAs}
           onSyncProfileHistory={() => void syncAllProfilesHistory()}
           onSelectMarkdownStatusFile={(file) => void handleSelectMarkdownStatusFile(file)}
+          onRemoveSameProfileDuplicates={() => handleRequestRemoveSameProfileDuplicates()}
+          sameProfileDuplicatesCount={sameProfileDedupePlan.totalDuplicates}
           isSyncingHistory={isSyncingHistory}
           activityStatus={topBarActivityStatus}
         />
@@ -2351,6 +2432,8 @@ export default function App() {
               onBulkClearFlags={() => handleBatchClearFlags({ clearDaily: true, clearMoneyDate: false })}
               onBulkRefreshIcons={handleBatchRefreshIcons}
               onBulkOpenEdit={handleBulkOpenEdit}
+              onBulkRemoveDuplicates={() => handleRequestRemoveSameProfileDuplicates(getBulkTargetIds())}
+              sameProfileDuplicatesCount={sameProfileDedupePlan.totalDuplicates}
               onBulkDelete={handleBatchDelete}
             />
           </div>
@@ -2739,16 +2822,38 @@ export default function App() {
         onClearHistory={handleClearItemHistory}
       />
 
-      {/* Non-blocking In-App Delete Confirmation Modal */}
+      {/* Non-blocking In-App Delete / Same-Profile Deduplicate Confirmation Modal */}
       <DeleteConfirmModal
-        isOpen={pendingDeleteIds !== null && pendingDeleteIds.length > 0}
+        isOpen={
+          (pendingDedupePlan !== null && pendingDedupePlan.totalDuplicates > 0) ||
+          (pendingDeleteIds !== null && pendingDeleteIds.length > 0)
+        }
+        mode={pendingDedupePlan ? 'dedupe' : 'delete'}
+        dedupeGroups={
+          pendingDedupePlan
+            ? pendingDedupePlan.groups.map((grp) => ({
+                profileLabel: grp.profileLabel,
+                keeper: grp.keeper,
+                duplicates: grp.duplicates,
+              }))
+            : undefined
+        }
         itemsToDelete={
-          pendingDeleteIds
+          pendingDedupePlan
+            ? pendingDedupePlan.duplicateItems
+            : pendingDeleteIds
             ? cleanItems.filter((it) => pendingDeleteIds.includes(it.id))
             : []
         }
-        onConfirm={handleConfirmDelete}
-        onClose={() => setPendingDeleteIds(null)}
+        onConfirm={
+          pendingDedupePlan
+            ? handleConfirmRemoveSameProfileDuplicates
+            : handleConfirmDelete
+        }
+        onClose={() => {
+          if (pendingDedupePlan) setPendingDedupePlan(null);
+          else setPendingDeleteIds(null);
+        }}
       />
     </div>
   );

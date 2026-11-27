@@ -27,6 +27,7 @@ import {
   LayoutGrid,
   SlidersHorizontal,
   User,
+  Copy,
 } from 'lucide-react';
 import { AccessTimeWindowFilter, DailyFlagKey, DailyFlagState, FlagFilterKey, PWAFolder, SortOption, StatusFilter, StarFilter, ViewDensity } from '../types/pwa';
 import { getGroupTheme, GROUP_COLOR_THEMES } from '../utils/groupLogic';
@@ -86,6 +87,8 @@ interface ControlToolbarProps {
   onBulkClearFlags?: () => void;
   onBulkRefreshIcons?: () => void;
   onBulkOpenEdit?: () => void;
+  onBulkRemoveDuplicates?: () => void;
+  sameProfileDuplicatesCount?: number;
   onBulkDelete?: () => void;
 }
 
@@ -137,6 +140,8 @@ export const ControlToolbar: React.FC<ControlToolbarProps> = ({
   onBulkClearFlags,
   onBulkRefreshIcons,
   onBulkOpenEdit,
+  onBulkRemoveDuplicates,
+  sameProfileDuplicatesCount = 0,
   onBulkDelete,
 }) => {
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -582,6 +587,28 @@ export const ControlToolbar: React.FC<ControlToolbarProps> = ({
                       >
                         <Edit3 className="w-3.5 h-3.5 text-blue-400" />
                         <span>Editar Pasta / Grupo / Notas...</span>
+                      </button>
+                    )}
+                    {onBulkRemoveDuplicates && (
+                      <button
+                        type="button"
+                        data-testid="bulk-menu-remove-duplicates"
+                        onClick={() => {
+                          setIsBulkMenuOpen(false);
+                          onBulkRemoveDuplicates();
+                        }}
+                        title="Remover cópias com a mesma URL apenas dentro do mesmo perfil do Chrome"
+                        className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-amber-950/40 flex items-center justify-between gap-2 text-amber-300 font-medium cursor-pointer"
+                      >
+                        <span className="flex items-center gap-2">
+                          <Copy className="w-3.5 h-3.5 text-amber-400" />
+                          <span>Remover duplicadas (mesmo perfil)</span>
+                        </span>
+                        {sameProfileDuplicatesCount > 0 && (
+                          <span className="text-[10px] font-mono font-bold text-amber-300">
+                            ({sameProfileDuplicatesCount})
+                          </span>
+                        )}
                       </button>
                     )}
                     {onBulkDelete && (

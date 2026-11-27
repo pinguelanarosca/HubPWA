@@ -50,6 +50,8 @@ import {
   sanitizeLauncherMetadataForProfile,
   resolveConsolidatedScannedProfile,
   filterNonDuplicateImportedPWAs,
+  findSameProfileDuplicateGroups,
+  removeSameProfileDuplicates,
 } from './pwaLogic';
 import { PWAItem } from '../types/pwa';
 
@@ -1226,6 +1228,235 @@ test('filterNonDuplicateImportedPWAs blocks Default and URL+profile duplicates o
   );
   assert.deepEqual(filteredJson.map((i) => i.id), ['json_p2']);
 });
+
+test('findSameProfileDuplicateGroups & removeSameProfileDuplicates NEVER remove PWAs from different Chrome profiles', () => {
+  const items: PWAItem[] = [
+    {
+      id: 'p5_item',
+      name: '35M.COM',
+      url: 'https://35m.com',
+      category: 'Comunicação',
+      notes: 'P5',
+      profileDirectory: 'Profile 5',
+      lastAccessedDate: null,
+      accessCount: 1,
+      createdAt: '2026-10-01',
+    },
+    {
+      id: 'default_item',
+      name: '35M.COM (Default)',
+      url: 'https://www.35m.com/',
+      category: 'Comunicação',
+      notes: 'Default',
+      profileDirectory: 'Default',
+      lastAccessedDate: null,
+      accessCount: 2,
+      createdAt: '2026-10-02',
+    },
+    {
+      id: 'p1_item',
+      name: '35M.COM (Perfil 1)',
+      url: 'http://35m.com',
+      category: 'Comunicação',
+      notes: 'P1',
+      profileDirectory: 'Profile 1',
+      lastAccessedDate: null,
+      accessCount: 0,
+      createdAt: '2026-10-03',
+    },
+    {
+      id: 'unassigned_item',
+      name: '35M.COM (Sem Perfil)',
+      url: 'https://35m.com',
+      category: 'Comunicação',
+      notes: 'Unassigned',
+      lastAccessedDate: null,
+      accessCount: 0,
+      createdAt: '2026-10-04',
+    },
+  ];
+
+  const plan = findSameProfileDuplicateGroups(items);
+  assert.equal(plan.totalDuplicates, 0);
+  assert.equal(plan.groups.length, 0);
+
+  const removed = removeSameProfileDuplicates(items);
+  assert.equal(removed.items.length, 4);
+});
+
+test('removeSameProfileDuplicates removes only same-profile duplicates and merges metadata onto best keeper', () => {
+  const items: PWAItem[] = [
+    {
+      id: 'p5_dup__dup_2',
+      name: '35M.COM',
+      url: 'http://www.35m.com/',
+      category: 'Geral',
+      group: 'Geral',
+      notes: 'Nota secundária',
+      execLine: '/opt/google/chrome/chrome --profile-directory="Profile 5" --app-id=abc',
+      rating: 5,
+      pinned: true,
+      folderId: 'fld_vip',
+      flags: { moneyDate: '25/11', comDate: '2026-11-26', comState: 'check' },
+      aliases: ['35M Mirror'],
+      lastAccessedDate: '2026-11-26T14:00:00.000Z',
+      accessCount: 7,
+      accessLogs: ['2026-11-26T14:00:00.000Z'],
+      accessHistory: [
+        { timestamp: '2026-11-26T14:00:00.000Z', source: 'chrome', profileDirectory: 'Profile 5' },
+      ],
+      createdAt: '2026-11-01',
+    },
+    {
+      id: 'p5_main',
+      name: '35M.COM',
+      url: 'https://35m.com',
+      category: 'Comunicação',
+      group: 'Comunicação',
+      notes: 'Conta principal',
+      profileDirectory: 'Profile_5',
+      icon: 'https://35m.com/logo.png',
+      rating: 3,
+      lastAccessedDate: '2026-11-25T10:00:00.000Z',
+      accessCount: 2,
+      accessLogs: ['2026-11-25T10:00:00.000Z'],
+      accessHistory: [
+        { timestamp: '2026-11-25T10:00:00.000Z', source: 'hub', profileDirectory: 'Profile 5' },
+      ],
+      createdAt: '2026-10-01',
+    },
+    {
+      id: 'default_keep',
+      name: '35M.COM',
+      url: 'https://35m.com',
+      category: 'Comunicação',
+      notes: 'Perfil Default separado',
+      profileDirectory: 'Default',
+      lastAccessedDate: null,
+      accessCount: 1,
+      createdAt: '2026-10-05',
+    },
+    {
+      id: 'p2_one',
+      name: '77BB.COM',
+      url: 'https://77bb.com',
+      category: 'Comunicação',
+      notes: 'Original P2',
+      profileDirectory: 'Profile 2',
+      lastAccessedDate: null,
+      accessCount: 1,
+      createdAt: '2026-10-10',
+    },
+    {
+      id: 'p2_two',
+      name: '77BB.COM Cópia',
+      url: 'https://77bb.com/',
+      category: 'Comunicação',
+      notes: 'Cópia P2',
+      profileDirectory: 'Perfil 2',
+      lastAccessedDate: null,
+      accessCount: 4,
+      createdAt: '2026-10-11',
+    },
+  ];
+
+  const { items: result, plan } = removeSameProfileDuplicates(items);
+
+  assert.equal(plan.totalDuplicates, 2);
+  assert.equal(plan.groups.length, 2);
+  assert.equal(result.length, 3);
+
+  // Default card must be completely untouched
+  const defaultCard = result.find((it) => it.id === 'default_keep');
+  assert.ok(defaultCard);
+  assert.equal(defaultCard.profileDirectory, 'Default');
+  assert.equal(defaultCard.notes, 'Perfil Default separado');
+
+  // Profile 5 keeper should be p5_main (non-__dup_) with consolidated metadata from p5_dup__dup_2
+  const p5Card = result.find((it) => it.id === 'p5_main');
+  assert.ok(p5Card);
+  assert.equal(p5Card.profileDirectory, 'Profile 5');
+  assert.equal(p5Card.rating, 5);
+  assert.equal(p5Card.pinned, true);
+  assert.equal(p5Card.folderId, 'fld_vip');
+  assert.equal(p5Card.group, 'Comunicação');
+  assert.equal(p5Card.icon, 'https://35m.com/logo.png');
+  assert.match(p5Card.notes, /Conta principal/);
+  assert.match(p5Card.notes, /Nota secundária/);
+  assert.equal(p5Card.flags?.moneyDate, '25/11');
+  assert.equal(p5Card.flags?.comState, 'check');
+  assert.equal(p5Card.accessCount, 7);
+  assert.equal(p5Card.lastAccessedDate, '2026-11-26T14:00:00.000Z');
+  assert.equal(p5Card.accessHistory?.length, 2);
+  assert.ok(p5Card.aliases?.includes('35M Mirror'));
+
+  // Profile 2 keeper retains 1 copy with merged notes & accessCount
+  const p2Card = result.find((it) => it.id === 'p2_one');
+  assert.ok(p2Card);
+  assert.equal(p2Card.accessCount, 4);
+  assert.match(p2Card.notes, /Original P2/);
+  assert.match(p2Card.notes, /Cópia P2/);
+});
+
+test('removeSameProfileDuplicates deduplicates unassigned copies and respects targetIds scope', () => {
+  const items: PWAItem[] = [
+    {
+      id: 'u1',
+      name: 'App Sem Perfil A',
+      url: 'https://app.test',
+      category: 'Geral',
+      notes: 'A',
+      lastAccessedDate: null,
+      accessCount: 0,
+      createdAt: '2026-10-01',
+    },
+    {
+      id: 'u2',
+      name: 'App Sem Perfil B',
+      url: 'https://app.test/',
+      category: 'Geral',
+      notes: 'B',
+      lastAccessedDate: null,
+      accessCount: 0,
+      createdAt: '2026-10-02',
+    },
+    {
+      id: 'p3_a',
+      name: 'Outra P3 A',
+      url: 'https://outra.test',
+      category: 'Geral',
+      notes: '',
+      profileDirectory: 'Profile 3',
+      lastAccessedDate: null,
+      accessCount: 0,
+      createdAt: '2026-10-03',
+    },
+    {
+      id: 'p3_b',
+      name: 'Outra P3 B',
+      url: 'https://outra.test',
+      category: 'Geral',
+      notes: '',
+      profileDirectory: 'Profile 3',
+      lastAccessedDate: null,
+      accessCount: 0,
+      createdAt: '2026-10-04',
+    },
+  ];
+
+  // Scoped only to p3_a and p3_b -> leaves u1 and u2 intact!
+  const scoped = removeSameProfileDuplicates(items, new Set(['p3_a', 'p3_b']));
+  assert.equal(scoped.plan.totalDuplicates, 1);
+  assert.equal(scoped.items.length, 3);
+  assert.ok(scoped.items.some((i) => i.id === 'u1'));
+  assert.ok(scoped.items.some((i) => i.id === 'u2'));
+
+  // Unscoped removes both groups -> 2 remaining
+  const full = removeSameProfileDuplicates(items);
+  assert.equal(full.plan.totalDuplicates, 2);
+  assert.equal(full.items.length, 2);
+});
+
 
 
 

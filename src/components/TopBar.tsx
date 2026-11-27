@@ -17,6 +17,7 @@ import {
   Terminal,
   Image as ImageIcon,
   FileUp,
+  Copy,
 } from 'lucide-react';
 import { PWAStats } from '../types/pwa';
 
@@ -43,6 +44,8 @@ interface TopBarProps {
   onRescanLocalPWAs?: () => void;
   onSyncProfileHistory?: () => void;
   onSelectMarkdownStatusFile?: (file: File) => void;
+  onRemoveSameProfileDuplicates?: () => void;
+  sameProfileDuplicatesCount?: number;
   isSyncingHistory?: boolean;
   activityStatus?: TopBarActivityStatus;
 }
@@ -61,6 +64,8 @@ export const TopBar: React.FC<TopBarProps> = ({
   onRescanLocalPWAs,
   onSyncProfileHistory,
   onSelectMarkdownStatusFile,
+  onRemoveSameProfileDuplicates,
+  sameProfileDuplicatesCount = 0,
   isSyncingHistory = false,
   activityStatus,
 }) => {
@@ -256,7 +261,7 @@ export const TopBar: React.FC<TopBarProps> = ({
               <span>Ações do Dia</span>
               <ChevronDown className="w-3 h-3 text-neutral-400" />
             </button>
-            <div className="absolute right-0 mt-1 w-52 py-1 bg-[#14151a] border border-[#242633] rounded-xl shadow-2xl opacity-0 invisible group-hover/actions:opacity-100 group-hover/actions:visible transition-all z-50 text-xs">
+            <div className="absolute right-0 mt-1 w-60 py-1 bg-[#14151a] border border-[#242633] rounded-xl shadow-2xl opacity-0 invisible group-hover/actions:opacity-100 group-hover/actions:visible transition-all z-50 text-xs">
               <button
                 type="button"
                 onClick={onMarkAllToday}
@@ -303,6 +308,25 @@ export const TopBar: React.FC<TopBarProps> = ({
                 >
                   <RotateCw className="w-3.5 h-3.5 text-sky-400" />
                   <span>Recarregar todos os ícones</span>
+                </button>
+              )}
+              {onRemoveSameProfileDuplicates && (
+                <button
+                  type="button"
+                  data-testid="topbar-remove-duplicates-btn"
+                  onClick={onRemoveSameProfileDuplicates}
+                  title="Remover cópias com a mesma URL apenas dentro do mesmo perfil do Chrome"
+                  className="w-full text-left px-3 py-2 text-neutral-200 hover:bg-[#1e2028] hover:text-amber-300 flex items-center justify-between gap-2 cursor-pointer font-medium"
+                >
+                  <span className="flex items-center gap-2 min-w-0">
+                    <Copy className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                    <span className="truncate">Remover duplicadas (mesmo perfil)</span>
+                  </span>
+                  {sameProfileDuplicatesCount > 0 && (
+                    <span className="text-[10px] font-mono font-bold text-amber-300 shrink-0">
+                      ({sameProfileDuplicatesCount})
+                    </span>
+                  )}
                 </button>
               )}
               <div className="border-t border-[#242633] my-1" />

@@ -1,4 +1,4 @@
-import { AccessTimeWindowFilter, DailyFlagKey, DailyFlagState, FlagFilterKey, PWAFlags, PWAItem, PWAStats, SortOption, StatusFilter } from '../types/pwa';
+import { AccessHistoryEntry, AccessTimeWindowFilter, DailyFlagKey, DailyFlagState, FlagFilterKey, PWAFlags, PWAItem, PWAStats, SortOption, StatusFilter } from '../types/pwa';
 import { matchesAccessTimeWindow } from './historyLogic';
 
 /**
@@ -2112,5 +2112,348 @@ export function filterNonDuplicateImportedPWAs(
 
   return accepted;
 }
+
+export interface SameProfileDuplicateGroup {
+  groupKey: string;
+  profileKey: string;
+  profileLabel: string;
+  normalizedUrl: string;
+  keeper: PWAItem;
+  mergedKeeper: PWAItem;
+  duplicates: PWAItem[];
+}
+
+export interface SameProfileDedupePlan {
+  groups: SameProfileDuplicateGroup[];
+  duplicateIds: Set<string>;
+  duplicateItems: PWAItem[];
+  updatedKeepers: PWAItem[];
+  totalDuplicates: number;
+}
+
+function scoreSameProfileKeeper(item: PWAItem, originalIndex: number): number {
+  let score = 0;
+  if (item.id && !item.id.includes('__dup_')) score += 1000;
+  if (item.id && !item.id.startsWith('pwa_clone_') && !item.clonedFromId) score += 500;
+  if (item.folderId) score += 200;
+
+  const grp = (item.group || item.category || 'Geral').trim().toLowerCase();
+  if (grp && grp !== 'geral') score += 150;
+
+  const rating = typeof item.rating === 'number' ? item.rating : item.pinned ? 5 : 0;
+  score += rating * 20;
+
+  if (item.profileDirectory && item.profileDirectory.trim()) score += 80;
+  if (isPreservableIconUrl(item.icon)) score += 60;
+  if (item.notes && item.notes.trim().length > 0) score += 40;
+  if ((item.accessCount || 0) > 0) score += 15;
+  if (item.lastAccessedDate) score += 10;
+
+  // Prefer earlier item slightly as deterministic tie-breaker
+  score -= originalIndex * 0.001;
+  return score;
+}
+
+function mergeSameProfileFlags(orderedGroup: PWAItem[]): PWAFlags | undefined {
+  let moneyDate: string | undefined;
+  let comDate: string | null | undefined;
+  let comState: DailyFlagState | null | undefined;
+  let rbDate: string | null | undefined;
+  let rbState: DailyFlagState | null | undefined;
+  let bonDate: string | null | undefined;
+  let bonState: DailyFlagState | null | undefined;
+
+  for (const item of orderedGroup) {
+    const f = item.flags;
+    if (!f) continue;
+    if (!moneyDate && f.moneyDate && f.moneyDate.trim()) {
+      moneyDate = f.moneyDate.trim();
+    }
+    if (f.comDate && (!comDate || f.comDate > comDate)) {
+      comDate = f.comDate;
+      comState = f.comState ?? 'check';
+    }
+    if (f.rbDate && (!rbDate || f.rbDate > rbDate)) {
+      rbDate = f.rbDate;
+      rbState = f.rbState ?? 'check';
+    }
+    if (f.bonDate && (!bonDate || f.bonDate > bonDate)) {
+      bonDate = f.bonDate;
+      bonState = f.bonState ?? 'check';
+    }
+  }
+
+  const merged: PWAFlags = {
+    ...(moneyDate ? { moneyDate } : {}),
+    ...(comDate !== undefined ? { comDate, comState: comState ?? null } : {}),
+    ...(rbDate !== undefined ? { rbDate, rbState: rbState ?? null } : {}),
+    ...(bonDate !== undefined ? { bonDate, bonState: bonState ?? null } : {}),
+  };
+
+  return Object.keys(merged).length > 0 ? merged : undefined;
+}
+
+function mergeSameProfileKeeperGroup(keeper: PWAItem, duplicates: PWAItem[]): PWAItem {
+  const ordered = [keeper, ...duplicates];
+
+  const betterName =
+    keeper.name && keeper.name.trim() && keeper.name.trim().toLowerCase() !== 'sem título'
+      ? keeper.name
+      : ordered.find((i) => i.name && i.name.trim() && i.name.trim().toLowerCase() !== 'sem título')?.name || keeper.name;
+
+  const keeperGrp = (keeper.group || keeper.category || 'Geral').trim();
+  const customGrpItem = ordered.find((i) => {
+    const g = (i.group || i.category || 'Geral').trim();
+    return Boolean(g) && g.toLowerCase() !== 'geral';
+  });
+  const finalGroup =
+    keeperGrp && keeperGrp.toLowerCase() !== 'geral'
+      ? keeperGrp
+      : (customGrpItem ? (customGrpItem.group || customGrpItem.category || 'Geral').trim() : keeperGrp || 'Geral');
+
+  const finalFolderId = keeper.folderId ?? ordered.find((i) => Boolean(i.folderId))?.folderId ?? null;
+
+  let maxRating = 0;
+  let anyPinned = Boolean(keeper.pinned);
+  for (const it of ordered) {
+    const r = typeof it.rating === 'number' ? it.rating : it.pinned ? 5 : 0;
+    if (r > maxRating) maxRating = r;
+    if (it.pinned) anyPinned = true;
+  }
+
+  const noteParts: string[] = [];
+  for (const it of ordered) {
+    const clean = (it.notes || '').trim();
+    if (!clean) continue;
+    const alreadyCovered = noteParts.some(
+      (existing) => existing.toLowerCase().includes(clean.toLowerCase())
+    );
+    if (!alreadyCovered) {
+      noteParts.push(clean);
+    }
+  }
+  const mergedNotes = noteParts.join(' · ');
+
+  const preservableIcon = ordered.find((i) => isPreservableIconUrl(i.icon))?.icon;
+  const finalIcon = isPreservableIconUrl(keeper.icon)
+    ? keeper.icon
+    : preservableIcon || keeper.icon || ordered.find((i) => Boolean(i.icon))?.icon;
+
+  const aliasSet = new Set<string>();
+  for (const it of ordered) {
+    if (Array.isArray(it.aliases)) {
+      it.aliases.forEach((a) => {
+        const clean = String(a || '').trim();
+        if (clean) aliasSet.add(clean);
+      });
+    }
+    const cleanName = (it.name || '').trim();
+    if (cleanName && cleanName.toLowerCase() !== (betterName || '').trim().toLowerCase()) {
+      aliasSet.add(cleanName);
+    }
+  }
+
+  const mergedDesktopFilesSet = new Set<string>();
+  const alternatePathsSet = new Set<string>();
+  for (const it of ordered) {
+    if (it.rawFileName && it.rawFileName.trim()) mergedDesktopFilesSet.add(it.rawFileName.trim());
+    if (Array.isArray(it.mergedDesktopFiles)) {
+      it.mergedDesktopFiles.forEach((f) => {
+        if (f && f.trim()) mergedDesktopFilesSet.add(f.trim());
+      });
+    }
+    if (it.desktopPath && it.desktopPath.trim()) alternatePathsSet.add(it.desktopPath.trim());
+    if (Array.isArray(it.alternateDesktopPaths)) {
+      it.alternateDesktopPaths.forEach((p) => {
+        if (p && p.trim()) alternatePathsSet.add(p.trim());
+      });
+    }
+  }
+
+  let latestAccessIso: string | null = keeper.lastAccessedDate || null;
+  let latestAccessMs = latestAccessIso ? new Date(latestAccessIso).getTime() : -1;
+  if (Number.isNaN(latestAccessMs)) latestAccessMs = -1;
+  for (const it of ordered) {
+    if (!it.lastAccessedDate) continue;
+    const ts = new Date(it.lastAccessedDate).getTime();
+    if (!Number.isNaN(ts)) {
+      if (ts > latestAccessMs) {
+        latestAccessMs = ts;
+        latestAccessIso = it.lastAccessedDate;
+      }
+    } else if (!latestAccessIso) {
+      latestAccessIso = it.lastAccessedDate;
+    }
+  }
+
+  const maxAccessCount = Math.max(...ordered.map((it) => it.accessCount || 0), 0);
+
+  const logsSet = new Set<string>();
+  for (const it of ordered) {
+    if (Array.isArray(it.accessLogs)) {
+      it.accessLogs.forEach((l) => {
+        if (l && typeof l === 'string') logsSet.add(l);
+      });
+    }
+  }
+  if (latestAccessIso) logsSet.add(latestAccessIso);
+  const mergedLogs = Array.from(logsSet)
+    .sort((a, b) => b.localeCompare(a))
+    .slice(0, 60);
+
+  const historyMap = new Map<string, AccessHistoryEntry>();
+  for (const it of ordered) {
+    if (!Array.isArray(it.accessHistory)) continue;
+    for (const entry of it.accessHistory) {
+      if (!entry || !entry.timestamp) continue;
+      const key = `${entry.timestamp}|${entry.source || 'hub'}|${entry.visitedUrl || ''}`;
+      if (!historyMap.has(key)) {
+        historyMap.set(key, entry);
+      }
+    }
+  }
+  const mergedHistory = Array.from(historyMap.values())
+    .sort((a, b) => b.timestamp.localeCompare(a.timestamp))
+    .slice(0, 80);
+
+  const mergedFlags = mergeSameProfileFlags(ordered);
+  const canonicalProfile = extractChromeProfileDirectory(keeper)
+    ? normalizeChromeProfileInput(extractChromeProfileDirectory(keeper)!)
+    : keeper.profileDirectory;
+
+  return {
+    ...keeper,
+    name: betterName,
+    group: finalGroup,
+    category: finalGroup,
+    folderId: finalFolderId,
+    notes: mergedNotes,
+    icon: finalIcon,
+    ...(canonicalProfile ? { profileDirectory: canonicalProfile } : {}),
+    rating: maxRating,
+    pinned: anyPinned || maxRating > 0,
+    ...(aliasSet.size > 0 ? { aliases: Array.from(aliasSet) } : {}),
+    ...(mergedDesktopFilesSet.size > 0 ? { mergedDesktopFiles: Array.from(mergedDesktopFilesSet) } : {}),
+    ...(alternatePathsSet.size > 0 ? { alternateDesktopPaths: Array.from(alternatePathsSet) } : {}),
+    ...(mergedFlags ? { flags: mergedFlags } : {}),
+    lastAccessedDate: latestAccessIso,
+    accessCount: maxAccessCount,
+    ...(mergedLogs.length > 0 ? { accessLogs: mergedLogs } : {}),
+    ...(mergedHistory.length > 0 ? { accessHistory: mergedHistory } : {}),
+  };
+}
+
+/**
+ * Detects duplicate PWAs ONLY when they share both the same normalized identity (URL or appId)
+ * AND the exact same normalized Chrome profile (`getNormalizedPWAChromeProfileKey`).
+ * Clones or entries of the same URL in DIFFERENT Chrome profiles (e.g. Default vs Profile 5)
+ * are NEVER treated as duplicates.
+ */
+export function findSameProfileDuplicateGroups(
+  items: PWAItem[],
+  targetIds?: Set<string>
+): SameProfileDedupePlan {
+  const safeItems = Array.isArray(items) ? items : [];
+  const candidates = safeItems
+    .map((item, idx) => ({ item, idx }))
+    .filter(({ item }) => {
+      if (!item || typeof item !== 'object' || !item.id) return false;
+      if (targetIds && targetIds.size > 0 && !targetIds.has(item.id)) return false;
+      return true;
+    });
+
+  const buckets = new Map<string, Array<{ item: PWAItem; idx: number; profileKey: string; urlNorm: string }>>();
+
+  for (const { item, idx } of candidates) {
+    const profileKey = getNormalizedPWAChromeProfileKey(item);
+    const urlNorm = normalizeAppUrlForMatch(item.url);
+    const appIdNorm = (item.appId || '').trim().toLowerCase();
+    const identityKey = urlNorm ? `url:${urlNorm}` : appIdNorm ? `appid:${appIdNorm}` : '';
+    if (!identityKey) continue;
+
+    const groupKey = `${profileKey}::${identityKey}`;
+    const list = buckets.get(groupKey);
+    if (list) {
+      list.push({ item, idx, profileKey, urlNorm });
+    } else {
+      buckets.set(groupKey, [{ item, idx, profileKey, urlNorm }]);
+    }
+  }
+
+  const groups: SameProfileDuplicateGroup[] = [];
+  const duplicateIds = new Set<string>();
+  const duplicateItems: PWAItem[] = [];
+  const updatedKeepers: PWAItem[] = [];
+
+  for (const [groupKey, entries] of buckets.entries()) {
+    if (entries.length < 2) continue;
+
+    const sorted = [...entries].sort(
+      (a, b) => scoreSameProfileKeeper(b.item, b.idx) - scoreSameProfileKeeper(a.item, a.idx)
+    );
+
+    const keeper = sorted[0].item;
+    const duplicates = sorted.slice(1).map((e) => e.item);
+    const mergedKeeper = mergeSameProfileKeeperGroup(keeper, duplicates);
+
+    const profileKey = sorted[0].profileKey;
+    const display = formatChromeProfileDisplay(keeper);
+    const profileLabel = display ? display.badgeText : 'Sem perfil';
+
+    groups.push({
+      groupKey,
+      profileKey,
+      profileLabel,
+      normalizedUrl: sorted[0].urlNorm,
+      keeper,
+      mergedKeeper,
+      duplicates,
+    });
+
+    updatedKeepers.push(mergedKeeper);
+    for (const dup of duplicates) {
+      duplicateIds.add(dup.id);
+      duplicateItems.push(dup);
+    }
+  }
+
+  return {
+    groups,
+    duplicateIds,
+    duplicateItems,
+    updatedKeepers,
+    totalDuplicates: duplicateItems.length,
+  };
+}
+
+/**
+ * Removes duplicate PWAs strictly within the same Chrome profile, updating each kept item
+ * with consolidated metadata from its removed same-profile duplicates.
+ */
+export function removeSameProfileDuplicates(
+  items: PWAItem[],
+  targetIds?: Set<string>
+): {
+  items: PWAItem[];
+  plan: SameProfileDedupePlan;
+} {
+  const safeItems = Array.isArray(items) ? items : [];
+  const plan = findSameProfileDuplicateGroups(safeItems, targetIds);
+  if (plan.totalDuplicates === 0) {
+    return { items: safeItems, plan };
+  }
+
+  const mergedByKeeperId = new Map<string, PWAItem>();
+  for (const group of plan.groups) {
+    mergedByKeeperId.set(group.keeper.id, group.mergedKeeper);
+  }
+
+  const nextItems = safeItems
+    .filter((item) => !plan.duplicateIds.has(item.id))
+    .map((item) => mergedByKeeperId.get(item.id) || item);
+
+  return { items: nextItems, plan };
+}
+
 
 
