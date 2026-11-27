@@ -57,7 +57,13 @@ import {
 import { parseDesktopFile, ParsedDesktopApp } from './utils/desktopParser';
 import { normalizeAppUrl } from './utils/desktopDeduplicator';
 import { matchesAccessTimeWindow, mergeAccessHistoryRecords } from './utils/historyLogic';
-import { PWA_WINDOW_WIDTH, PWA_WINDOW_HEIGHT, getPopupWindowFeatures } from './utils/launchConfig';
+import {
+  PWA_WINDOW_WIDTH,
+  PWA_WINDOW_HEIGHT,
+  PWA_SAME_ITEM_COOLDOWN_MS,
+  getPopupWindowFeatures,
+  tryAcquirePwaLaunchSlot,
+} from './utils/launchConfig';
 import { TopBar, TopBarActivityStatus } from './components/TopBar';
 import { ControlToolbar } from './components/ControlToolbar';
 import { CompactTableView } from './components/CompactTableView';
@@ -348,6 +354,9 @@ export default function App() {
   const mergeScannedPWAs = useCallback((scannedItems: PWAItem[]) => {
     const validScanned = scannedItems.filter((s) => !isAndroidOrRedroidApp(s));
     setItems((prev) => {
+      if (prev.length === 0 && validScanned.length === 0) {
+        return prev;
+      }
       const cleanPrev = prev.filter((p) => !isAndroidOrRedroidApp(p));
       const absorbedPrevIds = new Set<string>();
 
@@ -499,6 +508,9 @@ export default function App() {
 
   const itemsRef = useRef(items);
   itemsRef.current = items;
+  const launchOnlyItemsRef = useRef<WeakSet<PWAItem>>(new WeakSet());
+  const lastSyncedItemsRef = useRef<PWAItem[]>(items);
+  const lastSyncedFoldersRef = useRef<PWAFolder[]>(folders);
 
   const beginExecutionTask = useCallback((label: string) => {
     const id = `exec_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
@@ -750,6 +762,7 @@ export default function App() {
           if (serverDb) {
             // Hydrate folders if localStorage has not saved folders yet
             if (Array.isArray(serverDb.folders) && serverDb.folders.length > 0 && !initialHadLocalFoldersRef.current) {
+              lastSyncedFoldersRef.current = serverDb.folders;
               setFolders(serverDb.folders);
               saveFolders(serverDb.folders);
             }
@@ -763,6 +776,7 @@ export default function App() {
                   .map(repairAndSanitizePWA)
               );
               if (hydrated.length > 0) {
+                lastSyncedItemsRef.current = hydrated;
                 setItems(hydrated);
                 try {
                   localStorage.setItem(STORAGE_KEY, JSON.stringify(hydrated));
@@ -793,23 +807,77 @@ export default function App() {
     };
   }, [handleRescanLocalPWAs]);
 
-  // Persist items to localStorage and sync items + folders to server database
+  const pendingStorageWriteRef = useRef(false);
+  const lastPersistedStorageItemsRef = useRef<PWAItem[]>(items);
+
+  // Flush items to localStorage if the tab/window closes before the debounce timer fires
+  useEffect(() => {
+    const flushLocalStorage = () => {
+      if (!isHydratedRef.current || !pendingStorageWriteRef.current) return;
+      pendingStorageWriteRef.current = false;
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(itemsRef.current));
+      } catch {
+        // ignore
+      }
+    };
+    window.addEventListener('pagehide', flushLocalStorage);
+    window.addEventListener('beforeunload', flushLocalStorage);
+    return () => {
+      window.removeEventListener('pagehide', flushLocalStorage);
+      window.removeEventListener('beforeunload', flushLocalStorage);
+    };
+  }, []);
+
+  // Persist items to localStorage (debounced to keep click frame 0ms) and sync items + folders to server database
   useEffect(() => {
     if (!isHydratedRef.current) return;
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
-    } catch {
-      // ignore
+
+    let storageTimer: ReturnType<typeof setTimeout> | null = null;
+    if (
+      items !== lastPersistedStorageItemsRef.current &&
+      !(items.length === 0 && lastPersistedStorageItemsRef.current.length === 0)
+    ) {
+      pendingStorageWriteRef.current = true;
+      storageTimer = setTimeout(() => {
+        pendingStorageWriteRef.current = false;
+        lastPersistedStorageItemsRef.current = items;
+        try {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
+        } catch {
+          // ignore
+        }
+      }, 250);
     }
 
-    const timer = setTimeout(() => {
+    const onlyLaunchUpdates =
+      folders === lastSyncedFoldersRef.current &&
+      items.length === lastSyncedItemsRef.current.length &&
+      items.every(
+        (it, idx) => it === lastSyncedItemsRef.current[idx] || launchOnlyItemsRef.current.has(it)
+      );
+
+    if (onlyLaunchUpdates) {
+      lastSyncedItemsRef.current = items;
+      return () => {
+        if (storageTimer) clearTimeout(storageTimer);
+      };
+    }
+
+    const syncTimer = setTimeout(() => {
+      lastSyncedItemsRef.current = items;
+      lastSyncedFoldersRef.current = folders;
       fetch('/api/pwas/state', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ items, folders }),
       }).catch(() => {});
     }, 600);
-    return () => clearTimeout(timer);
+
+    return () => {
+      if (storageTimer) clearTimeout(storageTimer);
+      clearTimeout(syncTimer);
+    };
   }, [items, folders]);
 
   // Persist density setting
@@ -1107,33 +1175,41 @@ export default function App() {
   // Anti-double-click cooldown tracker to prevent duplicate window launches
   const launchCooldownRef = useRef<Map<string, number>>(new Map());
 
+  const handleOpenEditModal = useCallback((item: PWAItem) => {
+    setEditingItem(item);
+    setIsAddEditOpen(true);
+  }, []);
+
+  const handleStartClone = useCallback((item: PWAItem) => {
+    setCloningItem(item);
+  }, []);
+
+  const handleOpenHistoryModal = useCallback((item: PWAItem) => {
+    setHistoryModalItem(item);
+  }, []);
+
   // Launch PWA: opens link as a true standalone PWA window and automatically marks accessed today (GREEN indicator)
   const handleLaunch = useCallback(async (item: PWAItem) => {
-    // Anti-double-click mechanism: reject rapid repeat clicks on the same PWA within 1500ms or global bursts within 350ms
+    // Anti-double-click mechanism: prevent duplicate clicks on the same PWA within 1000ms without dropping clicks on other PWAs
     const nowMs = Date.now();
     const itemKey = item.id || item.appId || item.rawFileName || item.url || item.name;
-    const lastItemTime = launchCooldownRef.current.get(itemKey) || 0;
-    const globalLastTime = launchCooldownRef.current.get('__global__') || 0;
-
-    if ((lastItemTime > 0 && nowMs - lastItemTime < 1500) || (globalLastTime > 0 && nowMs - globalLastTime < 350)) {
+    if (!tryAcquirePwaLaunchSlot(launchCooldownRef.current, itemKey, nowMs, PWA_SAME_ITEM_COOLDOWN_MS)) {
       return;
     }
 
-    launchCooldownRef.current.set(itemKey, nowMs);
-    launchCooldownRef.current.set('__global__', nowMs);
-
-    // 1. Immediately update React state using resilient matching so rapid clicks or ID variations are never lost
+    // 1. Immediately update React state without blocking the click frame with synchronous JSON.stringify
     const now = new Date();
-    const accessedItem = markAsAccessed(item, now, todayStr);
+    const accessedSample = markAsAccessed(item, now, todayStr);
+    const localTimeStr = accessedSample.lastAccessedDate || '';
 
-    setItems((prev) => {
-      const updatedList = prev.map((it) => (isSameOrMatchingPWA(it, item) ? markAsAccessed(it, now, todayStr) : it));
-      // Save directly to localStorage immediately without waiting for debounce
-      try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(updatedList));
-      } catch {}
-      return updatedList;
-    });
+    setItems((prev) =>
+      prev.map((it) => {
+        if (!isSameOrMatchingPWA(it, item)) return it;
+        const updated = markAsAccessed(it, now, todayStr);
+        launchOnlyItemsRef.current.add(updated);
+        return updated;
+      })
+    );
 
     // 2. If not running on local Ubuntu Express server (e.g. Cloud Preview iframe), open synchronously to preserve user gesture
     const isLocalHost =
@@ -1156,14 +1232,12 @@ export default function App() {
       }
     }
 
-    const execId = beginExecutionTask(`Abrindo ${item.name || 'PWA'}...`);
-    triggerActivityPoll();
-
     try {
       // 3. Native OS launch on local Ubuntu (or recordOnly in Cloud Preview)
       const res = await fetch('/api/launch-pwa', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        keepalive: true,
         body: JSON.stringify({
           id: item.id,
           name: item.name,
@@ -1175,14 +1249,15 @@ export default function App() {
           execLine: item.execLine,
           desktopPath: item.desktopPath,
           todayStr,
+          accessedAt: localTimeStr,
           recordOnly: !isLocalHost,
         }),
       });
 
       const data = await res.json();
 
-      // If server confirmed a timestamp, ensure it is recorded in React state
-      if (data.lastAccessedDate) {
+      // Only reconcile React state if the server returned a different timestamp
+      if (data.lastAccessedDate && data.lastAccessedDate !== localTimeStr) {
         setItems((prev) =>
           prev.map((it) => {
             if (!isSameOrMatchingPWA(it, item)) return it;
@@ -1201,13 +1276,15 @@ export default function App() {
               },
               ...prevHist.filter((h) => h && h.timestamp !== data.lastAccessedDate),
             ].slice(0, 80);
-            return {
+            const updated = {
               ...it,
               lastAccessedDate: data.lastAccessedDate,
               accessLogs: nextLogs,
               accessHistory: nextHist,
               accessCount: Math.max(it.accessCount || 0, 1),
             };
+            launchOnlyItemsRef.current.add(updated);
+            return updated;
           })
         );
       }
@@ -1244,11 +1321,8 @@ export default function App() {
           // Cross-origin popup resize/title may be restricted by browser
         }
       }
-    } finally {
-      endExecutionTask(execId);
-      triggerActivityPoll();
     }
-  }, [beginExecutionTask, endExecutionTask, todayStr, triggerActivityPoll]);
+  }, [todayStr]);
 
   // Sync Chrome profile SQLite history for a single PWA inside AccessHistoryModal
   const handleSyncSingleProfileHistory = useCallback(
@@ -2544,11 +2618,8 @@ export default function App() {
                   onUpdateMoneyDate={handleUpdateMoneyDate}
                   onTogglePin={handleTogglePin}
                   onSetRating={handleSetRating}
-                  onEdit={(item) => {
-                    setEditingItem(item);
-                    setIsAddEditOpen(true);
-                  }}
-                  onClone={(item) => setCloningItem(item)}
+                  onEdit={handleOpenEditModal}
+                  onClone={handleStartClone}
                   onDelete={handleDelete}
                   onRefreshIcon={handleRefreshSingleIcon}
                   onSaveCustomIcon={handleSaveCustomIcon}
@@ -2560,7 +2631,7 @@ export default function App() {
                     setIsFolderManagerOpen(true);
                   }}
                   onOpenQuickAssign={(folderId) => setQuickAssignTargetFolderId(folderId)}
-                  onViewHistory={(item) => setHistoryModalItem(item)}
+                  onViewHistory={handleOpenHistoryModal}
                 />
               )}
 
@@ -2579,12 +2650,9 @@ export default function App() {
                   onUpdateMoneyDate={handleUpdateMoneyDate}
                   onTogglePin={handleTogglePin}
                   onSetRating={handleSetRating}
-                  onEdit={(item) => {
-                    setEditingItem(item);
-                    setIsAddEditOpen(true);
-                  }}
-                  onClone={(item) => setCloningItem(item)}
-                  onViewHistory={(item) => setHistoryModalItem(item)}
+                  onEdit={handleOpenEditModal}
+                  onClone={handleStartClone}
+                  onViewHistory={handleOpenHistoryModal}
                   onDelete={handleDelete}
                 />
               )}
@@ -2603,11 +2671,8 @@ export default function App() {
                   onUpdateMoneyDate={handleUpdateMoneyDate}
                   onTogglePin={handleTogglePin}
                   onSetRating={handleSetRating}
-                  onEdit={(item) => {
-                    setEditingItem(item);
-                    setIsAddEditOpen(true);
-                  }}
-                  onClone={(item) => setCloningItem(item)}
+                  onEdit={handleOpenEditModal}
+                  onClone={handleStartClone}
                   onDelete={handleDelete}
                 />
               )}
@@ -2641,16 +2706,13 @@ export default function App() {
                   onUpdateMoneyDate={handleUpdateMoneyDate}
                   onTogglePin={handleTogglePin}
                   onSetRating={handleSetRating}
-                  onEdit={(item) => {
-                    setEditingItem(item);
-                    setIsAddEditOpen(true);
-                  }}
-                  onClone={(item) => setCloningItem(item)}
+                  onEdit={handleOpenEditModal}
+                  onClone={handleStartClone}
                   onDelete={handleDelete}
                   onRefreshIcon={handleRefreshSingleIcon}
                   onSaveCustomIcon={handleSaveCustomIcon}
                   onMoveToFolder={handleMovePWAsToFolder}
-                  onViewHistory={(item) => setHistoryModalItem(item)}
+                  onViewHistory={handleOpenHistoryModal}
                   groupByGroup={groupByGroup}
                 />
               )}

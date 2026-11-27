@@ -12,6 +12,9 @@ import {
   extractExecFromDesktopContent,
   applyWindowSizeToChromeExec,
   buildLinuxLaunchCandidates,
+  parseDirectSpawnCommand,
+  tryAcquirePwaLaunchSlot,
+  PWA_SAME_ITEM_COOLDOWN_MS,
   shouldUseWaylandCloneBridge,
 } from './launchConfig';
 
@@ -142,3 +145,47 @@ test('Wayland clone bridge applies only to real URL clones', () => {
   assert.equal(shouldUseWaylandCloneBridge({ url: clone.url }, wayland), false);
   assert.equal(shouldUseWaylandCloneBridge({ ...clone, url: 'javascript:alert(1)' }, wayland), false);
 });
+
+test('parseDirectSpawnCommand splits direct Chrome argv without shell fork and rejects shell expressions', () => {
+  const parsed = parseDirectSpawnCommand(
+    '/opt/google/chrome/google-chrome --profile-directory="Profile 5" --app-id="agimnkijcaahngcdmfeangaknmldooml" --window-size=539,993 2>/dev/null'
+  );
+  assert.deepEqual(parsed, {
+    executable: '/opt/google/chrome/google-chrome',
+    args: [
+      '--profile-directory=Profile 5',
+      '--app-id=agimnkijcaahngcdmfeangaknmldooml',
+      '--window-size=539,993',
+    ],
+  });
+
+  const urlCmd = parseDirectSpawnCommand(
+    `google-chrome --profile-directory='Default' --app="https://35m.com/?a=1&b=2" --window-size=539,993 2>/dev/null`
+  );
+  assert.deepEqual(urlCmd, {
+    executable: 'google-chrome',
+    args: [
+      '--profile-directory=Default',
+      '--app=https://35m.com/?a=1&b=2',
+      '--window-size=539,993',
+    ],
+  });
+
+  assert.equal(parseDirectSpawnCommand('gio launch "$HOME/.local/share/applications/a.desktop"'), null);
+  assert.equal(parseDirectSpawnCommand('google-chrome || chromium'), null);
+  assert.equal(parseDirectSpawnCommand(''), null);
+});
+
+test('tryAcquirePwaLaunchSlot blocks rapid double-click on same PWA but allows instant launch of distinct PWAs', () => {
+  const cooldowns = new Map<string, number>();
+
+  assert.equal(tryAcquirePwaLaunchSlot(cooldowns, 'pwa_1', 1000, PWA_SAME_ITEM_COOLDOWN_MS), true);
+  // Same PWA clicked 100ms later -> blocked (anti-double-click)
+  assert.equal(tryAcquirePwaLaunchSlot(cooldowns, 'pwa_1', 1100, PWA_SAME_ITEM_COOLDOWN_MS), false);
+  // Different PWA clicked 1ms later -> allowed immediately (no cross-PWA global block)
+  assert.equal(tryAcquirePwaLaunchSlot(cooldowns, 'pwa_2', 1001, PWA_SAME_ITEM_COOLDOWN_MS), true);
+  assert.equal(tryAcquirePwaLaunchSlot(cooldowns, 'pwa_3', 1002, PWA_SAME_ITEM_COOLDOWN_MS), true);
+  // Same PWA after cooldown window -> allowed again
+  assert.equal(tryAcquirePwaLaunchSlot(cooldowns, 'pwa_1', 1000 + PWA_SAME_ITEM_COOLDOWN_MS, PWA_SAME_ITEM_COOLDOWN_MS), true);
+});
+

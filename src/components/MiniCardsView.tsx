@@ -18,7 +18,7 @@ interface MiniCardsViewProps {
   groupByGroup?: boolean;
 }
 
-export const MiniCardsView: React.FC<MiniCardsViewProps> = ({
+export const MiniCardsView: React.FC<MiniCardsViewProps> = React.memo(({
   items,
   todayStr,
   selectedIds = new Set<string>(),
@@ -232,4 +232,4 @@ export const MiniCardsView: React.FC<MiniCardsViewProps> = ({
       {items.map((it, idx) => renderMiniCard(it, getRenderKey(it, idx)))}
     </div>
   );
-};
+});

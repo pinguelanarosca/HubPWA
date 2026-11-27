@@ -29,7 +29,7 @@ interface DenseGridViewProps {
   onDelete: (id: string) => void;
 }
 
-export const DenseGridView: React.FC<DenseGridViewProps> = ({
+export const DenseGridView: React.FC<DenseGridViewProps> = React.memo(({
   items,
   todayStr,
   selectedIds = new Set<string>(),
@@ -307,4 +307,4 @@ export const DenseGridView: React.FC<DenseGridViewProps> = ({
       })}
     </div>
   );
-};
+});

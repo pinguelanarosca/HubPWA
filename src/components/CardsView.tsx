@@ -38,7 +38,7 @@ interface CardsViewProps {
   groupByGroup?: boolean;
 }
 
-export const CardsView: React.FC<CardsViewProps> = ({
+export const CardsView: React.FC<CardsViewProps> = React.memo(({
   items,
   todayStr,
   folders = [],
@@ -625,4 +625,4 @@ export const CardsView: React.FC<CardsViewProps> = ({
       {items.map((it, idx) => renderCard(it, getRenderKey(it, idx)))}
     </div>
   );
-};
+});

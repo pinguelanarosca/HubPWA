@@ -39,6 +39,7 @@ import {
   decodeLaunchBridgePayload,
   extractExecFromDesktopContent,
   buildLinuxLaunchCandidates,
+  parseDirectSpawnCommand,
   shouldUseWaylandCloneBridge,
 } from './src/utils/launchConfig.js';
 
@@ -229,7 +230,7 @@ const PORT = Number(process.env.PORT) || 3000;
 const GITHUB_REPO = 'pinguelanarosca/HubPWA';
 const DEFAULT_BRANCH = 'main';
 
-app.use(express.json());
+app.use(express.json({ limit: '25mb' }));
 
 // Memoize executable lookups via fs.accessSync (0 shell forks, <0.05ms)
 const commandCache = new Map<string, boolean>();
@@ -1103,9 +1104,242 @@ app.get('/api/launch-bridge/:payload', (req, res) => {
 </html>`);
 });
 
+// Coalesce background DB writes from rapid PWA launches
+let pendingDbFlushTimer: ReturnType<typeof setTimeout> | null = null;
+function scheduleServerDbSave(db: ServerDb) {
+  if (pendingDbFlushTimer) return;
+  pendingDbFlushTimer = setTimeout(() => {
+    pendingDbFlushTimer = null;
+    saveServerDb(db);
+  }, 150);
+}
+
+// Memoized .desktop Exec= parser cache keyed by path + mtime
+const desktopExecCache = new Map<string, { mtimeMs: number; execLine: string | null }>();
+function resolveCachedDesktopExec(desktopPath?: string, rawFileName?: string): {
+  resolvedDesktopFile?: string;
+  desktopPathExists: boolean;
+  desktopExecLine: string | null;
+} {
+  const homeDir = process.env.HOME || os.homedir();
+  let resolvedDesktopFile: string | undefined;
+  let desktopPathExists = false;
+
+  if (desktopPath) {
+    try {
+      fs.accessSync(desktopPath, fs.constants.R_OK);
+      resolvedDesktopFile = desktopPath;
+      desktopPathExists = true;
+    } catch {
+      desktopPathExists = false;
+    }
+  }
+
+  if (!resolvedDesktopFile && rawFileName) {
+    const fallbackPath = path.join(homeDir, '.local/share/applications', rawFileName);
+    try {
+      fs.accessSync(fallbackPath, fs.constants.R_OK);
+      resolvedDesktopFile = fallbackPath;
+    } catch {
+      // ignore missing fallback
+    }
+  }
+
+  if (!resolvedDesktopFile) {
+    return { resolvedDesktopFile: undefined, desktopPathExists, desktopExecLine: null };
+  }
+
+  try {
+    const stat = fs.statSync(resolvedDesktopFile);
+    const cached = desktopExecCache.get(resolvedDesktopFile);
+    if (cached && cached.mtimeMs === stat.mtimeMs) {
+      return { resolvedDesktopFile, desktopPathExists, desktopExecLine: cached.execLine };
+    }
+
+    const content = fs.readFileSync(resolvedDesktopFile, 'utf8');
+    const extracted = extractExecFromDesktopContent(content);
+    let verifiedExec: string | null = null;
+    if (extracted) {
+      const firstToken = extracted.match(/^(?:"([^"]+)"|'([^']+)'|(\S+))/);
+      const exePath = firstToken ? firstToken[1] || firstToken[2] || firstToken[3] : '';
+      if (!exePath.startsWith('/') || fs.existsSync(exePath)) {
+        verifiedExec = extracted;
+      }
+    }
+    desktopExecCache.set(resolvedDesktopFile, { mtimeMs: stat.mtimeMs, execLine: verifiedExec });
+    return { resolvedDesktopFile, desktopPathExists, desktopExecLine: verifiedExec };
+  } catch {
+    return { resolvedDesktopFile, desktopPathExists, desktopExecLine: null };
+  }
+}
+
+// Persistent lightweight X11 window snapshot daemon so clicks never pay Python/libX11 startup latency
+const X11_SCRIPT_PATH = path.resolve(__dirname, 'scripts', 'x11_resize_chrome.py');
+let x11DaemonProc: ReturnType<typeof spawn> | null = null;
+let x11DaemonState: 'idle' | 'starting' | 'ready' | 'unavailable' = 'idle';
+let x11UnavailableUntil = 0;
+let x11LineBuffer = '';
+let x11PendingSnapshotResolver: ((ids: string | null) => void) | null = null;
+let x11SnapshotQueue: Promise<string | null> = Promise.resolve(null);
+
+function ensureX11SnapshotDaemon() {
+  if (process.platform !== 'linux') return;
+  if (!hasCommand('python3') || !fs.existsSync(X11_SCRIPT_PATH)) {
+    x11DaemonState = 'unavailable';
+    return;
+  }
+  if (Date.now() < x11UnavailableUntil) return;
+  if (x11DaemonProc && (x11DaemonState === 'starting' || x11DaemonState === 'ready')) return;
+
+  x11DaemonState = 'starting';
+  x11LineBuffer = '';
+  const desktopEnv = { ...process.env, DISPLAY: process.env.DISPLAY || ':0' };
+
+  try {
+    const proc = spawn('python3', [X11_SCRIPT_PATH, '--snapshot-daemon'], {
+      env: desktopEnv,
+      stdio: ['pipe', 'pipe', 'ignore'],
+    });
+    x11DaemonProc = proc;
+
+    proc.stdout?.on('data', (chunk: Buffer) => {
+      x11LineBuffer += chunk.toString('utf8');
+      let nlIdx = x11LineBuffer.indexOf('\n');
+      while (nlIdx !== -1) {
+        const line = x11LineBuffer.slice(0, nlIdx).trim();
+        x11LineBuffer = x11LineBuffer.slice(nlIdx + 1);
+        nlIdx = x11LineBuffer.indexOf('\n');
+
+        if (line === 'READY') {
+          x11DaemonState = 'ready';
+        } else if (line === 'NO_X11') {
+          x11DaemonState = 'unavailable';
+          x11UnavailableUntil = Date.now() + 60_000;
+        } else if (line.startsWith('[') && x11PendingSnapshotResolver) {
+          const resolve = x11PendingSnapshotResolver;
+          x11PendingSnapshotResolver = null;
+          try {
+            const parsed = JSON.parse(line);
+            resolve(Array.isArray(parsed) ? parsed.join(',') : '');
+          } catch {
+            resolve(null);
+          }
+        }
+      }
+    });
+
+    const handleDown = () => {
+      if (x11DaemonProc === proc) {
+        x11DaemonProc = null;
+        if (x11DaemonState === 'starting') {
+          x11UnavailableUntil = Date.now() + 30_000;
+        }
+        x11DaemonState = 'idle';
+      }
+      if (x11PendingSnapshotResolver) {
+        const resolve = x11PendingSnapshotResolver;
+        x11PendingSnapshotResolver = null;
+        resolve(null);
+      }
+    };
+    proc.on('exit', handleDown);
+    proc.on('error', handleDown);
+  } catch {
+    x11DaemonState = 'unavailable';
+    x11UnavailableUntil = Date.now() + 30_000;
+  }
+}
+
+function getQuickX11PreIds(timeoutMs: number = 35): Promise<string | null> {
+  if (Date.now() < x11UnavailableUntil) return Promise.resolve(null);
+  ensureX11SnapshotDaemon();
+  if (x11DaemonState !== 'ready' || !x11DaemonProc?.stdin?.writable) {
+    return Promise.resolve(null);
+  }
+
+  x11SnapshotQueue = x11SnapshotQueue.then(
+    () =>
+      new Promise<string | null>((resolve) => {
+        if (x11DaemonState !== 'ready' || !x11DaemonProc?.stdin?.writable) {
+          resolve(null);
+          return;
+        }
+        let settled = false;
+        const timer = setTimeout(() => {
+          if (!settled) {
+            settled = true;
+            if (x11PendingSnapshotResolver === done) {
+              x11PendingSnapshotResolver = null;
+            }
+            resolve(null);
+          }
+        }, timeoutMs);
+
+        const done = (val: string | null) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          resolve(val);
+        };
+
+        x11PendingSnapshotResolver = done;
+        try {
+          x11DaemonProc.stdin.write('SNAP\n');
+        } catch {
+          x11PendingSnapshotResolver = null;
+          done(null);
+        }
+      })
+  );
+
+  return x11SnapshotQueue;
+}
+
+function spawnLaunchCandidatesDirect(
+  candidates: string[],
+  index: number,
+  desktopEnv: NodeJS.ProcessEnv
+) {
+  if (index >= candidates.length) return;
+  const cmd = candidates[index];
+  const parsed = parseDirectSpawnCommand(cmd);
+  const startedAt = Date.now();
+  let fellBack = false;
+
+  const fallbackNext = () => {
+    if (fellBack) return;
+    fellBack = true;
+    spawnLaunchCandidatesDirect(candidates, index + 1, desktopEnv);
+  };
+
+  try {
+    const child = parsed
+      ? spawn(parsed.executable, parsed.args, {
+          env: desktopEnv,
+          stdio: 'ignore',
+          detached: true,
+        })
+      : spawn('sh', ['-c', cmd], {
+          env: desktopEnv,
+          stdio: 'ignore',
+          detached: true,
+        });
+
+    child.on('error', fallbackNext);
+    child.on('exit', (code) => {
+      if (code !== null && code !== 0 && Date.now() - startedAt < 1500) {
+        fallbackNext();
+      }
+    });
+    child.unref();
+  } catch {
+    fallbackNext();
+  }
+}
+
 // 0. POST /api/launch-pwa - Launches PWA immediately on Ubuntu/Linux without blocking Node's event loop
-app.post('/api/launch-pwa', (req, res) => {
-  const { id, name, url, rawFileName, appId, profileDirectory, execLine, desktopPath, todayStr, recordOnly } =
+app.post('/api/launch-pwa', async (req, res) => {
+  const { id, name, url, rawFileName, appId, profileDirectory, execLine, desktopPath, todayStr, recordOnly, accessedAt } =
     req.body || {};
   if (!url && !rawFileName && !execLine && !desktopPath) {
     return res.status(400).json({ error: 'URL ou atalho é obrigatório para lançar a PWA.' });
@@ -1113,16 +1347,24 @@ app.post('/api/launch-pwa', (req, res) => {
 
   let resolvedTitle = typeof name === 'string' ? name.trim() : '';
 
-  // Record access immediately in memory and defer disk flush so Chrome launch has 0ms I/O delay
+  // Record access immediately in memory and coalesce disk flush so Chrome launch has 0ms I/O delay
   let localTimeStr = '';
   try {
     const db = getDb();
     const effectiveToday = todayStr || getTodayString();
     const now = new Date();
-    const hours = String(now.getHours()).padStart(2, '0');
-    const minutes = String(now.getMinutes()).padStart(2, '0');
-    const seconds = String(now.getSeconds()).padStart(2, '0');
-    localTimeStr = `${effectiveToday}T${hours}:${minutes}:${seconds}.000Z`;
+    if (
+      typeof accessedAt === 'string' &&
+      accessedAt.startsWith(effectiveToday) &&
+      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/.test(accessedAt)
+    ) {
+      localTimeStr = accessedAt;
+    } else {
+      const hours = String(now.getHours()).padStart(2, '0');
+      const minutes = String(now.getMinutes()).padStart(2, '0');
+      const seconds = String(now.getSeconds()).padStart(2, '0');
+      localTimeStr = `${effectiveToday}T${hours}:${minutes}:${seconds}.000Z`;
+    }
 
     const matched = findStoredState({ id, clonedFromId: req.body?.clonedFromId, appId, url, rawFileName }, db);
     if (!resolvedTitle && matched?.name) {
@@ -1163,7 +1405,7 @@ app.post('/api/launch-pwa', (req, res) => {
       accessCount: ((matched && matched.accessCount) || 0) + 1,
       updatedAt: now.toISOString(),
     };
-    setImmediate(() => saveServerDb(db));
+    scheduleServerDbSave(db);
   } catch (err) {
     console.warn('Aviso ao registrar acesso no servidor:', err);
   }
@@ -1202,45 +1444,18 @@ app.post('/api/launch-pwa', (req, res) => {
       });
     }
 
-    // Read Exec= from .desktop file when present
-    const homeDir = process.env.HOME || os.homedir();
-    const resolvedDesktopFile =
-      desktopPath && fs.existsSync(desktopPath)
-        ? desktopPath
-        : rawFileName && fs.existsSync(path.join(homeDir, '.local/share/applications', rawFileName))
-        ? path.join(homeDir, '.local/share/applications', rawFileName)
-        : undefined;
-
-    let desktopExecLine: string | null = null;
-    if (resolvedDesktopFile) {
-      try {
-        const content = fs.readFileSync(resolvedDesktopFile, 'utf8');
-        const extracted = extractExecFromDesktopContent(content);
-        if (extracted) {
-          // Verify absolute executable path if present so nonexistent paths don't stall fallback
-          const firstToken = extracted.match(/^(?:"([^"]+)"|'([^']+)'|(\S+))/);
-          const exePath = firstToken ? firstToken[1] || firstToken[2] || firstToken[3] : '';
-          if (!exePath.startsWith('/') || fs.existsSync(exePath)) {
-            desktopExecLine = extracted;
-          }
-        }
-      } catch {
-        desktopExecLine = null;
-      }
-    }
-
-    const x11ScriptPath = path.resolve(__dirname, 'scripts', 'x11_resize_chrome.py');
+    const { desktopPathExists, desktopExecLine } = resolveCachedDesktopExec(desktopPath, rawFileName);
     const isWaylandClone = shouldUseWaylandCloneBridge(
       { clonedFromId: req.body?.clonedFromId, appId, url },
       process.env
     );
-    // Keep the working X11 launcher for installed PWAs and all other apps.
-    // URL-based Wayland clones cannot be observed/resized by libX11.
-    const canUsePythonX11 = !isWaylandClone && hasPython3 && fs.existsSync(x11ScriptPath);
+    const canUsePythonX11 =
+      !isWaylandClone &&
+      hasPython3 &&
+      Date.now() >= x11UnavailableUntil &&
+      fs.existsSync(X11_SCRIPT_PATH);
     const desktopEnv = { ...process.env, DISPLAY: process.env.DISPLAY || ':0' };
 
-    // Only URL-based clones use the existing self-sizing bridge on Wayland.
-    // The normal launcher path for installed PWA app IDs remains untouched.
     const useBridge =
       isWaylandClone ||
       (!canUsePythonX11 && !process.env.DISPLAY && Boolean(process.env.WAYLAND_DISPLAY));
@@ -1251,7 +1466,7 @@ app.post('/api/launch-pwa', (req, res) => {
       desktopExecLine,
       execLine,
       desktopPath,
-      desktopPathExists: Boolean(desktopPath && fs.existsSync(desktopPath)),
+      desktopPathExists,
       rawFileName,
       appId,
       profileDirectory,
@@ -1286,44 +1501,31 @@ app.post('/api/launch-pwa', (req, res) => {
       });
     }
 
-    const fullCommand = commandCandidates.slice(0, 3).join(' || ');
+    const activeCandidates = commandCandidates.slice(0, 3);
 
     if (canUsePythonX11) {
-      // Single detached background helper: snapshots X11 windows -> spawns Chrome immediately -> enforces 539x993 + Hub title
-      const scriptId = registerRunningScript(
-        resolvedTitle ? `Script X11 (${resolvedTitle})` : 'Script X11',
-        4000
-      );
-      const launcher = spawn(
-        'python3',
-        [
-          x11ScriptPath,
-          '--launch-and-watch',
-          String(PWA_WINDOW_WIDTH),
-          String(PWA_WINDOW_HEIGHT),
-          resolvedTitle,
-          fullCommand,
-        ],
-        { env: desktopEnv, stdio: 'ignore', detached: true }
-      );
-      launcher.on('exit', () => {
-        serverActivity.activeScripts.delete(scriptId);
-      });
-      launcher.on('error', () => {
-        serverActivity.activeScripts.delete(scriptId);
-        const direct = spawn('sh', ['-c', fullCommand], { env: desktopEnv, stdio: 'ignore', detached: true });
-        direct.unref();
-      });
-      launcher.unref();
+      // Grab instant (<1ms) snapshot from persistent X11 daemon if ready so Node launches Chrome immediately
+      const preIds = await getQuickX11PreIds(35);
+      spawnLaunchCandidatesDirect(activeCandidates, 0, desktopEnv);
+
+      if (preIds !== null) {
+        const watcher = spawn(
+          'python3',
+          [
+            X11_SCRIPT_PATH,
+            '--watch-new',
+            String(PWA_WINDOW_WIDTH),
+            String(PWA_WINDOW_HEIGHT),
+            preIds,
+            resolvedTitle,
+          ],
+          { env: desktopEnv, stdio: 'ignore', detached: true }
+        );
+        watcher.on('error', () => {});
+        watcher.unref();
+      }
     } else {
-      const scriptId = registerRunningScript(
-        resolvedTitle ? `Abrindo (${resolvedTitle})` : 'Script navegador',
-        1800
-      );
-      const direct = spawn('sh', ['-c', fullCommand], { env: desktopEnv, stdio: 'ignore', detached: true });
-      direct.on('exit', () => serverActivity.activeScripts.delete(scriptId));
-      direct.on('error', () => serverActivity.activeScripts.delete(scriptId));
-      direct.unref();
+      spawnLaunchCandidatesDirect(activeCandidates, 0, desktopEnv);
     }
 
     return res.json({
@@ -1919,6 +2121,9 @@ async function startServer() {
 
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`Server running at http://0.0.0.0:${PORT}`);
+    if (process.platform === 'linux') {
+      ensureX11SnapshotDaemon();
+    }
   });
 }
 

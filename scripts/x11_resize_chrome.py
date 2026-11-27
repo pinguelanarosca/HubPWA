@@ -8,7 +8,9 @@ import ctypes
 import ctypes.util
 import json
 import os
+import re
 import select
+import shlex
 import subprocess
 import sys
 import time
@@ -466,6 +468,22 @@ def watch_window_title(x11, dpy, root, wid, title, atoms):
 def spawn_detached_shell(cmd):
     if not cmd:
         return
+    cleaned = re.sub(r"\s+(?:\d*>\s*/dev/null|2>&1)\s*$", "", cmd.strip()).strip()
+    if cleaned and not any(op in cleaned for op in ("&&", "||", ";", "|", "`", "$", ">", "<")):
+        try:
+            argv = shlex.split(cleaned)
+            if argv:
+                subprocess.Popen(
+                    argv,
+                    start_new_session=True,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    close_fds=True,
+                )
+                return
+        except Exception:
+            pass
     subprocess.Popen(
         ["sh", "-c", cmd],
         start_new_session=True,
@@ -514,6 +532,10 @@ def main():
         dpy = None
 
     if not dpy:
+        if mode == "--snapshot-daemon":
+            sys.stdout.write("NO_X11\n")
+            sys.stdout.flush()
+            sys.exit(0)
         if launch_cmd:
             try:
                 spawn_detached_shell(launch_cmd)
@@ -525,7 +547,17 @@ def main():
         root = x11.XDefaultRootWindow(dpy)
         atoms = build_atoms(x11, dpy)
 
-        if mode == "--snapshot":
+        if mode == "--snapshot-daemon":
+            sys.stdout.write("READY\n")
+            sys.stdout.flush()
+            while True:
+                line = sys.stdin.readline()
+                if not line:
+                    break
+                ids = get_chrome_window_ids(x11, dpy, root, atoms["client_list"], atoms["wm_class"])
+                sys.stdout.write(json.dumps(ids) + "\n")
+                sys.stdout.flush()
+        elif mode == "--snapshot":
             ids = get_chrome_window_ids(x11, dpy, root, atoms["client_list"], atoms["wm_class"])
             print(json.dumps(ids))
         elif mode == "--launch-and-watch" and len(sys.argv) >= 6:
@@ -537,9 +569,10 @@ def main():
             spawn_detached_shell(launch_cmd)
 
             is_wayland = bool(os.environ.get("WAYLAND_DISPLAY")) or os.environ.get("XDG_SESSION_TYPE", "").lower() == "wayland"
-            watch_secs = 6.0 if (is_wayland and not pre_ids) else 14.0
+            watch_secs = 6.0 if (is_wayland and not pre_ids) else 10.0
             deadline = time.time() + watch_secs
             target_wid = None
+            started = time.time()
             while time.time() < deadline:
                 current_ids = get_chrome_window_ids(x11, dpy, root, atoms["client_list"], atoms["wm_class"])
                 new_ids = [wid for wid in current_ids if wid not in pre_ids]
@@ -547,7 +580,7 @@ def main():
                     target_wid = new_ids[-1]
                     unmaximize_and_resize(x11, dpy, root, target_wid, width, height, title, atoms)
                     break
-                time.sleep(0.06)
+                time.sleep(0.03 if (time.time() - started) < 1.5 else 0.08)
 
             if target_wid is not None and title:
                 watch_window_title(x11, dpy, root, target_wid, title, atoms)
@@ -558,8 +591,11 @@ def main():
             title = sys.argv[5] if len(sys.argv) > 5 else ""
             pre_ids = set(int(x) for x in pre_raw.split(",") if x.strip().isdigit())
 
-            deadline = time.time() + 14.0
+            is_wayland = bool(os.environ.get("WAYLAND_DISPLAY")) or os.environ.get("XDG_SESSION_TYPE", "").lower() == "wayland"
+            watch_secs = 6.0 if (is_wayland and not pre_ids) else 10.0
+            deadline = time.time() + watch_secs
             target_wid = None
+            started = time.time()
             while time.time() < deadline:
                 current_ids = get_chrome_window_ids(x11, dpy, root, atoms["client_list"], atoms["wm_class"])
                 new_ids = [wid for wid in current_ids if wid not in pre_ids]
@@ -567,7 +603,7 @@ def main():
                     target_wid = new_ids[-1]
                     unmaximize_and_resize(x11, dpy, root, target_wid, width, height, title, atoms)
                     break
-                time.sleep(0.06)
+                time.sleep(0.03 if (time.time() - started) < 1.5 else 0.08)
 
             if target_wid is not None and title:
                 watch_window_title(x11, dpy, root, target_wid, title, atoms)

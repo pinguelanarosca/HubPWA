@@ -258,3 +258,130 @@ export function buildLinuxLaunchCandidates(options: LinuxLaunchCandidateOptions)
 
   return candidates;
 }
+
+export const PWA_SAME_ITEM_COOLDOWN_MS = 1000;
+
+/**
+ * Prevents accidental double-clicks on the SAME PWA within `cooldownMs` while
+ * never dropping intentional rapid clicks on DIFFERENT PWAs.
+ */
+export function tryAcquirePwaLaunchSlot(
+  cooldownMap: Map<string, number>,
+  itemKey: string,
+  nowMs: number = Date.now(),
+  cooldownMs: number = PWA_SAME_ITEM_COOLDOWN_MS
+): boolean {
+  if (!itemKey) return true;
+  const lastItemTime = cooldownMap.get(itemKey) || 0;
+  if (lastItemTime > 0 && nowMs - lastItemTime < cooldownMs) {
+    return false;
+  }
+  cooldownMap.set(itemKey, nowMs);
+  return true;
+}
+
+/**
+ * Parses a simple launch command into `{ executable, args }` so Node.js can
+ * `spawn(executable, args)` directly without paying for an intermediate `sh -c` fork.
+ * Returns null if the command contains shell operators or variable expansions.
+ */
+export function parseDirectSpawnCommand(
+  rawCommand: string
+): { executable: string; args: string[] } | null {
+  if (!rawCommand || typeof rawCommand !== 'string') return null;
+
+  const cleaned = rawCommand
+    .trim()
+    .replace(/\s+(?:\d*>\s*\/dev\/null|2>&1)\s*$/g, '')
+    .trim();
+  if (!cleaned) return null;
+
+  const tokens: string[] = [];
+  let current = '';
+  let hasToken = false;
+  let quote: '"' | "'" | null = null;
+  let escaped = false;
+
+  for (let i = 0; i < cleaned.length; i += 1) {
+    const ch = cleaned[i];
+
+    if (escaped) {
+      current += ch;
+      hasToken = true;
+      escaped = false;
+      continue;
+    }
+
+    if (quote === "'") {
+      if (ch === "'") {
+        quote = null;
+      } else {
+        current += ch;
+        hasToken = true;
+      }
+      continue;
+    }
+
+    if (quote === '"') {
+      if (ch === '"') {
+        quote = null;
+      } else if (ch === '\\') {
+        const next = cleaned[i + 1];
+        if (next === '"' || next === '\\') {
+          current += next;
+          i += 1;
+        } else {
+          current += ch;
+        }
+        hasToken = true;
+      } else if (ch === '$' || ch === '`') {
+        return null;
+      } else {
+        current += ch;
+        hasToken = true;
+      }
+      continue;
+    }
+
+    if (ch === '\\') {
+      escaped = true;
+      hasToken = true;
+      continue;
+    }
+
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      hasToken = true;
+      continue;
+    }
+
+    if (/\s/.test(ch)) {
+      if (hasToken) {
+        tokens.push(current);
+        current = '';
+        hasToken = false;
+      }
+      continue;
+    }
+
+    // Any unquoted shell operator/expansion falls back to sh -c
+    if (ch === '|' || ch === '&' || ch === ';' || ch === '>' || ch === '<' || ch === '$' || ch === '`' || ch === '~') {
+      return null;
+    }
+
+    current += ch;
+    hasToken = true;
+  }
+
+  if (quote !== null || escaped) return null;
+  if (hasToken) {
+    tokens.push(current);
+  }
+  if (tokens.length === 0) return null;
+
+  return {
+    executable: tokens[0],
+    args: tokens.slice(1),
+  };
+}
+

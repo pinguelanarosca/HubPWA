@@ -31,7 +31,7 @@ interface CompactTableViewProps {
   onDelete: (id: string) => void;
 }
 
-export const CompactTableView: React.FC<CompactTableViewProps> = ({
+export const CompactTableView: React.FC<CompactTableViewProps> = React.memo(({
   items,
   todayStr,
   folders = [],
@@ -325,4 +325,4 @@ export const CompactTableView: React.FC<CompactTableViewProps> = ({
       </table>
     </div>
   );
-};
+});
