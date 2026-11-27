@@ -40,6 +40,7 @@ import {
   extractExecFromDesktopContent,
   buildLinuxLaunchCandidates,
   parseDirectSpawnCommand,
+  normalizeLaunchUrl,
   shouldUseWaylandCloneBridge,
 } from './src/utils/launchConfig.js';
 
@@ -232,12 +233,22 @@ const DEFAULT_BRANCH = 'main';
 
 app.use(express.json({ limit: '25mb' }));
 
-// Memoize executable lookups via fs.accessSync (0 shell forks, <0.05ms)
-const commandCache = new Map<string, boolean>();
-function hasCommand(cmd: string): boolean {
-  if (commandCache.has(cmd)) {
-    return commandCache.get(cmd)!;
+// Memoize executable path lookups via fs.accessSync (0 shell forks, <0.05ms)
+const commandPathCache = new Map<string, string | null>();
+function resolveCommandPath(cmd: string): string | null {
+  if (!cmd) return null;
+  if (path.isAbsolute(cmd)) {
+    try {
+      fs.accessSync(cmd, fs.constants.X_OK);
+      return cmd;
+    } catch {
+      return null;
+    }
   }
+  if (commandPathCache.has(cmd)) {
+    return commandPathCache.get(cmd)!;
+  }
+  const homeDir = process.env.HOME || os.homedir();
   const searchDirs = [
     ...(process.env.PATH || '').split(path.delimiter).filter(Boolean),
     '/usr/local/bin',
@@ -245,20 +256,86 @@ function hasCommand(cmd: string): boolean {
     '/bin',
     '/opt/google/chrome',
     '/snap/bin',
+    '/var/lib/flatpak/exports/bin',
+    path.join(homeDir, '.local/share/flatpak/exports/bin'),
   ];
-  let found = false;
+  let resolved: string | null = null;
   for (const dir of searchDirs) {
     try {
       const candidate = path.join(dir, cmd);
       fs.accessSync(candidate, fs.constants.X_OK);
-      found = true;
+      resolved = candidate;
       break;
     } catch {
       // continue searching PATH
     }
   }
-  commandCache.set(cmd, found);
-  return found;
+  commandPathCache.set(cmd, resolved);
+  return resolved;
+}
+
+function hasCommand(cmd: string): boolean {
+  return Boolean(resolveCommandPath(cmd));
+}
+
+function buildDesktopEnv(): NodeJS.ProcessEnv {
+  const homeDir = process.env.HOME || os.homedir();
+  const extraPaths = [
+    '/usr/local/bin',
+    '/usr/bin',
+    '/bin',
+    '/opt/google/chrome',
+    '/snap/bin',
+    '/var/lib/flatpak/exports/bin',
+    path.join(homeDir, '.local/share/flatpak/exports/bin'),
+  ];
+  const mergedPath = Array.from(
+    new Set([...(process.env.PATH || '').split(path.delimiter).filter(Boolean), ...extraPaths])
+  ).join(path.delimiter);
+  return {
+    ...process.env,
+    PATH: mergedPath,
+    DISPLAY: process.env.DISPLAY || ':0',
+  };
+}
+
+function getLinuxLaunchCapability() {
+  if (process.platform !== 'linux') {
+    return {
+      canLaunchNative: false,
+      hasGtkLaunch: false,
+      hasGio: false,
+      hasPython3: false,
+      installedChromePaths: [] as string[],
+      hasChrome: false,
+    };
+  }
+  const hasGtkLaunch = hasCommand('gtk-launch');
+  const hasGio = hasCommand('gio');
+  const hasPython3 = hasCommand('python3');
+  const chromeNames = [
+    'google-chrome',
+    'google-chrome-stable',
+    'chromium-browser',
+    'chromium',
+    'chrome',
+  ];
+  const installedChromePaths = Array.from(
+    new Set(
+      chromeNames
+        .map((bin) => resolveCommandPath(bin))
+        .filter((resolved): resolved is string => Boolean(resolved))
+    )
+  );
+  const hasChrome = installedChromePaths.length > 0;
+  return {
+    canLaunchNative: hasChrome || hasGtkLaunch || hasGio,
+    hasGtkLaunch,
+    hasGio,
+    hasPython3,
+    installedChromePaths,
+    hasChrome,
+  };
 }
 
 // In-memory cache for web-fetched icon buffers
@@ -874,11 +951,20 @@ app.get('/api/pwas/scan', (_req, res) => {
   }
 });
 
+// GET /api/launch-capability.js - Synchronous pre-boot flag so frontend preserves user click gesture when Chrome is unavailable
+app.get('/api/launch-capability.js', (_req, res) => {
+  const { canLaunchNative } = getLinuxLaunchCapability();
+  res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-store');
+  return res.send(`window.__HUB_CAN_LAUNCH_NATIVE__ = ${canLaunchNative ? 'true' : 'false'};\n`);
+});
+
 // GET /api/pwas/state - Retrieve server-persisted user state
 app.get('/api/pwas/state', (_req, res) => {
   try {
     const db = getDb();
-    return res.json({ success: true, db });
+    const { canLaunchNative } = getLinuxLaunchCapability();
+    return res.json({ success: true, canLaunchNative, db });
   } catch (err) {
     return res.status(500).json({ error: (err as Error).message });
   }
@@ -1297,55 +1383,106 @@ function getQuickX11PreIds(timeoutMs: number = 35): Promise<string | null> {
 
 function spawnLaunchCandidatesDirect(
   candidates: string[],
-  index: number,
   desktopEnv: NodeJS.ProcessEnv
-) {
-  if (index >= candidates.length) return;
-  const cmd = candidates[index];
-  const parsed = parseDirectSpawnCommand(cmd);
-  const startedAt = Date.now();
-  let fellBack = false;
+): Promise<boolean> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (ok: boolean) => {
+      if (settled) return;
+      settled = true;
+      resolve(ok);
+    };
 
-  const fallbackNext = () => {
-    if (fellBack) return;
-    fellBack = true;
-    spawnLaunchCandidatesDirect(candidates, index + 1, desktopEnv);
-  };
+    const overallTimer = setTimeout(() => finish(false), 600);
 
-  try {
-    const child = parsed
-      ? spawn(parsed.executable, parsed.args, {
-          env: desktopEnv,
-          stdio: 'ignore',
-          detached: true,
-        })
-      : spawn('sh', ['-c', cmd], {
-          env: desktopEnv,
-          stdio: 'ignore',
-          detached: true,
+    const tryCandidate = (index: number) => {
+      if (settled) return;
+      if (index >= candidates.length) {
+        clearTimeout(overallTimer);
+        finish(false);
+        return;
+      }
+
+      const cmd = candidates[index];
+      const parsed = parseDirectSpawnCommand(cmd);
+      const startedAt = Date.now();
+      let fellBack = false;
+      let spawnGraceTimer: ReturnType<typeof setTimeout> | null = null;
+
+      const fallbackNext = () => {
+        if (fellBack) return;
+        fellBack = true;
+        if (spawnGraceTimer) {
+          clearTimeout(spawnGraceTimer);
+          spawnGraceTimer = null;
+        }
+        tryCandidate(index + 1);
+      };
+
+      if (parsed) {
+        const resolvedBin = resolveCommandPath(parsed.executable);
+        if (!resolvedBin) {
+          fallbackNext();
+          return;
+        }
+        parsed.executable = resolvedBin;
+      }
+
+      try {
+        const child = parsed
+          ? spawn(parsed.executable, parsed.args, {
+              env: desktopEnv,
+              stdio: 'ignore',
+              detached: true,
+            })
+          : spawn('sh', ['-c', cmd], {
+              env: desktopEnv,
+              stdio: 'ignore',
+              detached: true,
+            });
+
+        child.on('spawn', () => {
+          spawnGraceTimer = setTimeout(() => {
+            clearTimeout(overallTimer);
+            finish(true);
+          }, 30);
         });
 
-    child.on('error', fallbackNext);
-    child.on('exit', (code) => {
-      if (code !== null && code !== 0 && Date.now() - startedAt < 1500) {
+        child.on('error', fallbackNext);
+        child.on('exit', (code) => {
+          if (code === 0) {
+            if (spawnGraceTimer) {
+              clearTimeout(spawnGraceTimer);
+              spawnGraceTimer = null;
+            }
+            clearTimeout(overallTimer);
+            finish(true);
+            return;
+          }
+          if (code !== null && code !== 0 && Date.now() - startedAt < 1500) {
+            fallbackNext();
+          }
+        });
+        child.unref();
+      } catch {
         fallbackNext();
       }
-    });
-    child.unref();
-  } catch {
-    fallbackNext();
-  }
+    };
+
+    tryCandidate(0);
+  });
 }
 
 // 0. POST /api/launch-pwa - Launches PWA immediately on Ubuntu/Linux without blocking Node's event loop
 app.post('/api/launch-pwa', async (req, res) => {
   const { id, name, url, rawFileName, appId, profileDirectory, execLine, desktopPath, todayStr, recordOnly, accessedAt } =
     req.body || {};
-  if (!url && !rawFileName && !execLine && !desktopPath) {
+  if (!url && !rawFileName && !execLine && !desktopPath && !id) {
     return res.status(400).json({ error: 'URL ou atalho é obrigatório para lançar a PWA.' });
   }
 
   let resolvedTitle = typeof name === 'string' ? name.trim() : '';
+  let effectiveUrl = normalizeLaunchUrl(url) || (typeof url === 'string' ? url.trim() : '');
 
   // Record access immediately in memory and coalesce disk flush so Chrome launch has 0ms I/O delay
   let localTimeStr = '';
@@ -1370,6 +1507,9 @@ app.post('/api/launch-pwa', async (req, res) => {
     if (!resolvedTitle && matched?.name) {
       resolvedTitle = String(matched.name).trim();
     }
+    if (!effectiveUrl && matched?.url) {
+      effectiveUrl = normalizeLaunchUrl(matched.url) || String(matched.url).trim();
+    }
     const key =
       id ||
       (matched
@@ -1386,7 +1526,7 @@ app.post('/api/launch-pwa', async (req, res) => {
         timestamp: localTimeStr,
         source: 'hub' as const,
         profileDirectory: profileDirectory || matched?.profileDirectory,
-        visitedUrl: url || matched?.url,
+        visitedUrl: effectiveUrl || url || matched?.url,
       },
       ...prevHistory.filter((h) => h && h.timestamp !== localTimeStr),
     ].slice(0, 80);
@@ -1395,7 +1535,7 @@ app.post('/api/launch-pwa', async (req, res) => {
       ...(matched || {}),
       id: key,
       name: resolvedTitle || (matched ? matched.name : undefined),
-      url: url || (matched ? matched.url : ''),
+      url: effectiveUrl || url || (matched ? matched.url : ''),
       appId: appId || (matched ? matched.appId : undefined),
       rawFileName: rawFileName || (matched ? matched.rawFileName : undefined),
       profileDirectory: profileDirectory || (matched ? matched.profileDirectory : undefined),
@@ -1414,7 +1554,7 @@ app.post('/api/launch-pwa', async (req, res) => {
     return res.json({
       success: true,
       launchedNative: false,
-      fallbackUrl: url,
+      fallbackUrl: effectiveUrl,
       windowSize: { width: PWA_WINDOW_WIDTH, height: PWA_WINDOW_HEIGHT },
       lastAccessedDate: localTimeStr,
     });
@@ -1422,23 +1562,20 @@ app.post('/api/launch-pwa', async (req, res) => {
 
   // Only execute native desktop launch on Linux/Ubuntu when a browser/launcher exists
   if (process.platform === 'linux') {
-    const hasGtkLaunch = hasCommand('gtk-launch');
-    const hasGio = hasCommand('gio');
-    const hasPython3 = hasCommand('python3');
-    const installedChromeBins = [
-      'google-chrome',
-      'google-chrome-stable',
-      'chromium-browser',
-      'chromium',
-      'chrome',
-    ].filter(hasCommand);
-    const hasChrome = installedChromeBins.length > 0;
+    const {
+      canLaunchNative,
+      hasGtkLaunch,
+      hasGio,
+      hasPython3,
+      installedChromePaths,
+      hasChrome,
+    } = getLinuxLaunchCapability();
 
-    if (!hasGtkLaunch && !hasGio && !hasChrome) {
+    if (!canLaunchNative) {
       return res.json({
         success: true,
         launchedNative: false,
-        fallbackUrl: url,
+        fallbackUrl: effectiveUrl,
         windowSize: { width: PWA_WINDOW_WIDTH, height: PWA_WINDOW_HEIGHT },
         lastAccessedDate: localTimeStr,
       });
@@ -1446,7 +1583,7 @@ app.post('/api/launch-pwa', async (req, res) => {
 
     const { desktopPathExists, desktopExecLine } = resolveCachedDesktopExec(desktopPath, rawFileName);
     const isWaylandClone = shouldUseWaylandCloneBridge(
-      { clonedFromId: req.body?.clonedFromId, appId, url },
+      { clonedFromId: req.body?.clonedFromId, appId, url: effectiveUrl },
       process.env
     );
     const canUsePythonX11 =
@@ -1454,7 +1591,7 @@ app.post('/api/launch-pwa', async (req, res) => {
       hasPython3 &&
       Date.now() >= x11UnavailableUntil &&
       fs.existsSync(X11_SCRIPT_PATH);
-    const desktopEnv = { ...process.env, DISPLAY: process.env.DISPLAY || ':0' };
+    const desktopEnv = buildDesktopEnv();
 
     const useBridge =
       isWaylandClone ||
@@ -1470,10 +1607,10 @@ app.post('/api/launch-pwa', async (req, res) => {
       rawFileName,
       appId,
       profileDirectory,
-      url,
+      url: effectiveUrl,
       bridgeOrigin,
       windowTitle: resolvedTitle || undefined,
-      chromeBinaries: installedChromeBins.slice(0, 1),
+      chromeBinaries: installedChromePaths.slice(0, 2),
       hasGtkLaunch,
       hasGio,
       hasChrome,
@@ -1495,37 +1632,46 @@ app.post('/api/launch-pwa', async (req, res) => {
       return res.json({
         success: true,
         launchedNative: false,
-        fallbackUrl: url,
+        fallbackUrl: effectiveUrl,
         windowSize: { width: PWA_WINDOW_WIDTH, height: PWA_WINDOW_HEIGHT },
         lastAccessedDate: localTimeStr,
       });
     }
 
-    const activeCandidates = commandCandidates.slice(0, 3);
-
+    const activeCandidates = commandCandidates.slice(0, 4);
+    let preIds: string | null = null;
     if (canUsePythonX11) {
       // Grab instant (<1ms) snapshot from persistent X11 daemon if ready so Node launches Chrome immediately
-      const preIds = await getQuickX11PreIds(35);
-      spawnLaunchCandidatesDirect(activeCandidates, 0, desktopEnv);
+      preIds = await getQuickX11PreIds(35);
+    }
 
-      if (preIds !== null) {
-        const watcher = spawn(
-          'python3',
-          [
-            X11_SCRIPT_PATH,
-            '--watch-new',
-            String(PWA_WINDOW_WIDTH),
-            String(PWA_WINDOW_HEIGHT),
-            preIds,
-            resolvedTitle,
-          ],
-          { env: desktopEnv, stdio: 'ignore', detached: true }
-        );
-        watcher.on('error', () => {});
-        watcher.unref();
-      }
-    } else {
-      spawnLaunchCandidatesDirect(activeCandidates, 0, desktopEnv);
+    const spawnedOk = await spawnLaunchCandidatesDirect(activeCandidates, desktopEnv);
+
+    if (spawnedOk && canUsePythonX11 && preIds !== null) {
+      const watcher = spawn(
+        'python3',
+        [
+          X11_SCRIPT_PATH,
+          '--watch-new',
+          String(PWA_WINDOW_WIDTH),
+          String(PWA_WINDOW_HEIGHT),
+          preIds,
+          resolvedTitle,
+        ],
+        { env: desktopEnv, stdio: 'ignore', detached: true }
+      );
+      watcher.on('error', () => {});
+      watcher.unref();
+    }
+
+    if (!spawnedOk) {
+      return res.json({
+        success: true,
+        launchedNative: false,
+        fallbackUrl: effectiveUrl,
+        windowSize: { width: PWA_WINDOW_WIDTH, height: PWA_WINDOW_HEIGHT },
+        lastAccessedDate: localTimeStr,
+      });
     }
 
     return res.json({
@@ -1540,7 +1686,7 @@ app.post('/api/launch-pwa', async (req, res) => {
   return res.json({
     success: true,
     launchedNative: false,
-    fallbackUrl: url,
+    fallbackUrl: effectiveUrl,
     windowSize: { width: PWA_WINDOW_WIDTH, height: PWA_WINDOW_HEIGHT },
     lastAccessedDate: localTimeStr,
   });
@@ -1567,6 +1713,7 @@ app.get('/api/activity/status', (_req, res) => {
     updatingIconsCount: serverActivity.activeIcons,
     runningScript,
     runningScriptLabel: runningScript ? scripts[scripts.length - 1].label : null,
+    canLaunchNative: getLinuxLaunchCapability().canLaunchNative,
   });
 });
 

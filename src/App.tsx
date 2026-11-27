@@ -62,6 +62,7 @@ import {
   PWA_WINDOW_HEIGHT,
   PWA_SAME_ITEM_COOLDOWN_MS,
   getPopupWindowFeatures,
+  normalizeLaunchUrl,
   tryAcquirePwaLaunchSlot,
 } from './utils/launchConfig';
 import { TopBar, TopBarActivityStatus } from './components/TopBar';
@@ -87,7 +88,7 @@ import { RatingConfirmModal } from './components/RatingConfirmModal';
 import { ClonePWAProfileModal } from './components/ClonePWAProfileModal';
 import { AccessHistoryModal } from './components/AccessHistoryModal';
 import { DeleteConfirmModal } from './components/DeleteConfirmModal';
-import { AlertCircle, CheckCircle2, FolderUp, FolderOpen, Plus, X } from 'lucide-react';
+import { AlertCircle, CheckCircle2, ExternalLink, FolderUp, FolderOpen, Plus, X } from 'lucide-react';
 
 const STORAGE_KEY = 'chrome_pwa_hub_items_empty_v1';
 const DENSITY_STORAGE_KEY = 'chrome_pwa_hub_density';
@@ -326,6 +327,16 @@ export default function App() {
   const [pendingDedupePlan, setPendingDedupePlan] = useState<SameProfileDedupePlan | null>(null);
   const [noticeMessage, setNoticeMessage] = useState<string | null>(null);
   const [noticeTone, setNoticeTone] = useState<'warning' | 'success'>('warning');
+  const [blockedLaunchFallback, setBlockedLaunchFallback] = useState<{
+    name: string;
+    url: string;
+  } | null>(null);
+  const serverCanLaunchNativeRef = useRef<boolean | null>(
+    typeof window !== 'undefined' &&
+      typeof (window as unknown as { __HUB_CAN_LAUNCH_NATIVE__?: unknown }).__HUB_CAN_LAUNCH_NATIVE__ === 'boolean'
+      ? Boolean((window as unknown as { __HUB_CAN_LAUNCH_NATIVE__: boolean }).__HUB_CAN_LAUNCH_NATIVE__)
+      : null
+  );
 
   // Current day string (YYYY-MM-DD)
   const [todayStr, setTodayStr] = useState(() => getTodayString());
@@ -545,6 +556,9 @@ export default function App() {
         if (!res.ok || cancelled) return;
         const data = await res.json();
         if (cancelled) return;
+        if (typeof data.canLaunchNative === 'boolean') {
+          serverCanLaunchNativeRef.current = data.canLaunchNative;
+        }
         const snapshot = {
           executing: Boolean(data.executing),
           executingLabel: data.executingLabel ? String(data.executingLabel) : null,
@@ -758,6 +772,9 @@ export default function App() {
         const res = await fetch('/api/pwas/state');
         if (res.ok && !cancelled) {
           const data = await res.json();
+          if (typeof data?.canLaunchNative === 'boolean') {
+            serverCanLaunchNativeRef.current = data.canLaunchNative;
+          }
           const serverDb = data?.db;
           if (serverDb) {
             // Hydrate folders if localStorage has not saved folders yet
@@ -1188,6 +1205,42 @@ export default function App() {
     setHistoryModalItem(item);
   }, []);
 
+  const openUrlInBrowserWindow = useCallback((targetUrl: string, item: PWAItem): boolean => {
+    if (!targetUrl) return false;
+    const windowName = `pwa_${(item.id || item.name || 'app').replace(/[^a-zA-Z0-9]/g, '_')}`;
+
+    let opened = window.open(
+      targetUrl,
+      windowName,
+      getPopupWindowFeatures(PWA_WINDOW_WIDTH, PWA_WINDOW_HEIGHT)
+    );
+
+    if (!opened || opened.closed) {
+      opened = window.open(targetUrl, '_blank', 'noopener,noreferrer');
+    }
+
+    if (!opened || opened.closed) {
+      setBlockedLaunchFallback({ name: item.name, url: targetUrl });
+      setNoticeTone('warning');
+      setNoticeMessage(
+        `O navegador bloqueou a abertura automática da janela de "${item.name}". Clique em "Abrir ${item.name}" ao lado ou permita pop-ups para este site.`
+      );
+      return false;
+    }
+
+    setBlockedLaunchFallback(null);
+    try {
+      opened.resizeTo(PWA_WINDOW_WIDTH, PWA_WINDOW_HEIGHT);
+      if (item.name && opened.document) {
+        opened.document.title = item.name;
+      }
+      opened.focus?.();
+    } catch {
+      // Cross-origin popup resize/title may be restricted by browser
+    }
+    return true;
+  }, []);
+
   // Launch PWA: opens link as a true standalone PWA window and automatically marks accessed today (GREEN indicator)
   const handleLaunch = useCallback(async (item: PWAItem) => {
     // Anti-double-click mechanism: prevent duplicate clicks on the same PWA within 1000ms without dropping clicks on other PWAs
@@ -1197,10 +1250,13 @@ export default function App() {
       return;
     }
 
+    setBlockedLaunchFallback(null);
+
     // 1. Immediately update React state without blocking the click frame with synchronous JSON.stringify
     const now = new Date();
     const accessedSample = markAsAccessed(item, now, todayStr);
     const localTimeStr = accessedSample.lastAccessedDate || '';
+    const launchUrl = normalizeLaunchUrl(item.url);
 
     setItems((prev) =>
       prev.map((it) => {
@@ -1211,24 +1267,22 @@ export default function App() {
       })
     );
 
-    // 2. If not running on local Ubuntu Express server (e.g. Cloud Preview iframe), open synchronously to preserve user gesture
+    // 2. If running remotely (Cloud Preview) OR native Chrome launch is unavailable on server,
+    //    open synchronously inside the click handler so browser popup blockers don't drop it after `await fetch`.
     const isLocalHost =
       typeof window !== 'undefined' &&
-      ['localhost', '127.0.0.1', '::1'].includes(window.location.hostname);
+      ['localhost', '127.0.0.1', '::1', '0.0.0.0'].includes(window.location.hostname);
+    const shouldOpenInBrowserSync =
+      !isLocalHost || serverCanLaunchNativeRef.current === false;
 
-    if (!isLocalHost && item.url) {
-      const popup = window.open(
-        item.url,
-        `pwa_${item.id.replace(/[^a-zA-Z0-9]/g, '_')}`,
-        getPopupWindowFeatures(PWA_WINDOW_WIDTH, PWA_WINDOW_HEIGHT)
-      );
-      try {
-        popup?.resizeTo(PWA_WINDOW_WIDTH, PWA_WINDOW_HEIGHT);
-        if (popup && item.name) {
-          popup.document.title = item.name;
-        }
-      } catch {
-        // Cross-origin popup resize/title may be restricted by browser
+    if (shouldOpenInBrowserSync) {
+      if (launchUrl) {
+        openUrlInBrowserWindow(launchUrl, item);
+      } else {
+        setNoticeTone('warning');
+        setNoticeMessage(
+          `A PWA "${item.name}" não possui uma URL válida configurada para abrir no navegador.`
+        );
       }
     }
 
@@ -1242,7 +1296,7 @@ export default function App() {
           id: item.id,
           name: item.name,
           clonedFromId: item.clonedFromId,
-          url: item.url,
+          url: launchUrl || item.url,
           rawFileName: item.rawFileName,
           appId: item.appId,
           profileDirectory: item.profileDirectory,
@@ -1272,7 +1326,7 @@ export default function App() {
                 timestamp: data.lastAccessedDate,
                 source: 'hub' as const,
                 profileDirectory: it.profileDirectory,
-                visitedUrl: it.url,
+                visitedUrl: launchUrl || it.url,
               },
               ...prevHist.filter((h) => h && h.timestamp !== data.lastAccessedDate),
             ].slice(0, 80);
@@ -1289,40 +1343,29 @@ export default function App() {
         );
       }
 
-      if (isLocalHost && !data.launchedNative && item.url) {
-        // Fallback on local host if no Chrome binary is available: open in App Window at 539x993
-        const popup = window.open(
-          item.url,
-          `pwa_${item.id.replace(/[^a-zA-Z0-9]/g, '_')}`,
-          getPopupWindowFeatures(PWA_WINDOW_WIDTH, PWA_WINDOW_HEIGHT)
-        );
-        try {
-          popup?.resizeTo(PWA_WINDOW_WIDTH, PWA_WINDOW_HEIGHT);
-          if (popup && item.name) {
-            popup.document.title = item.name;
-          }
-        } catch {
-          // Cross-origin popup resize/title may be restricted by browser
+      if (isLocalHost && !shouldOpenInBrowserSync && !data.launchedNative) {
+        serverCanLaunchNativeRef.current = false;
+        const fallbackTarget = normalizeLaunchUrl(data.fallbackUrl) || launchUrl;
+        if (fallbackTarget) {
+          openUrlInBrowserWindow(fallbackTarget, item);
+        } else {
+          setNoticeTone('warning');
+          setNoticeMessage(
+            `Não foi possível abrir "${item.name}": nenhum navegador local ou URL válida encontrados.`
+          );
         }
       }
     } catch {
-      if (isLocalHost && item.url) {
-        const popup = window.open(
-          item.url,
-          `pwa_${item.id.replace(/[^a-zA-Z0-9]/g, '_')}`,
-          getPopupWindowFeatures(PWA_WINDOW_WIDTH, PWA_WINDOW_HEIGHT)
-        );
-        try {
-          popup?.resizeTo(PWA_WINDOW_WIDTH, PWA_WINDOW_HEIGHT);
-          if (popup && item.name) {
-            popup.document.title = item.name;
-          }
-        } catch {
-          // Cross-origin popup resize/title may be restricted by browser
+      if (isLocalHost && !shouldOpenInBrowserSync) {
+        if (launchUrl) {
+          openUrlInBrowserWindow(launchUrl, item);
+        } else {
+          setNoticeTone('warning');
+          setNoticeMessage(`Falha ao comunicar com o servidor local para abrir "${item.name}".`);
         }
       }
     }
-  }, [todayStr]);
+  }, [openUrlInBrowserWindow, todayStr]);
 
   // Sync Chrome profile SQLite history for a single PWA inside AccessHistoryModal
   const handleSyncSingleProfileHistory = useCallback(
@@ -2519,13 +2562,13 @@ export default function App() {
         {noticeMessage && (
           <div
             data-testid="hub-notice-banner"
-            className={`mb-3 px-3.5 py-2.5 rounded-lg border text-xs flex items-center justify-between gap-2 ${
+            className={`mb-3 px-3.5 py-2.5 rounded-lg border text-xs flex items-center justify-between gap-2 flex-wrap ${
               noticeTone === 'success'
                 ? 'bg-emerald-950/70 border-emerald-700/70 text-emerald-200'
                 : 'bg-amber-950/70 border-amber-800/70 text-amber-200'
             }`}
           >
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 min-w-0 flex-1">
               {noticeTone === 'success' ? (
                 <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
               ) : (
@@ -2533,18 +2576,39 @@ export default function App() {
               )}
               <span>{noticeMessage}</span>
             </div>
-            <button
-              type="button"
-              onClick={() => setNoticeMessage(null)}
-              aria-label="Fechar aviso"
-              className={`p-1 rounded cursor-pointer ${
-                noticeTone === 'success'
-                  ? 'hover:bg-emerald-900/60 text-emerald-300'
-                  : 'hover:bg-amber-900/60 text-amber-300'
-              }`}
-            >
-              <X className="w-3.5 h-3.5" />
-            </button>
+            <div className="flex items-center gap-2 shrink-0">
+              {blockedLaunchFallback && (
+                <a
+                  href={blockedLaunchFallback.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  data-testid="blocked-launch-fallback-link"
+                  onClick={() => {
+                    setBlockedLaunchFallback(null);
+                    setNoticeMessage(null);
+                  }}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-emerald-500 hover:bg-emerald-400 text-neutral-950 font-semibold transition-colors"
+                >
+                  <ExternalLink className="w-3.5 h-3.5" />
+                  <span>Abrir {blockedLaunchFallback.name}</span>
+                </a>
+              )}
+              <button
+                type="button"
+                onClick={() => {
+                  setNoticeMessage(null);
+                  setBlockedLaunchFallback(null);
+                }}
+                aria-label="Fechar aviso"
+                className={`p-1 rounded cursor-pointer ${
+                  noticeTone === 'success'
+                    ? 'hover:bg-emerald-900/60 text-emerald-300'
+                    : 'hover:bg-amber-900/60 text-amber-300'
+                }`}
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
           </div>
         )}
 

@@ -13,6 +13,7 @@ import {
   applyWindowSizeToChromeExec,
   buildLinuxLaunchCandidates,
   parseDirectSpawnCommand,
+  normalizeLaunchUrl,
   tryAcquirePwaLaunchSlot,
   PWA_SAME_ITEM_COOLDOWN_MS,
   shouldUseWaylandCloneBridge,
@@ -188,4 +189,40 @@ test('tryAcquirePwaLaunchSlot blocks rapid double-click on same PWA but allows i
   // Same PWA after cooldown window -> allowed again
   assert.equal(tryAcquirePwaLaunchSlot(cooldowns, 'pwa_1', 1000 + PWA_SAME_ITEM_COOLDOWN_MS, PWA_SAME_ITEM_COOLDOWN_MS), true);
 });
+
+test('normalizeLaunchUrl adds safe protocol to bare domains and rejects unsafe schemes', () => {
+  assert.equal(normalizeLaunchUrl('https://35m.com/play'), 'https://35m.com/play');
+  assert.equal(normalizeLaunchUrl('http://localhost:8080/app'), 'http://localhost:8080/app');
+  assert.equal(normalizeLaunchUrl('  35m.com  '), 'https://35m.com');
+  assert.equal(normalizeLaunchUrl('sub.example.com/login?x=1'), 'https://sub.example.com/login?x=1');
+  assert.equal(normalizeLaunchUrl('localhost:3000'), 'http://localhost:3000');
+  assert.equal(normalizeLaunchUrl('javascript:alert(1)'), '');
+  assert.equal(normalizeLaunchUrl('data:text/html,hi'), '');
+  assert.equal(normalizeLaunchUrl(''), '');
+});
+
+test('buildLinuxLaunchCandidates normalizes bare domain URLs and parseDirectSpawnCommand handles escaped spaces and chained redirections', () => {
+  const candidates = buildLinuxLaunchCandidates({
+    profileDirectory: 'Profile 5',
+    url: '35m.com',
+    chromeBinaries: ['/opt/google/chrome/google-chrome'],
+    hasGtkLaunch: false,
+    hasGio: false,
+    hasChrome: true,
+  });
+  assert.equal(candidates.length, 1);
+  assert.equal(
+    candidates[0],
+    '/opt/google/chrome/google-chrome --profile-directory="Profile 5" --app="https://35m.com" --window-size=539,993 2>/dev/null'
+  );
+
+  const escapedCmd = parseDirectSpawnCommand(
+    '"/opt/google/chrome/google-chrome" --profile-directory=Profile\\ 5 --app="https://35m.com" >/dev/null 2>&1'
+  );
+  assert.deepEqual(escapedCmd, {
+    executable: '/opt/google/chrome/google-chrome',
+    args: ['--profile-directory=Profile 5', '--app=https://35m.com'],
+  });
+});
+
 

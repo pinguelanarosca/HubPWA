@@ -29,6 +29,22 @@ export function getPopupWindowFeatures(
   return `popup=yes,width=${width},height=${height},menubar=no,toolbar=no,location=no,status=no,resizable=yes,scrollbars=yes`;
 }
 
+export function normalizeLaunchUrl(rawUrl?: string | null): string {
+  if (!rawUrl || typeof rawUrl !== 'string') return '';
+  const trimmed = rawUrl.trim();
+  if (!trimmed) return '';
+  if (/^(?:javascript|data|vbscript|file):/i.test(trimmed)) return '';
+  if (/^https?:\/\/\S+$/i.test(trimmed)) return trimmed;
+  if (/^(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])(?::\d+)?(?:[/?#].*)?$/i.test(trimmed)) {
+    return `http://${trimmed}`;
+  }
+  if (/^[a-z][a-z0-9+.-]*:/i.test(trimmed)) return '';
+  if (/^[a-z0-9-]+(?:\.[a-z0-9-]+)+(?::\d+)?(?:[/?#].*)?$/i.test(trimmed)) {
+    return `https://${trimmed}`;
+  }
+  return '';
+}
+
 export function encodeBase64Url(value: string): string {
   const bytes = new TextEncoder().encode(value);
   let binary = '';
@@ -235,9 +251,11 @@ export function buildLinuxLaunchCandidates(options: LinuxLaunchCandidateOptions)
   }
 
   // 4. URL App Mode with Profile (clones & URL PWAs)
-  if (url && hasChrome) {
+  const normalizedUrl = normalizeLaunchUrl(url) || (typeof url === 'string' ? url.trim() : '');
+  if (normalizedUrl && hasChrome) {
     const appTarget =
-      (bridgeOrigin && buildLaunchBridgeUrl(url, bridgeOrigin, width, height, windowTitle)) || url;
+      (bridgeOrigin && buildLaunchBridgeUrl(normalizedUrl, bridgeOrigin, width, height, windowTitle)) ||
+      normalizedUrl;
     for (const bin of bins) {
       pushUnique(`${bin} ${profileArg} --app="${appTarget}" ${sizeArg} 2>/dev/null`.replace(/\s+/g, ' '));
     }
@@ -292,7 +310,7 @@ export function parseDirectSpawnCommand(
 
   const cleaned = rawCommand
     .trim()
-    .replace(/\s+(?:\d*>\s*\/dev\/null|2>&1)\s*$/g, '')
+    .replace(/(?:\s+(?:\d*>\s*\/dev\/null|2>&1))+\s*$/g, '')
     .trim();
   if (!cleaned) return null;
 
