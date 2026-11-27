@@ -278,6 +278,124 @@ function hasCommand(cmd: string): boolean {
   return Boolean(resolveCommandPath(cmd));
 }
 
+interface LinuxSessionEnvCache {
+  expiresAt: number;
+  vars: Record<string, string>;
+}
+let linuxSessionEnvCache: LinuxSessionEnvCache | null = null;
+
+function resolveLinuxDesktopSessionEnv(): Record<string, string> {
+  if (process.platform !== 'linux') return {};
+  const hasAllCore =
+    Boolean(process.env.DISPLAY) &&
+    Boolean(process.env.XAUTHORITY) &&
+    Boolean(process.env.DBUS_SESSION_BUS_ADDRESS);
+  if (hasAllCore) return {};
+
+  const now = Date.now();
+  if (linuxSessionEnvCache && now < linuxSessionEnvCache.expiresAt) {
+    return linuxSessionEnvCache.vars;
+  }
+
+  const resolved: Record<string, string> = {};
+  const homeDir = process.env.HOME || os.homedir();
+  const uid = typeof process.getuid === 'function' ? process.getuid() : null;
+
+  // 1. Read live systemd user environment when launched under systemctl --user
+  try {
+    const sysEnv = execSync('systemctl --user show-environment 2>/dev/null', {
+      encoding: 'utf8',
+      timeout: 300,
+    });
+    for (const line of sysEnv.split(/\r?\n/)) {
+      const eq = line.indexOf('=');
+      if (eq <= 0) continue;
+      const key = line.slice(0, eq).trim();
+      const val = line.slice(eq + 1).trim();
+      if (
+        val &&
+        (key === 'DISPLAY' ||
+          key === 'WAYLAND_DISPLAY' ||
+          key === 'XAUTHORITY' ||
+          key === 'DBUS_SESSION_BUS_ADDRESS' ||
+          key === 'XDG_RUNTIME_DIR' ||
+          key === 'XDG_SESSION_TYPE')
+      ) {
+        resolved[key] = val;
+      }
+    }
+  } catch {
+    // systemctl --user unavailable or outside systemd user session
+  }
+
+  // 2. Inspect /run/user/<uid> runtime sockets
+  if (uid !== null) {
+    const runtimeDir = resolved.XDG_RUNTIME_DIR || process.env.XDG_RUNTIME_DIR || `/run/user/${uid}`;
+    if (fs.existsSync(runtimeDir)) {
+      if (!resolved.XDG_RUNTIME_DIR && !process.env.XDG_RUNTIME_DIR) {
+        resolved.XDG_RUNTIME_DIR = runtimeDir;
+      }
+      const busPath = path.join(runtimeDir, 'bus');
+      if (!resolved.DBUS_SESSION_BUS_ADDRESS && !process.env.DBUS_SESSION_BUS_ADDRESS && fs.existsSync(busPath)) {
+        resolved.DBUS_SESSION_BUS_ADDRESS = `unix:path=${busPath}`;
+      }
+      if (!resolved.WAYLAND_DISPLAY && !process.env.WAYLAND_DISPLAY) {
+        for (const candidate of ['wayland-0', 'wayland-1']) {
+          if (fs.existsSync(path.join(runtimeDir, candidate))) {
+            resolved.WAYLAND_DISPLAY = candidate;
+            break;
+          }
+        }
+      }
+      if (!resolved.XAUTHORITY && !process.env.XAUTHORITY) {
+        try {
+          const runtimeEntries = fs.readdirSync(runtimeDir);
+          const xauthMatch = runtimeEntries.find((f) => f.startsWith('.mutter-Xwaylandauth.'));
+          if (xauthMatch) {
+            resolved.XAUTHORITY = path.join(runtimeDir, xauthMatch);
+          } else if (fs.existsSync(path.join(runtimeDir, 'gdm', 'Xauthority'))) {
+            resolved.XAUTHORITY = path.join(runtimeDir, 'gdm', 'Xauthority');
+          }
+        } catch {
+          // ignore
+        }
+      }
+    }
+  }
+
+  // 3. Fallback to ~/.Xauthority
+  if (!resolved.XAUTHORITY && !process.env.XAUTHORITY) {
+    const homeXauth = path.join(homeDir, '.Xauthority');
+    if (fs.existsSync(homeXauth)) {
+      resolved.XAUTHORITY = homeXauth;
+    }
+  }
+
+  // 4. Inspect active X11 UNIX socket (/tmp/.X11-unix/X*) instead of blindly hardcoding :0
+  if (!resolved.DISPLAY && !process.env.DISPLAY) {
+    try {
+      const x11Dir = '/tmp/.X11-unix';
+      if (fs.existsSync(x11Dir)) {
+        const sockets = fs
+          .readdirSync(x11Dir)
+          .filter((name) => /^X\d+$/.test(name))
+          .sort((a, b) => Number(a.slice(1)) - Number(b.slice(1)));
+        if (sockets.length > 0) {
+          resolved.DISPLAY = `:${sockets[0].slice(1)}`;
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  linuxSessionEnvCache = {
+    expiresAt: now + 10_000,
+    vars: resolved,
+  };
+  return resolved;
+}
+
 function buildDesktopEnv(): NodeJS.ProcessEnv {
   const homeDir = process.env.HOME || os.homedir();
   const extraPaths = [
@@ -292,11 +410,56 @@ function buildDesktopEnv(): NodeJS.ProcessEnv {
   const mergedPath = Array.from(
     new Set([...(process.env.PATH || '').split(path.delimiter).filter(Boolean), ...extraPaths])
   ).join(path.delimiter);
+  const sessionVars = resolveLinuxDesktopSessionEnv();
   return {
+    ...sessionVars,
     ...process.env,
     PATH: mergedPath,
-    DISPLAY: process.env.DISPLAY || ':0',
+    DISPLAY: process.env.DISPLAY || sessionVars.DISPLAY || ':0',
   };
+}
+
+function isChromeAppIdVerifiedForProfile(appId?: string, profileDirectory?: string): boolean {
+  const cleanId = (appId || '').trim();
+  if (!cleanId || process.platform !== 'linux') return Boolean(cleanId);
+  const cleanProfile = (profileDirectory || '').trim() || 'Default';
+  const profileSlug = cleanProfile.replace(/\s+/g, '_');
+  const homeDir = process.env.HOME || os.homedir();
+
+  // Check if a matching Chrome .desktop file explicitly exists for (appId, profileDirectory)
+  const appsDir = path.join(homeDir, '.local', 'share', 'applications');
+  const exactDesktop = path.join(appsDir, `chrome-${cleanId}-${profileSlug}.desktop`);
+  if (fs.existsSync(exactDesktop)) {
+    return true;
+  }
+
+  // Inspect Chrome/Chromium profile directories if present on disk
+  const chromeRoots = [
+    path.join(homeDir, '.config', 'google-chrome'),
+    path.join(homeDir, '.config', 'chromium'),
+    path.join(homeDir, '.config', 'google-chrome-beta'),
+    path.join(homeDir, '.config', 'google-chrome-unstable'),
+  ];
+
+  let inspectedKnownProfile = false;
+  for (const root of chromeRoots) {
+    const profileDir = path.join(root, cleanProfile);
+    if (!fs.existsSync(profileDir)) continue;
+
+    if (
+      fs.existsSync(path.join(profileDir, 'Web Applications', `_crx_${cleanId}`)) ||
+      fs.existsSync(path.join(profileDir, 'Extensions', cleanId))
+    ) {
+      return true;
+    }
+
+    if (fs.existsSync(path.join(profileDir, 'Web Applications'))) {
+      inspectedKnownProfile = true;
+    }
+  }
+
+  // Only suppress --app-id when we positively inspected the profile's Web Applications folder and didn't find it
+  return !inspectedKnownProfile;
 }
 
 function getLinuxLaunchCapability() {
@@ -1279,7 +1442,7 @@ function ensureX11SnapshotDaemon() {
 
   x11DaemonState = 'starting';
   x11LineBuffer = '';
-  const desktopEnv = { ...process.env, DISPLAY: process.env.DISPLAY || ':0' };
+  const desktopEnv = buildDesktopEnv();
 
   try {
     const proc = spawn('python3', [X11_SCRIPT_PATH, '--snapshot-daemon'], {
@@ -1393,7 +1556,7 @@ function spawnLaunchCandidatesDirect(
       resolve(ok);
     };
 
-    const overallTimer = setTimeout(() => finish(false), 600);
+    const overallTimer = setTimeout(() => finish(false), 2500);
 
     const tryCandidate = (index: number) => {
       if (settled) return;
@@ -1445,10 +1608,13 @@ function spawnLaunchCandidatesDirect(
           spawnGraceTimer = setTimeout(() => {
             clearTimeout(overallTimer);
             finish(true);
-          }, 30);
+          }, 120);
         });
 
-        child.on('error', fallbackNext);
+        child.on('error', (err) => {
+          console.warn(`[HubPWA] Falha ao iniciar candidato #${index + 1}:`, (err as Error).message);
+          fallbackNext();
+        });
         child.on('exit', (code) => {
           if (code === 0) {
             if (spawnGraceTimer) {
@@ -1459,7 +1625,8 @@ function spawnLaunchCandidatesDirect(
             finish(true);
             return;
           }
-          if (code !== null && code !== 0 && Date.now() - startedAt < 1500) {
+          if (code !== null && code !== 0 && Date.now() - startedAt < 2000) {
+            console.warn(`[HubPWA] Candidato #${index + 1} encerrou com código ${code}, tentando próximo...`);
             fallbackNext();
           }
         });
@@ -1582,30 +1749,36 @@ app.post('/api/launch-pwa', async (req, res) => {
     }
 
     const { desktopPathExists, desktopExecLine } = resolveCachedDesktopExec(desktopPath, rawFileName);
+    const desktopEnv = buildDesktopEnv();
     const isWaylandClone = shouldUseWaylandCloneBridge(
       { clonedFromId: req.body?.clonedFromId, appId, url: effectiveUrl },
-      process.env
+      desktopEnv
     );
     const canUsePythonX11 =
       !isWaylandClone &&
       hasPython3 &&
       Date.now() >= x11UnavailableUntil &&
       fs.existsSync(X11_SCRIPT_PATH);
-    const desktopEnv = buildDesktopEnv();
 
     const useBridge =
       isWaylandClone ||
-      (!canUsePythonX11 && !process.env.DISPLAY && Boolean(process.env.WAYLAND_DISPLAY));
+      (!canUsePythonX11 && !desktopEnv.DISPLAY && Boolean(desktopEnv.WAYLAND_DISPLAY));
     const localPort = req.socket?.localPort || Number(process.env.PORT) || 3000;
     const bridgeOrigin = useBridge ? `http://127.0.0.1:${localPort}` : undefined;
 
-    let commandCandidates = buildLinuxLaunchCandidates({
+    const effectiveAppId =
+      appId &&
+      (!effectiveUrl || isChromeAppIdVerifiedForProfile(appId, profileDirectory))
+        ? appId
+        : undefined;
+
+    const commandCandidates = buildLinuxLaunchCandidates({
       desktopExecLine,
       execLine,
       desktopPath,
       desktopPathExists,
       rawFileName,
-      appId,
+      appId: effectiveAppId,
       profileDirectory,
       url: effectiveUrl,
       bridgeOrigin,
@@ -1618,16 +1791,6 @@ app.post('/api/launch-pwa', async (req, res) => {
       height: PWA_WINDOW_HEIGHT,
     });
 
-    // When a verified Chrome binary command exists, do NOT append slow gio/gtk-launch D-Bus fallbacks after it
-    if (hasChrome) {
-      const chromeOnly = commandCandidates.filter(
-        (cmd) => !cmd.startsWith('gio launch') && !cmd.startsWith('gtk-launch')
-      );
-      if (chromeOnly.length > 0) {
-        commandCandidates = chromeOnly;
-      }
-    }
-
     if (commandCandidates.length === 0) {
       return res.json({
         success: true,
@@ -1638,7 +1801,7 @@ app.post('/api/launch-pwa', async (req, res) => {
       });
     }
 
-    const activeCandidates = commandCandidates.slice(0, 4);
+    const activeCandidates = commandCandidates.slice(0, 5);
     let preIds: string | null = null;
     if (canUsePythonX11) {
       // Grab instant (<1ms) snapshot from persistent X11 daemon if ready so Node launches Chrome immediately

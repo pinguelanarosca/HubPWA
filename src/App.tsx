@@ -1216,7 +1216,8 @@ export default function App() {
     );
 
     if (!opened || opened.closed) {
-      opened = window.open(targetUrl, '_blank', 'noopener,noreferrer');
+      // Never pass 'noopener,noreferrer' in features: HTML spec makes window.open return null even on success
+      opened = window.open(targetUrl, '_blank');
     }
 
     if (!opened || opened.closed) {
@@ -1229,6 +1230,11 @@ export default function App() {
     }
 
     setBlockedLaunchFallback(null);
+    try {
+      opened.opener = null;
+    } catch {
+      // Cross-origin opener assignment may be restricted
+    }
     try {
       opened.resizeTo(PWA_WINDOW_WIDTH, PWA_WINDOW_HEIGHT);
       if (item.name && opened.document) {

@@ -34,13 +34,24 @@ export function normalizeLaunchUrl(rawUrl?: string | null): string {
   const trimmed = rawUrl.trim();
   if (!trimmed) return '';
   if (/^(?:javascript|data|vbscript|file):/i.test(trimmed)) return '';
-  if (/^https?:\/\/\S+$/i.test(trimmed)) return trimmed;
+  if (/^https?:\/\//i.test(trimmed)) {
+    const encoded = /\s/.test(trimmed) ? trimmed.replace(/\s+/g, '%20') : trimmed;
+    try {
+      const parsed = new URL(encoded);
+      if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+        return encoded;
+      }
+      return '';
+    } catch {
+      return /^https?:\/\/[^\s/$.?#].\S*$/i.test(encoded) ? encoded : '';
+    }
+  }
   if (/^(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])(?::\d+)?(?:[/?#].*)?$/i.test(trimmed)) {
-    return `http://${trimmed}`;
+    return `http://${trimmed.replace(/\s+/g, '%20')}`;
   }
   if (/^[a-z][a-z0-9+.-]*:/i.test(trimmed)) return '';
   if (/^[a-z0-9-]+(?:\.[a-z0-9-]+)+(?::\d+)?(?:[/?#].*)?$/i.test(trimmed)) {
-    return `https://${trimmed}`;
+    return `https://${trimmed.replace(/\s+/g, '%20')}`;
   }
   return '';
 }
@@ -133,6 +144,60 @@ export function isChromeExecCommand(execLine: string): boolean {
   );
 }
 
+export function extractProfileDirectoryArg(execLine?: string | null): string | null {
+  if (!execLine || typeof execLine !== 'string') return null;
+  const match = execLine.match(/--profile-directory=(?:"([^"]+)"|'([^']+)'|([^\s"']+))/i);
+  if (!match) return null;
+  const raw = (match[1] || match[2] || match[3] || '').replace(/\\ /g, ' ').trim();
+  return raw || null;
+}
+
+export function sanitizeChromeExecForProfileAndApp(
+  execLine: string,
+  targetProfile?: string,
+  fallbackUrl?: string,
+  hasValidAppId: boolean = true
+): string {
+  const trimmed = (execLine || '').trim();
+  if (!trimmed) return '';
+  if (!isChromeExecCommand(trimmed)) {
+    return trimmed;
+  }
+
+  const normalizedTarget = (targetProfile || '').trim();
+  const execProfile = extractProfileDirectoryArg(trimmed);
+  const profileMismatch = Boolean(
+    normalizedTarget &&
+    execProfile &&
+    normalizedTarget.toLowerCase() !== execProfile.toLowerCase()
+  );
+
+  let updated = trimmed;
+
+  if (profileMismatch && normalizedTarget) {
+    updated = updated.replace(
+      /--profile-directory=(?:"[^"]*"|'[^']*'|[^\s"']+)/i,
+      `--profile-directory="${normalizedTarget}"`
+    );
+  } else if (normalizedTarget && !execProfile) {
+    updated = `${updated} --profile-directory="${normalizedTarget}"`;
+  }
+
+  const hasAppIdFlag = /--app-id=(?:"[^"]*"|'[^']*'|[^\s"']+)/i.test(updated);
+  if (hasAppIdFlag && (profileMismatch || !hasValidAppId)) {
+    const safeUrl = normalizeLaunchUrl(fallbackUrl) || (fallbackUrl || '').trim();
+    if (!safeUrl) {
+      return '';
+    }
+    updated = updated.replace(
+      /--app-id=(?:"[^"]*"|'[^']*'|[^\s"']+)/i,
+      `--app="${safeUrl}"`
+    );
+  }
+
+  return updated.replace(/\s+/g, ' ').trim();
+}
+
 export function applyWindowSizeToChromeExec(
   execLine: string,
   width: number = PWA_WINDOW_WIDTH,
@@ -204,8 +269,10 @@ export function buildLinuxLaunchCandidates(options: LinuxLaunchCandidateOptions)
     height = PWA_WINDOW_HEIGHT,
   } = options;
 
-  const profileArg = profileDirectory ? `--profile-directory="${profileDirectory}"` : '';
+  const cleanProfile = (profileDirectory || '').trim();
+  const profileArg = cleanProfile ? `--profile-directory="${cleanProfile}"` : '';
   const sizeArg = `--window-size=${width},${height}`;
+  const normalizedUrl = normalizeLaunchUrl(url) || (typeof url === 'string' ? url.trim() : '');
   const candidates: string[] = [];
   const seen = new Set<string>();
 
@@ -221,37 +288,51 @@ export function buildLinuxLaunchCandidates(options: LinuxLaunchCandidateOptions)
     candidates.push(normalized);
   };
 
-  // 1. Prefer Chrome Exec parsed from the .desktop file with explicit --window-size
+  // Detect whether native .desktop belongs to a DIFFERENT Chrome profile than requested
+  const desktopProfile = extractProfileDirectoryArg(desktopExecLine);
+  const desktopProfileMatches =
+    !cleanProfile || !desktopProfile || cleanProfile.toLowerCase() === desktopProfile.toLowerCase();
+
+  // 1. Prefer Chrome Exec parsed from the .desktop file (repaired if profile/appId conflicts)
   if (desktopExecLine) {
-    const sizedDesktopExec = applyWindowSizeToChromeExec(
+    const preparedDesktopExec = sanitizeChromeExecForProfileAndApp(
       desktopExecLine,
-      width,
-      height,
-      bridgeOrigin,
-      windowTitle
+      cleanProfile || undefined,
+      normalizedUrl,
+      Boolean(appId) && desktopProfileMatches
     );
+    const sizedDesktopExec = preparedDesktopExec
+      ? applyWindowSizeToChromeExec(preparedDesktopExec, width, height, bridgeOrigin, windowTitle)
+      : '';
     if (sizedDesktopExec) {
       pushUnique(`${sizedDesktopExec} 2>/dev/null`);
     }
   }
 
-  // 2. Direct saved execLine with explicit --window-size
+  // 2. Direct saved execLine (repaired if profile/appId conflicts)
   if (execLine) {
-    const sizedExec = applyWindowSizeToChromeExec(execLine, width, height, bridgeOrigin, windowTitle);
+    const preparedExec = sanitizeChromeExecForProfileAndApp(
+      execLine,
+      cleanProfile || undefined,
+      normalizedUrl,
+      Boolean(appId)
+    );
+    const sizedExec = preparedExec
+      ? applyWindowSizeToChromeExec(preparedExec, width, height, bridgeOrigin, windowTitle)
+      : '';
     if (sizedExec) {
       pushUnique(`${sizedExec} 2>/dev/null`);
     }
   }
 
   // 3. App-ID with Profile and explicit --window-size
-  if (appId && hasChrome) {
+  if (appId && hasChrome && desktopProfileMatches) {
     for (const bin of bins) {
       pushUnique(`${bin} ${profileArg} --app-id="${appId}" ${sizeArg} 2>/dev/null`.replace(/\s+/g, ' '));
     }
   }
 
-  // 4. URL App Mode with Profile (clones & URL PWAs)
-  const normalizedUrl = normalizeLaunchUrl(url) || (typeof url === 'string' ? url.trim() : '');
+  // 4. URL App Mode with Profile (clones, profile-reassigned PWAs & URL PWAs)
   if (normalizedUrl && hasChrome) {
     const appTarget =
       (bridgeOrigin && buildLaunchBridgeUrl(normalizedUrl, bridgeOrigin, width, height, windowTitle)) ||
@@ -261,17 +342,19 @@ export function buildLinuxLaunchCandidates(options: LinuxLaunchCandidateOptions)
     }
   }
 
-  // 5. Fallback to native .desktop launchers if direct Chrome launch wasn't possible
-  if (desktopPath && desktopPathExists) {
-    const baseName = desktopPath.replace(/^.*\//, '').replace(/\.desktop$/i, '');
-    if (hasGio) pushUnique(`gio launch "${desktopPath}" 2>/dev/null`);
-    if (hasGtkLaunch && baseName) pushUnique(`gtk-launch "${baseName}" 2>/dev/null`);
-  }
+  // 5. Fallback to native .desktop launchers only when .desktop profile does not conflict
+  if (desktopProfileMatches) {
+    if (desktopPath && desktopPathExists) {
+      const baseName = desktopPath.replace(/^.*\//, '').replace(/\.desktop$/i, '');
+      if (hasGio) pushUnique(`gio launch "${desktopPath}" 2>/dev/null`);
+      if (hasGtkLaunch && baseName) pushUnique(`gtk-launch "${baseName}" 2>/dev/null`);
+    }
 
-  if (rawFileName) {
-    const desktopName = rawFileName.replace(/\.desktop$/i, '');
-    if (hasGtkLaunch) pushUnique(`gtk-launch "${desktopName}" 2>/dev/null`);
-    if (hasGio) pushUnique(`gio launch "${homeApplicationsDir}/${rawFileName}" 2>/dev/null`);
+    if (rawFileName) {
+      const desktopName = rawFileName.replace(/\.desktop$/i, '');
+      if (hasGtkLaunch) pushUnique(`gtk-launch "${desktopName}" 2>/dev/null`);
+      if (hasGio) pushUnique(`gio launch "${homeApplicationsDir}/${rawFileName}" 2>/dev/null`);
+    }
   }
 
   return candidates;

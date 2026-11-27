@@ -1147,12 +1147,17 @@ test('resolveConsolidatedScannedProfile prefers custom Profile 5 over stale Defa
   assert.equal(resolved.finalProfileDirectory, 'Profile 5');
   assert.equal(resolved.profileOverridden, true);
   assert.ok(resolved.nextExecLine?.includes('--profile-directory="Profile 5"'));
+  assert.ok(resolved.nextExecLine?.includes('--app="https://13e.com"'));
+  assert.equal(resolved.nextExecLine?.includes('--app-id='), false);
 
   const sanitized = sanitizeLauncherMetadataForProfile(scannedWithPreMergedServerProfile, 'Profile 5');
   assert.equal(sanitized.changed, true);
   assert.equal(sanitized.item.desktopPath, undefined);
   assert.equal(sanitized.item.rawFileName, undefined);
   assert.equal(sanitized.item.appId, undefined);
+  assert.ok(sanitized.item.execLine?.includes('--profile-directory="Profile 5"'));
+  assert.ok(sanitized.item.execLine?.includes('--app="https://13e.com"'));
+  assert.equal(sanitized.item.execLine?.includes('--app-id='), false);
 });
 
 test('filterNonDuplicateImportedPWAs blocks Default and URL+profile duplicates on desktop and json imports', () => {

@@ -225,4 +225,39 @@ test('buildLinuxLaunchCandidates normalizes bare domain URLs and parseDirectSpaw
   });
 });
 
+test('normalizeLaunchUrl encodes spaces in query/path without dropping valid URLs', () => {
+  assert.equal(
+    normalizeLaunchUrl('https://35m.com/search?q=jogo novo'),
+    'https://35m.com/search?q=jogo%20novo'
+  );
+  assert.equal(normalizeLaunchUrl('192.168.1.10:3000/hub'), 'https://192.168.1.10:3000/hub');
+});
+
+test('buildLinuxLaunchCandidates replaces stale --app-id with --app=url when profile mismatches or appId is cleared', () => {
+  const candidates = buildLinuxLaunchCandidates({
+    desktopExecLine: '/opt/google/chrome/google-chrome --profile-directory="Default" --app-id=old_def_id',
+    execLine: '/opt/google/chrome/google-chrome --profile-directory="Profile 5" --app-id=old_def_id',
+    desktopPath: '/home/user/.local/share/applications/chrome-old_def_id-Default.desktop',
+    desktopPathExists: true,
+    rawFileName: 'chrome-old_def_id-Default.desktop',
+    appId: undefined,
+    profileDirectory: 'Profile 5',
+    url: 'https://35m.com',
+    chromeBinaries: ['/opt/google/chrome/google-chrome'],
+    hasGtkLaunch: true,
+    hasGio: true,
+    hasChrome: true,
+  });
+
+  assert.ok(candidates.length >= 1);
+  for (const cmd of candidates) {
+    assert.equal(cmd.includes('--app-id='), false, `Candidate must not run stale --app-id: ${cmd}`);
+    assert.equal(cmd.startsWith('gio launch'), false, 'Conflicting Default .desktop must be excluded');
+    assert.equal(cmd.startsWith('gtk-launch'), false, 'Conflicting Default gtk-launch must be excluded');
+  }
+  assert.equal(
+    candidates[0],
+    '/opt/google/chrome/google-chrome --profile-directory="Profile 5" --app="https://35m.com" --window-size=539,993 2>/dev/null'
+  );
+});
 

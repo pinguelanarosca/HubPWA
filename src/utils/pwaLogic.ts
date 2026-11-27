@@ -1940,15 +1940,30 @@ export function sanitizeLauncherMetadataForProfile(
   const shouldStripNativeDesktop =
     needsProfileChange || hasConflictingLauncher;
 
-  const nextExecLine =
-    shouldStripNativeDesktop
-      ? normalizedTarget && item.execLine && /--profile-directory=/i.test(item.execLine)
-        ? item.execLine.replace(
-            /--profile-directory=(?:"[^"]*"|'[^']*'|[^\s"']+)/i,
-            `--profile-directory="${normalizedTarget}"`
-          )
-        : undefined
-      : item.execLine;
+  const rewriteExecForProfile = (rawExec?: string, fallbackUrl?: string): string | undefined => {
+    if (!rawExec || !normalizedTarget) return undefined;
+    let updated = /--profile-directory=/i.test(rawExec)
+      ? rawExec.replace(
+          /--profile-directory=(?:"[^"]*"|'[^']*'|[^\s"']+)/i,
+          `--profile-directory="${normalizedTarget}"`
+        )
+      : rawExec;
+    if (/--app-id=(?:"[^"]*"|'[^']*'|[^\s"']+)/i.test(updated)) {
+      const cleanUrl = (fallbackUrl || '').trim();
+      if (!/^https?:\/\//i.test(cleanUrl)) {
+        return undefined;
+      }
+      updated = updated.replace(
+        /--app-id=(?:"[^"]*"|'[^']*'|[^\s"']+)/i,
+        `--app="${cleanUrl}"`
+      );
+    }
+    return updated;
+  };
+
+  const nextExecLine = shouldStripNativeDesktop
+    ? rewriteExecForProfile(item.execLine, item.url)
+    : item.execLine;
 
   return {
     changed: true,
@@ -2017,14 +2032,27 @@ export function resolveConsolidatedScannedProfile(
     finalKey && nativeKey && finalKey !== nativeKey
   );
 
-  const nextExecLine = profileOverridden
-    ? finalProfileDirectory && scanned.execLine && /--profile-directory=/i.test(scanned.execLine)
-      ? scanned.execLine.replace(
-          /--profile-directory=(?:"[^"]*"|'[^']*'|[^\s"']+)/i,
-          `--profile-directory="${finalProfileDirectory}"`
-        )
-      : undefined
-    : scanned.execLine;
+  let nextExecLine: string | undefined = scanned.execLine;
+  if (profileOverridden) {
+    if (finalProfileDirectory && scanned.execLine && /--profile-directory=/i.test(scanned.execLine)) {
+      let rewritten = scanned.execLine.replace(
+        /--profile-directory=(?:"[^"]*"|'[^']*'|[^\s"']+)/i,
+        `--profile-directory="${finalProfileDirectory}"`
+      );
+      if (/--app-id=(?:"[^"]*"|'[^']*'|[^\s"']+)/i.test(rewritten)) {
+        const cleanUrl = (scanned.url || '').trim();
+        rewritten = /^https?:\/\//i.test(cleanUrl)
+          ? rewritten.replace(
+              /--app-id=(?:"[^"]*"|'[^']*'|[^\s"']+)/i,
+              `--app="${cleanUrl}"`
+            )
+          : '';
+      }
+      nextExecLine = rewritten || undefined;
+    } else {
+      nextExecLine = undefined;
+    }
+  }
 
   return {
     finalProfileDirectory,
